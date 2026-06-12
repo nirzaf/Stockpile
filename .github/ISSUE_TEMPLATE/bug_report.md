@@ -28,7 +28,7 @@ If applicable, add screenshots to help explain.
 
 - OS: [e.g. macOS 26, Windows 11]
 - Browser: [e.g. Chrome 130, Firefox 135]
-- .NET Version: [e.g. 9.0]
+- .NET Version: [e.g. 10.0]
 - Database: [e.g. PostgreSQL 16]
 
 ### Additional Context

@@ -6,7 +6,7 @@ We take the security of this project seriously. If you discover a security vulne
 
 Instead, report it privately by:
 
-1. **Email the maintainers** (security contact to be configured per deployment)
+1. **Email the maintainers** at `nirzaf@users.noreply.github.com`
 2. Use GitHub's private vulnerability reporting (when enabled for the repo)
 
 Please include:
