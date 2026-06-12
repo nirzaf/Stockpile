@@ -4,14 +4,14 @@ title: Inventory Management System — Documentation
 description: End-user guide and documentation for the Inventory Management System.
 ---
 
-# 📦 Inventory Management System — Documentation
+# 📦 Stockpile — Documentation
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://github.com/nirzaf/InventoryManagementSystem/blob/master/LICENSE)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://github.com/nirzaf/Stockpile/blob/master/LICENSE)
 [![.NET](https://img.shields.io/badge/.NET-10-purple.svg)](https://dotnet.microsoft.com/)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-blue.svg)](https://www.postgresql.org/)
 [![Docker](https://img.shields.io/badge/Docker-ready-2496ED.svg)](https://www.docker.com/)
 
-Welcome to the documentation site for the **Inventory Management System (IMS)** — a modern web app for tracking items, stock levels, purchase orders, suppliers, and locations.
+Welcome to the documentation site for **Stockpile** — a modern inventory management web app for tracking items, stock levels, purchase orders, suppliers, and locations.
 
 ---
 

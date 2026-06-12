@@ -1,4 +1,6 @@
-# Inventory Management System
+# Stockpile
+
+> Inventory Management System for Supermarkets and Small Shops
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![.NET](https://img.shields.io/badge/.NET-10-purple.svg)](https://dotnet.microsoft.com/)
