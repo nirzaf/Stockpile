@@ -27,7 +27,10 @@ jobs:
         run: dotnet restore
 
       - name: Build
-        run: dotnet build --no-restore --configuration Release
+        # Surface CS1591 (missing XML doc) warnings so any undocumented public API
+        # is visible in the CI log. Warnings do not fail the build; a separate
+        # effort (TreatWarningsAsErrors on CS1591) can be enabled later.
+        run: dotnet build --no-restore --configuration Release /warnaserror:-
 
       - name: Test
         run: dotnet test --no-restore --configuration Release --verbosity normal

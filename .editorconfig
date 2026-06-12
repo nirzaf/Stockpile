@@ -77,3 +77,16 @@ csharp_style_conditional_delegate_call = true:suggestion
 # Null checking preferences
 dotnet_style_coalesce_expression = true:suggestion
 dotnet_style_null_propagation = true:suggestion
+
+# XML documentation warnings (CS1591). Configured per-project so that
+# Core, Infrastructure, and Web require XML doc comments on public
+# members, while the Tests project is exempted (test code does not need
+# public API docs and adding them would slow down test authoring).
+[InventoryManagementSystem.Core/**/*.cs]
+dotnet_diagnostic.CS1591.severity = warning
+
+[InventoryManagementSystem.Infrastructure/**/*.cs]
+dotnet_diagnostic.CS1591.severity = warning
+
+[InventoryManagementSystem.Web/**/*.cs]
+dotnet_diagnostic.CS1591.severity = warning

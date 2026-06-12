@@ -18,6 +18,7 @@ Fixes # (issue)
 - [ ] All tests pass (`dotnet test`)
 - [ ] The build succeeds (`dotnet build`)
 - [ ] I have updated relevant documentation
+- [ ] Public API surfaces have XML doc comments
 
 ## Screenshots (if applicable)
 
