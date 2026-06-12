@@ -10,7 +10,7 @@ Please read and follow our [Code of Conduct](CODE_OF_CONDUCT.md).
 
 ### Reporting Bugs
 
-- Search existing [issues](https://github.com/nirzaf/InventoryManagementSystem/issues) to avoid duplicates
+- Search existing [issues](https://github.com/nirzaf/Stockpile/issues) to avoid duplicates
 - Use the Bug Report template when creating a new issue
 - Include clear steps to reproduce, expected vs actual behavior, and environment details
 
@@ -93,4 +93,4 @@ type(scope): description
 
 ## Questions?
 
-Open a [Discussion](https://github.com/nirzaf/InventoryManagementSystem/discussions) or ask in an issue.
+Open a [Discussion](https://github.com/nirzaf/Stockpile/discussions) or ask in an issue.

@@ -8,7 +8,7 @@ description: End-user guide for the Inventory Management System.
 
 Welcome to the **Inventory Management System (IMS)**. This guide is for the people who will actually **use** the application day-to-day to track items, stock levels, suppliers, locations, and purchase orders. It is written in plain language and assumes no technical background.
 
-If you are a developer looking for installation, API, or architecture information, please see the [README on GitHub](https://github.com/nirzaf/InventoryManagementSystem/blob/master/README.md) instead.
+If you are a developer looking for installation, API, or architecture information, please see the [README on GitHub](https://github.com/nirzaf/Stockpile/blob/master/README.md) instead.
 
 ---
 
@@ -383,4 +383,4 @@ If something is broken, unexpected, or unclear:
 
 ---
 
-*This guide covers the user-facing functionality of the Inventory Management System. For installation, configuration, and developer documentation, see the [README on GitHub](https://github.com/nirzaf/InventoryManagementSystem/blob/master/README.md).*
+*This guide covers the user-facing functionality of the Inventory Management System. For installation, configuration, and developer documentation, see the [README on GitHub](https://github.com/nirzaf/Stockpile/blob/master/README.md).*

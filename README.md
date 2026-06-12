@@ -11,7 +11,7 @@ A modern inventory management web application for tracking items, stock levels, 
 
 ## Documentation
 
-- **🌐 [Live docs site](https://nirzaf.github.io/InventoryManagementSystem/)** — published via GitHub Pages from the `docs/` folder. The recommended place for end users.
+- **🌐 [Live docs site](https://nirzaf.github.io/Stockpile/)** — published via GitHub Pages from the `docs/` folder. The recommended place for end users.
 - **[User Guide](USER_GUIDE.md)** — for the people who will *use* the application day-to-day (login, items, stock operations, purchase orders, troubleshooting).
 - **README.md** (this file) — for developers and operators: installation, architecture, API, deployment.
 
@@ -67,7 +67,7 @@ A modern inventory management web application for tracking items, stock levels, 
 ### Docker (recommended)
 
 ```bash
-git clone https://github.com/nirzaf/InventoryManagementSystem.git
+git clone https://github.com/nirzaf/Stockpile.git
 cd InventoryManagementSystem
 cp .env.example .env        # edit credentials if desired
 docker compose up -d        # starts app + PostgreSQL
@@ -173,7 +173,7 @@ Every push and pull request to `master` runs an automated pipeline, and tagged r
 |----------|------|---------|---------|
 | **CI** | [`.github/workflows/ci.yml`](.github/workflows/ci.yml) | PR + push to `master` | Restore → build → run xUnit tests with coverage → upload `coverage-report` artifact. |
 | **Docker** | [`.github/workflows/docker.yml`](.github/workflows/docker.yml) | Push to `master` & `v*.*.*` tags | Multi-arch build (`linux/amd64`, `linux/arm64`) → push to `ghcr.io/nirzaf/inventorymanagementsystem` with `latest`, `sha-…`, and semver tags. |
-| **GitHub Pages** | [`.github/workflows/pages.yml`](.github/workflows/pages.yml) | Push to `master` (when `docs/**` changes) | Deploys the `/docs` folder to `https://nirzaf.github.io/InventoryManagementSystem/`. |
+| **GitHub Pages** | [`.github/workflows/pages.yml`](.github/workflows/pages.yml) | Push to `master` (when `docs/**` changes) | Deploys the `/docs` folder to `https://nirzaf.github.io/Stockpile/`. |
 | **Release** | [`.github/workflows/release.yml`](.github/workflows/release.yml) | Push of `v*.*.*` tag | Cuts a GitHub Release with auto-generated changelog and Docker pull instructions. |
 | **Dependabot** | [`.github/dependabot.yml`](.github/dependabot.yml) | Weekly (Mon) | Opens grouped PRs for NuGet, GitHub Actions, and Docker base-image updates. |
 
@@ -189,7 +189,7 @@ Every push and pull request to `master` runs an automated pipeline, and tagged r
 
 ### GitHub Pages
 
-The Pages site is built automatically from the `docs/` folder. **One-time setup on a fresh repo:** go to **Settings → Pages → Source: GitHub Actions** and save. After that, every change under `docs/**` (or to `pages.yml`) is deployed within ~1 minute. The site is available at `https://nirzaf.github.io/InventoryManagementSystem/`.
+The Pages site is built automatically from the `docs/` folder. **One-time setup on a fresh repo:** go to **Settings → Pages → Source: GitHub Actions** and save. After that, every change under `docs/**` (or to `pages.yml`) is deployed within ~1 minute. The site is available at `https://nirzaf.github.io/Stockpile/`.
 
 ### Coverage
 
