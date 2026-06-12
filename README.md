@@ -65,6 +65,8 @@ docker compose up -d        # starts app + PostgreSQL
 
 The app will be available at **http://localhost:8080**.
 
+Swagger UI is available at **http://localhost:8080/swagger** in the Development environment for interactive API exploration.
+
 Default admin: `admin@inventory.com` / `Admin@123` (change in `.env`).
 
 ### Manual Setup
