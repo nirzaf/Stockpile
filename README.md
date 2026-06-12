@@ -7,6 +7,14 @@
 
 A modern inventory management web application for tracking items, stock levels, purchase orders, suppliers, and locations. Built with Clean Architecture, CQRS, and a mobile-first UI — runs anywhere.
 
+## Documentation
+
+- **🌐 [Live docs site](https://nirzaf.github.io/InventoryManagementSystem/)** — published via GitHub Pages from the `docs/` folder. The recommended place for end users.
+- **[User Guide](USER_GUIDE.md)** — for the people who will *use* the application day-to-day (login, items, stock operations, purchase orders, troubleshooting).
+- **README.md** (this file) — for developers and operators: installation, architecture, API, deployment.
+
+> To enable the GitHub Pages site on your fork: **Settings → Pages → Source: `master` (or `main`) branch, `/docs` folder → Save**. The site is built automatically with Jekyll.
+
 ## Tech Stack
 
 | Layer | Technology |
@@ -164,3 +172,5 @@ MIT — see [LICENSE](LICENSE). Use, modify, distribute, and sell freely.
 ## Acknowledgements
 
 Built on the shoulders of open source: [.NET](https://github.com/dotnet), [PostgreSQL](https://www.postgresql.org/), [MudBlazor](https://mudblazor.com/), [MediatR](https://github.com/jbogard/MediatR), [QuestPDF](https://www.questpdf.com/), [Serilog](https://serilog.net/), [ML.NET](https://dotnet.microsoft.com/apps/machinelearning-ai/ml-dotnet), [xUnit](https://xunit.net/), and many more.
+
+For end-user documentation, see [USER_GUIDE.md](USER_GUIDE.md).
