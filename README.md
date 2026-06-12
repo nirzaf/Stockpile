@@ -161,6 +161,46 @@ cp .env.example .env && docker compose up -d
 
 The CI pipeline (`.github/workflows/ci.yml`) builds, tests, and pushes a Docker image to GitHub Container Registry on every push to `master`.
 
+## CI/CD
+
+Every push and pull request to `master` runs an automated pipeline, and tagged releases publish Docker images to GitHub Container Registry and cut a GitHub Release.
+
+### Workflows
+
+| Workflow | File | Trigger | Purpose |
+|----------|------|---------|---------|
+| **CI** | [`.github/workflows/ci.yml`](.github/workflows/ci.yml) | PR + push to `master` | Restore → build → run xUnit tests with coverage → upload `coverage-report` artifact. |
+| **Docker** | [`.github/workflows/docker.yml`](.github/workflows/docker.yml) | Push to `master` & `v*.*.*` tags | Multi-arch build (`linux/amd64`, `linux/arm64`) → push to `ghcr.io/nirzaf/inventorymanagementsystem` with `latest`, `sha-…`, and semver tags. |
+| **GitHub Pages** | [`.github/workflows/pages.yml`](.github/workflows/pages.yml) | Push to `master` (when `docs/**` changes) | Deploys the `/docs` folder to `https://nirzaf.github.io/InventoryManagementSystem/`. |
+| **Release** | [`.github/workflows/release.yml`](.github/workflows/release.yml) | Push of `v*.*.*` tag | Cuts a GitHub Release with auto-generated changelog and Docker pull instructions. |
+| **Dependabot** | [`.github/dependabot.yml`](.github/dependabot.yml) | Weekly (Mon) | Opens grouped PRs for NuGet, GitHub Actions, and Docker base-image updates. |
+
+### Release flow
+
+1. Bump versions as needed and merge to `master`. The CI and Docker workflows run.
+2. When ready to release, create and push a semver tag:
+   ```bash
+   git tag v1.2.3
+   git push origin v1.2.3
+   ```
+3. The **Release** workflow creates a GitHub Release with a changelog derived from commits since the last tag, and the **Docker** workflow publishes the multi-arch image with tags `v1.2.3`, `1.2`, `1`, and `latest`.
+
+### GitHub Pages
+
+The Pages site is built automatically from the `docs/` folder. **One-time setup on a fresh repo:** go to **Settings → Pages → Source: GitHub Actions** and save. After that, every change under `docs/**` (or to `pages.yml`) is deployed within ~1 minute. The site is available at `https://nirzaf.github.io/InventoryManagementSystem/`.
+
+### Coverage
+
+Test coverage is collected via `coverlet.collector` and uploaded as a build artifact named `coverage-report` (Cobertura XML). Download it from the Actions run to inspect line/branch coverage locally or pipe it into a future Codecov integration.
+
+### Required secrets
+
+All workflows use the default `GITHUB_TOKEN` and require no additional secrets.
+
+### Recommended branch protection
+
+For `master`: require PR + 1 approval, require status checks `build-and-test` and `Docker`, require linear history, and disallow force pushes.
+
 ## Contributing
 
 Pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines and [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) for community standards.
