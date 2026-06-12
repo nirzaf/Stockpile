@@ -93,6 +93,8 @@ public class DemandForecastService : IDemandForecastService
 
         try
         {
+            // Seed ML.NET with a fixed value (42) so that two forecast runs over the same
+            // history produce identical results — important for reproducible batch jobs and tests.
             var mlContext = new MLContext(seed: 42);
 
             var values = dailyDemand.Select(d => d.Quantity).ToArray();
@@ -100,6 +102,9 @@ public class DemandForecastService : IDemandForecastService
 
             var dataView = mlContext.Data.LoadFromEnumerable(data);
 
+            // SSA window: roughly half the series length, capped at 7 days (a week). SSA
+            // handles seasonality better than ARIMA with limited history, which is the
+            // realistic case for a small business that just started tracking transactions.
             var windowSize = Math.Min(DefaultWindowSize, values.Length / 2);
             if (windowSize < 2) windowSize = 2;
 
@@ -127,6 +132,9 @@ public class DemandForecastService : IDemandForecastService
         }
         catch (Exception ex)
         {
+            // ML.NET can fail on degenerate inputs (e.g. all-zero series, NaN, constant
+            // values). Falling back to a flat moving-average keeps the API contract intact
+            // and avoids surfacing a 500 to the caller for a non-essential insight.
             _logger.LogError(ex, "ML forecast failed for item {ItemId}, falling back to moving average", itemId);
             result.ForecastedValues = Enumerable.Repeat(result.AverageDailyDemand, horizonDays).ToList();
         }

@@ -31,6 +31,11 @@ public class Repository<T> : IRepository<T> where T : class
     /// <inheritdoc />
     public virtual async Task<IEnumerable<T>> GetAllAsync()
     {
+        // AsNoTracking bypasses the EF Core change tracker for read-only queries, which
+        // saves both memory (no per-entity identity map entries) and CPU (no snapshot
+        // comparison work on the next SaveChangesAsync). Writes go through AddAsync /
+        // UpdateAsync / DeleteAsync, which intentionally re-attach the entity so it
+        // participates in change tracking.
         return await _dbSet.AsNoTracking().ToListAsync();
     }
 

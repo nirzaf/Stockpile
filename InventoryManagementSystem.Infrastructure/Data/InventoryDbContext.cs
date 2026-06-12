@@ -54,6 +54,13 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
     /// soft-delete <see cref="EntityState.Deleted"/> entries to a flag flip, and emitting
     /// <see cref="AuditLog"/> rows.
     /// </summary>
+    /// <remarks>
+    /// Audit log uses a two-phase write: phase one captures original / current values from the
+    /// change tracker (running before <c>base.SaveChangesAsync</c>), phase two resolves any
+    /// temporary primary keys that the database assigned during insert and writes the
+    /// final <see cref="AuditLog"/> rows. Splitting the work lets us record auto-generated
+    /// identities in the audit trail without a round-trip to the database to look them up.
+    /// </remarks>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The number of state entries written to the database.</returns>
     public override async Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
@@ -225,6 +232,11 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
                   .HasForeignKey(s => s.LocationId)
                   .OnDelete(DeleteBehavior.Cascade);
 
+            // PostgreSQL exposes the inserting transaction's xmin (xid) as a hidden
+            // system column on every row. Mapping it to a shadow "Version" property and
+            // marking it as a concurrency token gives us optimistic concurrency with
+            // zero schema, trigger, or stored-procedure cost — EF Core compares xmin
+            // on UPDATE and raises a concurrency exception if the row was modified.
             entity.Property<uint>("Version")
                   .HasColumnName("xmin")
                   .HasColumnType("xid")

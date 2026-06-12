@@ -56,6 +56,10 @@ public class StockService : IStockService
 
     private async Task ExecuteWithRetryAsync(Func<Task> action)
     {
+        // PostgreSQL surfaces an optimistic-concurrency conflict as a DbUpdateConcurrencyException
+        // (driven by the StockInHand.xmin token). Three retries matches the default
+        // EnableRetryOnFailure(3) budget from Program.cs so callers get a single, coherent
+        // retry envelope across the system.
         int retries = 3;
         while (true)
         {
@@ -72,7 +76,14 @@ public class StockService : IStockService
                     throw;
                 }
                 _logger.LogWarning("Concurrency conflict detected, retrying operation. Retries remaining: {Retries}", retries);
+
+                // The change tracker is stale after a failed SaveChangesAsync — without
+                // clearing, the next attempt would re-attach the now-divergent original
+                // values and immediately collide with itself.
                 _unitOfWork.ClearTracker();
+
+                // 100 ms backoff: sub-second margin so we don't pile on the database
+                // while still being fast enough for interactive UIs.
                 await Task.Delay(100);
             }
         }

@@ -81,6 +81,11 @@ public class AnomalyDetectionService : IAnomalyDetectionService
 
     private List<StockAnomaly> DetectSpikes(List<DailyTransactionData> dailyData, int itemId, string itemName)
     {
+        // IID (Independent and Identically Distributed) spike detection treats each day's
+        // quantity as a sample from a single distribution and flags values that diverge
+        // from the running mean. It is the right tool here because we don't need
+        // seasonality modeling (anomalies are short-lived) and we need to handle short
+        // per-item histories where a more sophisticated model would overfit.
         var mlContext = new MLContext(seed: 42);
         var values = dailyData.Select(d => d.Quantity).ToArray();
 
@@ -103,7 +108,9 @@ public class AnomalyDetectionService : IAnomalyDetectionService
         for (int i = 0; i < predictions.Count; i++)
         {
             var pred = predictions[i];
-            // Alert[0]=1 means spike, Alert[1]=1 means drop, Alert[2]=1 means both
+            // ML.NET IID spike output convention: Alert[0] is the spike flag, Alert[1] is
+            // the drop flag, Alert[2] is the raw p-value (used as a confidence proxy).
+            // We surface them in domain terms (Spike / Drop) for the API consumer.
             bool isSpike = pred.Prediction.Length > 0 && pred.Prediction[0] == 1;
             bool isDrop = pred.Prediction.Length > 1 && pred.Prediction[1] == 1;
 

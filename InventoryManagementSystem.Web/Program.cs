@@ -81,6 +81,15 @@ public class Program
         });
 
         // Authentication Configuration (Cookies + JWT Bearer)
+        // Two schemes are registered because the application has two distinct clients:
+        //   * The MVC UI uses the Identity cookie scheme so browser navigations stay
+        //     logged in across page loads.
+        //   * The versioned /api/v1 endpoints use the JWT bearer scheme because they
+        //     are consumed by scripts, mobile apps, and integration partners that do
+        //     not share a browser cookie jar.
+        // DefaultScheme resolves the scheme for the current request based on the
+        // [Authorize] policy and the request path; the controllers explicitly call
+        // [Authorize(AuthenticationSchemes = "Bearer")] on the API controllers.
         var jwtSettings = builder.Configuration.GetSection("JwtSettings");
         var secretKey = jwtSettings["Secret"] ?? "SuperSecretKeyForDevelopmentPurposesOnlyDoNotUseInProduction123!";
         var key = Encoding.ASCII.GetBytes(secretKey);
@@ -141,6 +150,10 @@ public class Program
         builder.Services.AddTransient(typeof(IPipelineBehavior<,>), typeof(ValidationBehavior<,>));
 
         // MediatR CQRS — scans all handler assemblies
+        // Assembly scanning starts from a concrete query type (GetAllItemsQuery) because
+        // it lives in the same assembly as every command, query, and handler. A single
+        // RegisterServicesFromAssembly call picks them all up, so adding a new handler
+        // is a no-op registration-wise.
         builder.Services.AddMediatR(cfg =>
             cfg.RegisterServicesFromAssembly(typeof(InventoryManagementSystem.Core.Features.Items.Queries.GetAllItemsQuery).Assembly));
 
@@ -231,6 +244,15 @@ public class Program
         });
 
         // Rate limiting
+        // Two fixed-window policies are defined because the cost profiles are very
+        // different:
+        //   * "Api" — 100 req/min covers the standard tier of CRUD traffic and
+        //     protects the database from accidental or malicious bursts. 10-request
+        //     queue gives clients a short grace period before they see 429s.
+        //   * "Ai" — 10 req/min reflects that ML.NET forecasting and anomaly
+        //     detection are CPU-bound and can dominate a single core for hundreds
+        //     of milliseconds; the lower limit preserves headroom for other
+        //     requests on the same host.
         builder.Services.AddRateLimiter(options =>
         {
             options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
