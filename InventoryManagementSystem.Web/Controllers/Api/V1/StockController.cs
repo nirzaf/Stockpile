@@ -3,6 +3,7 @@ using InventoryManagementSystem.Core.Entities;
 using InventoryManagementSystem.Core.Features.Stock.Commands;
 using InventoryManagementSystem.Core.Features.Stock.Queries;
 using MediatR;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
 namespace InventoryManagementSystem.Web.Controllers.Api.V1;
@@ -11,6 +12,7 @@ namespace InventoryManagementSystem.Web.Controllers.Api.V1;
 [ApiVersion("1.0")]
 [Route("api/v{version:apiVersion}/stock")]
 [Produces("application/json")]
+[Authorize]
 public class StockController : ControllerBase
 {
     private readonly IMediator _mediator;

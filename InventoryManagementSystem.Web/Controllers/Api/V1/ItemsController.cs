@@ -2,6 +2,7 @@ using Asp.Versioning;
 using InventoryManagementSystem.Core.Features.Items.Commands;
 using InventoryManagementSystem.Core.Features.Items.Queries;
 using MediatR;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
 namespace InventoryManagementSystem.Web.Controllers.Api.V1;
@@ -10,6 +11,7 @@ namespace InventoryManagementSystem.Web.Controllers.Api.V1;
 [ApiVersion("1.0")]
 [Route("api/v{version:apiVersion}/items")]
 [Produces("application/json")]
+[Authorize]
 public class ItemsController : ControllerBase
 {
     private readonly IMediator _mediator;

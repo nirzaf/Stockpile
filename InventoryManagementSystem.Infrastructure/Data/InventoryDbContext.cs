@@ -156,6 +156,7 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
             entity.Property(e => e.Description).HasMaxLength(500);
             entity.Property(e => e.Barcode).HasMaxLength(100);
             entity.Property(e => e.Rate).HasColumnType("decimal(18,2)");
+            entity.HasIndex(e => e.SupplierId);
             entity.Property(e => e.ReorderLevel).HasDefaultValue(10);
 
             entity.HasOne(i => i.Supplier)
@@ -208,6 +209,9 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
             entity.Property(e => e.PONumber).HasMaxLength(50).IsRequired();
             entity.Property(e => e.TotalAmount).HasColumnType("decimal(18,2)");
             entity.Property(e => e.Status).HasConversion<string>().HasMaxLength(50);
+            entity.HasIndex(e => e.SupplierId);
+            entity.HasIndex(e => e.Status);
+            entity.HasIndex(e => e.OrderDate);
 
             entity.HasOne(po => po.Supplier)
                   .WithMany(s => s.PurchaseOrders)
@@ -235,6 +239,9 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
             entity.Property(e => e.TransactionType).HasConversion<string>().HasMaxLength(50).IsRequired();
             entity.Property(e => e.Notes).HasMaxLength(500);
             entity.Property(e => e.BatchNumber).HasMaxLength(100);
+            entity.HasIndex(e => e.TransactionDate);
+            entity.HasIndex(e => e.ItemId);
+            entity.HasIndex(e => new { e.ItemId, e.TransactionDate });
 
             entity.HasOne(st => st.Item)
                   .WithMany(i => i.StockTransactions)

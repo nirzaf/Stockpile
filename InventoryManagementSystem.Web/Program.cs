@@ -1,3 +1,4 @@
+using System.Threading.RateLimiting;
 using Asp.Versioning;
 using FluentValidation;
 using InventoryManagementSystem.Core.Behaviors;
@@ -9,6 +10,7 @@ using InventoryManagementSystem.Core.Services;
 using InventoryManagementSystem.Core.Validators;
 using InventoryManagementSystem.Infrastructure.Data;
 using InventoryManagementSystem.Infrastructure.Repositories;
+using InventoryManagementSystem.Web.Middleware;
 using MediatR;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
@@ -39,9 +41,17 @@ public class Program
 
         builder.Host.UseSerilog();
 
-        // Database
-        builder.Services.AddDbContext<InventoryDbContext>(options =>
-            options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
+        // Database (skip PostgreSQL in Testing — replaced by InMemory in test factory)
+        if (!builder.Environment.IsEnvironment("Testing"))
+        {
+            builder.Services.AddDbContext<InventoryDbContext>(options =>
+                options.UseNpgsql(
+                    builder.Configuration.GetConnectionString("DefaultConnection"),
+                    npgsql => npgsql.EnableRetryOnFailure(
+                        maxRetryCount: 3,
+                        maxRetryDelay: TimeSpan.FromSeconds(30),
+                        errorCodesToAdd: null)));
+        }
 
         builder.Services.AddDatabaseDeveloperPageExceptionFilter();
 
@@ -208,12 +218,20 @@ public class Program
         // Rate limiting
         builder.Services.AddRateLimiter(options =>
         {
-            options.AddFixedWindowLimiter("ApiLimit", opt =>
+            options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+            // API endpoints: 100 requests/minute
+            options.AddFixedWindowLimiter("Api", limiter =>
             {
-                opt.Window = TimeSpan.FromMinutes(1);
-                opt.PermitLimit = 60;
-                opt.QueueLimit = 10;
-                opt.QueueProcessingOrder = System.Threading.RateLimiting.QueueProcessingOrder.OldestFirst;
+                limiter.PermitLimit = 100;
+                limiter.Window = TimeSpan.FromMinutes(1);
+                limiter.QueueLimit = 10;
+            });
+            // AI endpoints: 10 requests/minute (CPU-intensive ML.NET)
+            options.AddFixedWindowLimiter("Ai", limiter =>
+            {
+                limiter.PermitLimit = 10;
+                limiter.Window = TimeSpan.FromMinutes(1);
+                limiter.QueueLimit = 2;
             });
         });
 
@@ -234,7 +252,7 @@ public class Program
             });
         }
 
-        if (!app.Environment.IsDevelopment())
+        if (!app.Environment.IsDevelopment() && !app.Environment.IsEnvironment("Testing"))
         {
             app.UseExceptionHandler("/Home/Error");
 
@@ -244,6 +262,11 @@ public class Program
                 app.UseHsts();
             }
         }
+        else
+        {
+            // Still add exception handler middleware (without redirect path) to invoke IExceptionHandlers
+            app.UseExceptionHandler(new ExceptionHandlerOptions { AllowStatusCode404Response = true });
+        }
 
         // Skip HTTPS redirection in Docker or reverse-proxy deployments
         if (string.IsNullOrEmpty(builder.Configuration["DISABLE_HTTPS"]))
@@ -251,6 +274,7 @@ public class Program
             app.UseHttpsRedirection();
         }
         app.UseStaticFiles();
+        app.UseSecurityHeaders();
         app.UseSerilogRequestLogging();
 
         app.UseRouting();
@@ -270,11 +294,8 @@ public class Program
 
         var v1 = app.MapGroup("/api/v1")
             .WithTags("API v1")
-            .RequireAuthorization(new AuthorizationPolicyBuilder()
-                .AddAuthenticationSchemes(JwtBearerDefaults.AuthenticationScheme)
-                .RequireAuthenticatedUser()
-                .Build())
-            .RequireRateLimiting("ApiLimit");
+            .RequireAuthorization()
+            .RequireRateLimiting("Api");
 
         v1.MapPost("/auth/token", async (TokenRequest req, UserManager<ApplicationUser> userManager, SignInManager<ApplicationUser> signInManager) =>
         {
