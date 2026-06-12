@@ -1,25 +1,22 @@
 ## Description
 
-Please include a summary of the changes and which issue is fixed.
-
-Fixes # (issue)
+<!-- Describe the purpose of this PR. What problem does it solve? -->
 
 ## Type of Change
 
 - [ ] Bug fix
 - [ ] New feature
-- [ ] Breaking change
 - [ ] Documentation update
+- [ ] Refactoring / performance improvement
+- [ ] Dependency update
+- [ ] CI / build configuration
 
 ## Checklist
 
-- [ ] My code follows the project's coding conventions
-- [ ] I have added tests that prove my fix/feature works
-- [ ] All tests pass (`dotnet test`)
-- [ ] The build succeeds (`dotnet build`)
-- [ ] I have updated relevant documentation
+- [ ] Code compiles successfully (`dotnet build`)
+- [ ] All existing tests pass (`dotnet test`)
+- [ ] New tests added for any new functionality
 - [ ] Public API surfaces have XML doc comments
+- [ ] Complex or non-obvious logic has inline WHY comments
+- [ ] Swagger UI reflects any API changes (if applicable)
 
-## Screenshots (if applicable)
-
-Add screenshots to help explain your changes.
