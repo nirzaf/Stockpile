@@ -4,6 +4,7 @@ using Microsoft.Extensions.Logging;
 
 namespace InventoryManagementSystem.Core.Services;
 
+/// <summary>Supplier service. Manages supplier CRUD and soft-delete lifecycle.</summary>
 public class SupplierService : ISupplierService
 {
     private readonly IRepository<Supplier> _repo;
@@ -17,9 +18,13 @@ public class SupplierService : ISupplierService
         _logger = logger;
     }
 
+    /// <inheritdoc />
     public async Task<IEnumerable<Supplier>> GetAllAsync() => await _repo.GetAllAsync();
+
+    /// <inheritdoc />
     public async Task<Supplier?> GetByIdAsync(int id) => await _repo.GetByIdAsync(id);
 
+    /// <inheritdoc />
     public async Task<Supplier> CreateAsync(Supplier supplier)
     {
         _logger.LogInformation("Creating supplier {Name}", supplier.Name);
@@ -28,6 +33,7 @@ public class SupplierService : ISupplierService
         return created;
     }
 
+    /// <inheritdoc />
     public async Task UpdateAsync(Supplier supplier)
     {
         _logger.LogInformation("Updating supplier {Id}", supplier.Id);
@@ -35,6 +41,7 @@ public class SupplierService : ISupplierService
         await _unitOfWork.SaveChangesAsync();
     }
 
+    /// <inheritdoc />
     public async Task DeleteAsync(int id)
     {
         var supplier = await _repo.GetByIdAsync(id);

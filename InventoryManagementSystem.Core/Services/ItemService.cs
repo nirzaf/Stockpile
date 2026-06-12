@@ -5,6 +5,10 @@ using Microsoft.Extensions.Caching.Memory;
 
 namespace InventoryManagementSystem.Core.Services;
 
+/// <summary>
+/// Item service. Caches the full item list in memory (10-minute TTL) and invalidates
+/// the cache on every create / update / delete.
+/// </summary>
 public class ItemService : IItemService
 {
     private readonly IRepository<Item> _repo;
@@ -21,6 +25,7 @@ public class ItemService : IItemService
         _cache = cache;
     }
 
+    /// <inheritdoc />
     public async Task<IEnumerable<Item>> GetAllAsync()
     {
         return await _cache.GetOrCreateAsync(ItemsCacheKey, async entry =>
@@ -30,10 +35,16 @@ public class ItemService : IItemService
         }) ?? Array.Empty<Item>();
     }
 
+    /// <inheritdoc />
     public async Task<IEnumerable<Item>> GetPagedAsync(int page, int pageSize) => await _repo.GetPagedAsync(page, pageSize);
+
+    /// <inheritdoc />
     public async Task<int> GetCountAsync() => await _repo.CountAsync();
+
+    /// <inheritdoc />
     public async Task<Item?> GetByIdAsync(int id) => await _repo.GetByIdAsync(id);
 
+    /// <inheritdoc />
     public async Task<Item> CreateAsync(Item item)
     {
         _logger.LogInformation("Creating item {ItemCode}", item.ItemCode);
@@ -43,6 +54,7 @@ public class ItemService : IItemService
         return created;
     }
 
+    /// <inheritdoc />
     public async Task UpdateAsync(Item item)
     {
         _logger.LogInformation("Updating item {Id}", item.Id);
@@ -51,6 +63,7 @@ public class ItemService : IItemService
         _cache.Remove(ItemsCacheKey);
     }
 
+    /// <inheritdoc />
     public async Task DeleteAsync(int id)
     {
         var item = await _repo.GetByIdAsync(id);
@@ -63,6 +76,7 @@ public class ItemService : IItemService
         }
     }
 
+    /// <inheritdoc />
     public async Task<IEnumerable<Item>> SearchAsync(string searchTerm)
     {
         var term = searchTerm.ToLower();

@@ -6,6 +6,11 @@ using Microsoft.EntityFrameworkCore.ChangeTracking;
 
 namespace InventoryManagementSystem.Infrastructure.Data;
 
+/// <summary>
+/// Entity Framework Core context for the inventory system. Extends <see cref="IdentityDbContext{TUser}"/>
+/// and additionally handles <see cref="AuditableEntity"/> timestamps, soft-delete translation,
+/// and a two-phase audit log pipeline that captures old / new / changed values for every save.
+/// </summary>
 public class InventoryDbContext : IdentityDbContext<ApplicationUser>
 {
     private readonly IHttpContextAccessor? _httpContextAccessor;
@@ -17,16 +22,40 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
         _httpContextAccessor = httpContextAccessor;
     }
 
+    /// <summary>Catalog of items.</summary>
     public DbSet<Item> Items { get; set; } = null!;
+
+    /// <summary>Current stock-in-hand per item per location.</summary>
     public DbSet<StockInHand> StockInHand { get; set; } = null!;
+
+    /// <summary>Storage locations.</summary>
     public DbSet<Location> Locations { get; set; } = null!;
+
+    /// <summary>Suppliers of items.</summary>
     public DbSet<Supplier> Suppliers { get; set; } = null!;
+
+    /// <summary>Purchase orders.</summary>
     public DbSet<PurchaseOrder> PurchaseOrders { get; set; } = null!;
+
+    /// <summary>Purchase order line items.</summary>
     public DbSet<OrderDetail> OrderDetails { get; set; } = null!;
+
+    /// <summary>Historical stock movements (receive, transfer, sell).</summary>
     public DbSet<StockTransaction> StockTransactions { get; set; } = null!;
+
+    /// <summary>Append-only audit log.</summary>
     public DbSet<AuditLog> AuditLogs { get; set; } = null!;
+
+    /// <summary>Webhook subscriptions for outbound event notifications.</summary>
     public DbSet<WebhookSubscription> WebhookSubscriptions { get; set; } = null!;
 
+    /// <summary>
+    /// Saves pending changes, stamping <see cref="AuditableEntity"/> timestamps, translating
+    /// soft-delete <see cref="EntityState.Deleted"/> entries to a flag flip, and emitting
+    /// <see cref="AuditLog"/> rows.
+    /// </summary>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The number of state entries written to the database.</returns>
     public override async Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
     {
         var currentUser = _httpContextAccessor?.HttpContext?.User?.Identity?.Name ?? "System";
@@ -261,6 +290,10 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
     }
 }
 
+/// <summary>
+/// Internal helper that captures per-property old / new values during the audit pipeline
+/// and converts them into <see cref="AuditLog"/> rows.
+/// </summary>
 public class AuditEntry
 {
     public AuditEntry(EntityEntry entry)

@@ -27,8 +27,15 @@ using InventoryManagementSystem.Core.Models;
 
 namespace InventoryManagementSystem.Web;
 
+/// <summary>
+/// Application entry point. Wires up services (DI, auth, rate limiting, Swagger, MudBlazor,
+/// MediatR, EF Core, Identity) and configures the HTTP request pipeline (middleware order:
+/// Serilog → global exception handler → rate limiting → auth → endpoints).
+/// </summary>
 public class Program
 {
+    /// <summary>Builds, configures, and runs the ASP.NET Core web application.</summary>
+    /// <param name="args">Command-line arguments passed to the host.</param>
     public static async Task Main(string[] args)
     {
         var builder = WebApplication.CreateBuilder(args);
@@ -200,6 +207,14 @@ public class Program
                     Array.Empty<string>()
                 }
             });
+
+            // Include XML doc comments from all project assemblies so Swagger UI surfaces
+            // the <summary>, <param>, and <returns> tags written in source.
+            var xmlFiles = Directory.GetFiles(AppContext.BaseDirectory, "*.xml", SearchOption.TopDirectoryOnly);
+            foreach (var xmlFile in xmlFiles)
+            {
+                c.IncludeXmlComments(xmlFile);
+            }
         });
 
         // Global exception handling

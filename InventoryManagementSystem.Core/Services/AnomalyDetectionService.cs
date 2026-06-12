@@ -7,6 +7,11 @@ using Microsoft.ML.Transforms.TimeSeries;
 
 namespace InventoryManagementSystem.Core.Services;
 
+/// <summary>
+/// Anomaly detection service. Uses ML.NET's IID (Independent and Identically Distributed)
+/// spike detector to flag days where stock movements deviate significantly from the historical
+/// baseline.
+/// </summary>
 public class AnomalyDetectionService : IAnomalyDetectionService
 {
     private readonly IRepository<StockTransaction> _txRepo;
@@ -26,6 +31,7 @@ public class AnomalyDetectionService : IAnomalyDetectionService
         _logger = logger;
     }
 
+    /// <inheritdoc />
     public async Task<IReadOnlyList<StockAnomaly>> DetectAnomaliesAsync(DateTime? from = null, DateTime? to = null)
     {
         var anomalies = new List<StockAnomaly>();

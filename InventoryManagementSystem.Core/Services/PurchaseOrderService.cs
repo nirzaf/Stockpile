@@ -4,6 +4,10 @@ using Microsoft.Extensions.Logging;
 
 namespace InventoryManagementSystem.Core.Services;
 
+/// <summary>
+/// Purchase order service. Manages the full purchase order lifecycle from creation through
+/// status transitions to deletion.
+/// </summary>
 public class PurchaseOrderService : IPurchaseOrderService
 {
     private readonly IRepository<PurchaseOrder> _poRepo;
@@ -17,16 +21,23 @@ public class PurchaseOrderService : IPurchaseOrderService
         _logger = logger;
     }
 
+    /// <inheritdoc />
     public async Task<IEnumerable<PurchaseOrder>> GetAllAsync() => await _poRepo.GetAllAsync();
+
+    /// <inheritdoc />
     public async Task<IEnumerable<PurchaseOrder>> GetPagedAsync(int page, int pageSize) => await _poRepo.GetPagedAsync(page, pageSize);
+
+    /// <inheritdoc />
     public async Task<int> GetCountAsync() => await _poRepo.CountAsync();
 
+    /// <inheritdoc />
     public async Task<PurchaseOrder?> GetByIdAsync(int id)
     {
         // Note: This relies on lazy loading or Include in a real implementation
         return await _poRepo.GetByIdAsync(id);
     }
 
+    /// <inheritdoc />
     public async Task<PurchaseOrder> CreateAsync(PurchaseOrder purchaseOrder, List<OrderDetail> details)
     {
         purchaseOrder.OrderDate = DateTime.UtcNow;
@@ -40,6 +51,7 @@ public class PurchaseOrderService : IPurchaseOrderService
         return created;
     }
 
+    /// <inheritdoc />
     public async Task UpdateStatusAsync(int id, string status)
     {
         var po = await _poRepo.GetByIdAsync(id);
@@ -54,6 +66,7 @@ public class PurchaseOrderService : IPurchaseOrderService
         _logger.LogInformation("Updated PO {Id} status to {Status}", id, parsedStatus);
     }
 
+    /// <inheritdoc />
     public async Task DeleteAsync(int id)
     {
         var po = await _poRepo.GetByIdAsync(id);

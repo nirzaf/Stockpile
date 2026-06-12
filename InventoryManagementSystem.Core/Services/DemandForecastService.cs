@@ -8,6 +8,11 @@ using Microsoft.ML.Transforms.TimeSeries;
 
 namespace InventoryManagementSystem.Core.Services;
 
+/// <summary>
+/// Demand forecast service. Uses ML.NET's SSA (Singular Spectrum Analysis) time-series
+/// forecaster per item, falling back to a moving average if the ML model fails. Results
+/// are cached in memory until the process restarts.
+/// </summary>
 public class DemandForecastService : IDemandForecastService
 {
     private readonly IRepository<StockTransaction> _txRepo;
@@ -31,6 +36,7 @@ public class DemandForecastService : IDemandForecastService
         _cache = cache;
     }
 
+    /// <inheritdoc />
     public async Task<DemandForecastResult> ForecastDemandAsync(int itemId, int horizonDays = 30)
     {
         if (_cache.TryGetValue($"forecast_{itemId}", out DemandForecastResult? cachedResult) && cachedResult != null)
@@ -42,6 +48,7 @@ public class DemandForecastService : IDemandForecastService
         return await GenerateForecastAsync(itemId, horizonDays);
     }
 
+    /// <inheritdoc />
     public async Task<IReadOnlyList<DemandForecastResult>> ForecastAllItemsAsync(int horizonDays = 30)
     {
         if (_cache.TryGetValue("forecast_all", out IReadOnlyList<DemandForecastResult>? cachedResult) && cachedResult != null)

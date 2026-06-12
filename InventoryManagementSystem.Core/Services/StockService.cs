@@ -4,6 +4,11 @@ using Microsoft.Extensions.Logging;
 
 namespace InventoryManagementSystem.Core.Services;
 
+/// <summary>
+/// Stock service. Wraps <see cref="StockInHand"/> and <see cref="StockTransaction"/>
+/// persistence with PostgreSQL <c>xmin</c> optimistic concurrency retries and webhook
+/// notifications for every movement.
+/// </summary>
 public class StockService : IStockService
 {
     private readonly IRepository<StockInHand> _stockRepo;
@@ -29,14 +34,17 @@ public class StockService : IStockService
         _logger = logger;
     }
 
+    /// <inheritdoc />
     public async Task<IEnumerable<StockInHand>> GetAllAsync() => await _stockRepo.GetAllAsync();
 
+    /// <inheritdoc />
     public async Task<StockInHand?> GetByItemAndLocationAsync(int itemId, int locationId)
     {
         var results = await _stockRepo.FindAsync(s => s.ItemId == itemId && s.LocationId == locationId);
         return results.FirstOrDefault();
     }
 
+    /// <inheritdoc />
     public async Task<IEnumerable<StockTransaction>> GetTransactionsAsync(DateTime? from, DateTime? to)
     {
         // Single composite predicate — fully executed on the database, zero in-memory filtering
@@ -70,6 +78,7 @@ public class StockService : IStockService
         }
     }
 
+    /// <inheritdoc />
     public async Task ReceiveStockAsync(int itemId, int locationId, int quantity, string? notes, string? batchNumber = null, DateTime? expiryDate = null)
     {
         if (quantity <= 0) throw new ArgumentException("Quantity must be positive");
@@ -113,6 +122,7 @@ public class StockService : IStockService
         await CheckLowStockAsync(itemId);
     }
 
+    /// <inheritdoc />
     public async Task TransferStockAsync(int itemId, int fromLocationId, int toLocationId, int quantity, string? notes, string? batchNumber = null, DateTime? expiryDate = null)
     {
         if (quantity <= 0) throw new ArgumentException("Quantity must be positive");
@@ -164,6 +174,7 @@ public class StockService : IStockService
         await CheckLowStockAsync(itemId);
     }
 
+    /// <inheritdoc />
     public async Task SellStockAsync(int itemId, int locationId, int quantity, string? notes, string? batchNumber = null, DateTime? expiryDate = null)
     {
         if (quantity <= 0) throw new ArgumentException("Quantity must be positive");

@@ -19,6 +19,14 @@ public class GlobalExceptionHandler : IExceptionHandler
         _logger = logger;
     }
 
+    /// <summary>
+    /// Translates unhandled exceptions into either a <c>ProblemDetails</c> JSON response
+    /// (for API requests) or a delegated MVC error page (for browser requests).
+    /// </summary>
+    /// <param name="httpContext">The current HTTP context.</param>
+    /// <param name="exception">The unhandled exception.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns><see langword="true"/> if a response was written; <see langword="false"/> to let the next handler try.</returns>
     public async ValueTask<bool> TryHandleAsync(
         HttpContext httpContext,
         Exception exception,
