@@ -66,6 +66,17 @@ jobs:
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.licenses=MIT
 
+      - name: Pre-pull base images (with retry for MCR rate limits)
+        run: |
+          for i in 1 2 3; do
+            docker pull mcr.microsoft.com/dotnet/sdk:10.0.300 && break
+            sleep 10
+          done
+          for i in 1 2 3; do
+            docker pull mcr.microsoft.com/dotnet/aspnet:10.0.0 && break
+            sleep 10
+          done
+
       - name: Build and push
         uses: docker/build-push-action@v7
         with:
