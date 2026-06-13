@@ -94,6 +94,9 @@ jobs:
       - name: Expose image tags
         if: github.event_name != 'pull_request'
         run: |
-          echo "## Docker image published" >> "$GITHUB_STEP_SUMMARY"
-          echo "Tags:" >> "$GITHUB_STEP_SUMMARY"
-          printf -- "- %s\n" ${{ toJson(fromJSON(steps.meta.outputs.json).tags) }} >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "## Docker image published"
+            echo "Tags:"
+            printf '%s\n' '${{ steps.meta.outputs.json }}' \
+              | jq -r '.tags[] | "- " + .'
+          } >> "$GITHUB_STEP_SUMMARY"
