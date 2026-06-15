@@ -21,7 +21,7 @@ RUN dotnet publish -c Release -o /app --no-restore
 RUN mkdir -p /app/logs
 
 # === Runtime Stage ===
-FROM mcr.microsoft.com/dotnet/aspnet:10.0.0 AS runtime
+FROM mcr.microsoft.com/dotnet/aspnet:10.0.9 AS runtime
 WORKDIR /app
 
 # Copy published files with ownership set to the built-in 'app' user (UID 1654)
