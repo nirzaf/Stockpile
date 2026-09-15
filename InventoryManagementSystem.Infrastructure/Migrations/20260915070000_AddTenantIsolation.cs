@@ -34,7 +34,7 @@ public partial class AddTenantIsolation : Migration
 
         foreach (var table in new[]
         {
-            "AspNetUsers", "Locations", "Suppliers", "PurchaseOrders", "OrderDetails", "StockInHand",
+            "AspNetUsers", "Items", "Locations", "Suppliers", "PurchaseOrders", "OrderDetails", "StockInHand",
             "StockTransactions", "AuditLogs", "WebhookSubscriptions"
         })
         {
@@ -50,7 +50,7 @@ public partial class AddTenantIsolation : Migration
 
         foreach (var table in new[]
         {
-            "AspNetUsers", "Locations", "Suppliers", "PurchaseOrders", "OrderDetails", "StockInHand",
+            "AspNetUsers", "Items", "Locations", "Suppliers", "PurchaseOrders", "OrderDetails", "StockInHand",
             "StockTransactions", "AuditLogs", "WebhookSubscriptions"
         })
         {

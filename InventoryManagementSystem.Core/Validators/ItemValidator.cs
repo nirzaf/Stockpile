@@ -14,6 +14,9 @@ public class ItemValidator : AbstractValidator<Item>
         RuleFor(x => x.Description)
             .MaximumLength(500).WithMessage("Description must not exceed 500 characters");
 
+        RuleFor(x => x.Barcode)
+            .MaximumLength(100).WithMessage("Barcode must not exceed 100 characters");
+
         RuleFor(x => x.Rate)
             .GreaterThan(0).WithMessage("Rate must be greater than zero");
     }
