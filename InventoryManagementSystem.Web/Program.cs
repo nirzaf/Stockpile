@@ -11,6 +11,7 @@ using InventoryManagementSystem.Core.Validators;
 using InventoryManagementSystem.Infrastructure.Data;
 using InventoryManagementSystem.Infrastructure.Repositories;
 using InventoryManagementSystem.Web.Middleware;
+using InventoryManagementSystem.Web.Services;
 using MediatR;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
@@ -179,6 +180,7 @@ public class Program
         // HttpClient Factory & Webhooks
         builder.Services.AddHttpClient();
         builder.Services.AddSingleton<IWebhookDispatcher, InventoryManagementSystem.Infrastructure.Services.WebhookDispatcher>();
+        builder.Services.AddSingleton<IIdempotencyKeyStore, IdempotencyKeyStore>();
 
         // FluentValidation — auto-validates MediatR requests via pipeline behavior
         builder.Services.AddValidatorsFromAssemblyContaining<ItemValidator>();
@@ -454,13 +456,35 @@ public class Program
             .WithName("GetAllStock")
             .WithTags("Stock");
 
-        v1.MapPost("/stock/receive", async (ReceiveStockCommand cmd, IMediator mediator) =>
+        v1.MapPost("/stock/receive", async (
+            ReceiveStockCommand cmd,
+            HttpRequest request,
+            IMediator mediator,
+            IIdempotencyKeyStore idempotencyKeyStore) =>
         {
-            await mediator.Send(cmd);
+            var idempotencyKey = request.Headers["Idempotency-Key"].ToString();
+            if (idempotencyKey.Length > 200)
+            {
+                return Results.BadRequest(ApiResponse<object>.CreateFailure(
+                    "Idempotency-Key must be 200 characters or fewer."));
+            }
+
+            if (string.IsNullOrWhiteSpace(idempotencyKey))
+            {
+                await mediator.Send(cmd);
+            }
+            else
+            {
+                var tenantId = request.HttpContext.User.FindFirst("tenant_id")?.Value ?? "default";
+                var scope = $"{tenantId}:{request.Method}:{request.Path}";
+                await idempotencyKeyStore.ExecuteAsync(scope, idempotencyKey, () => mediator.Send(cmd));
+            }
+
             return Results.NoContent();
         })
             .WithName("ReceiveStock")
             .WithTags("Stock")
+            .WithDescription("Receives stock. Supply Idempotency-Key to safely retry a request.")
             .RequireAuthorization(policy => policy.RequireRole("Admin", "Manager", "Staff"));
 
         // === AI / ML endpoints ===
