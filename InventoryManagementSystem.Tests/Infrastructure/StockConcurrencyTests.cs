@@ -2,6 +2,7 @@ using FluentAssertions;
 using InventoryManagementSystem.Core.Entities;
 using InventoryManagementSystem.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Metadata;
 
 namespace InventoryManagementSystem.Tests.Infrastructure;
 
