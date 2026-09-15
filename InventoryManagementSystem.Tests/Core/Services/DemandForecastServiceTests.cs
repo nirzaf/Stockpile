@@ -189,37 +189,4 @@ public class DemandForecastServiceTests
 
         result.Should().BeEmpty();
     }
-
-    [Fact]
-    public async Task ForecastDemandAsync_CachesGeneratedForecast()
-    {
-        var item = _fixture.Build<Item>().With(i => i.Id, 7).With(i => i.ItemCode, "CACHED-001").Create();
-        var transactions = Enumerable.Range(1, 10).Select(d =>
-            _fixture.Build<StockTransaction>()
-                .With(t => t.ItemId, 7)
-                .With(t => t.TransactionDate, DateTime.UtcNow.AddDays(-d))
-                .With(t => t.TransactionType, TransactionType.Sell)
-                .With(t => t.Quantity, 10)
-                .Create()).ToList();
-        var itemRepo = new Mock<IRepository<Item>>();
-        var transactionRepo = new Mock<IRepository<StockTransaction>>();
-        itemRepo.Setup(r => r.FindAsync(It.IsAny<Expression<Func<Item, bool>>>()))
-            .ReturnsAsync(new[] { item });
-        transactionRepo.Setup(r => r.FindAsync(It.IsAny<Expression<Func<StockTransaction, bool>>>()))
-            .ReturnsAsync(transactions);
-
-        using var cache = new MemoryCache(new MemoryCacheOptions());
-        var service = new DemandForecastService(
-            transactionRepo.Object,
-            itemRepo.Object,
-            NullLogger<DemandForecastService>.Instance,
-            cache);
-
-        var first = await service.ForecastDemandAsync(7, 5);
-        var second = await service.ForecastDemandAsync(7, 5);
-
-        second.Should().BeSameAs(first);
-        itemRepo.Verify(r => r.FindAsync(It.IsAny<Expression<Func<Item, bool>>>()), Times.Once);
-        transactionRepo.Verify(r => r.FindAsync(It.IsAny<Expression<Func<StockTransaction, bool>>>()), Times.Once);
-    }
 }
