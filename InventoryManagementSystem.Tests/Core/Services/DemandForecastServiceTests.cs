@@ -5,6 +5,7 @@ using InventoryManagementSystem.Core.Entities;
 using InventoryManagementSystem.Core.Interfaces;
 using InventoryManagementSystem.Core.Services;
 using InventoryManagementSystem.Tests.Common;
+using InventoryManagementSystem.Tests.Infrastructure;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
@@ -25,7 +26,8 @@ public class DemandForecastServiceTests
         _sut = new DemandForecastService(
             _txRepoMock.Object, _itemRepoMock.Object,
             NullLogger<DemandForecastService>.Instance,
-            _cache);
+            _cache,
+            new TestTenantContext("test-tenant"));
     }
 
     [Fact]
@@ -213,7 +215,8 @@ public class DemandForecastServiceTests
             transactionRepo.Object,
             itemRepo.Object,
             NullLogger<DemandForecastService>.Instance,
-            cache);
+            cache,
+            new TestTenantContext("test-tenant"));
 
         var first = await service.ForecastDemandAsync(7, 5);
         var second = await service.ForecastDemandAsync(7, 5);
@@ -272,7 +275,8 @@ public class DemandForecastServiceTests
             transactionRepo.Object,
             itemRepo.Object,
             NullLogger<DemandForecastService>.Instance,
-            cache);
+            cache,
+            new TestTenantContext("test-tenant"));
 
         await service.ForecastAllItemsAsync(5);
 

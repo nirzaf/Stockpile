@@ -4,6 +4,7 @@ using InventoryManagementSystem.Core.Entities;
 using InventoryManagementSystem.Core.Interfaces;
 using InventoryManagementSystem.Core.Services;
 using InventoryManagementSystem.Tests.Common;
+using InventoryManagementSystem.Tests.Infrastructure;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Caching.Memory;
 using Moq;
@@ -20,7 +21,12 @@ public class ItemServiceTests
 
     public ItemServiceTests()
     {
-        _sut = new ItemService(_repoMock.Object, _uowMock.Object, NullLogger<ItemService>.Instance, _cache);
+        _sut = new ItemService(
+            _repoMock.Object,
+            _uowMock.Object,
+            NullLogger<ItemService>.Instance,
+            _cache,
+            new TestTenantContext("test-tenant"));
     }
 
     [Fact]
@@ -66,6 +72,30 @@ public class ItemServiceTests
         // Assert
         result.Should().BeEquivalentTo(items);
         _repoMock.Verify(r => r.GetAllAsync(), Times.Once);
+    }
+
+    [Fact]
+    public async Task GetAllAsync_does_not_share_cached_items_between_tenants()
+    {
+        var cache = new MemoryCache(new MemoryCacheOptions());
+        var tenantAItems = new[] { new Item { ItemCode = "TENANT-A" } };
+        var tenantBItems = new[] { new Item { ItemCode = "TENANT-B" } };
+        var tenantARepo = new Mock<IItemRepository>();
+        var tenantBRepo = new Mock<IItemRepository>();
+        tenantARepo.Setup(repository => repository.GetAllAsync()).ReturnsAsync(tenantAItems);
+        tenantBRepo.Setup(repository => repository.GetAllAsync()).ReturnsAsync(tenantBItems);
+
+        var tenantAService = new ItemService(
+            tenantARepo.Object, _uowMock.Object, NullLogger<ItemService>.Instance, cache,
+            new TestTenantContext("tenant-a"));
+        var tenantBService = new ItemService(
+            tenantBRepo.Object, _uowMock.Object, NullLogger<ItemService>.Instance, cache,
+            new TestTenantContext("tenant-b"));
+
+        (await tenantAService.GetAllAsync()).Single().ItemCode.Should().Be("TENANT-A");
+        (await tenantBService.GetAllAsync()).Single().ItemCode.Should().Be("TENANT-B");
+        tenantARepo.Verify(repository => repository.GetAllAsync(), Times.Once);
+        tenantBRepo.Verify(repository => repository.GetAllAsync(), Times.Once);
     }
 
     [Fact]

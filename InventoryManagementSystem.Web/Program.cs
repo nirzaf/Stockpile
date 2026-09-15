@@ -652,10 +652,16 @@ public class Program
 
         // === AI / ML endpoints ===
 
-        v1.MapGet("/forecast/{itemId:int}", async (int itemId, int? horizon, IMediator mediator, IMemoryCache cache) =>
+        v1.MapGet("/forecast/{itemId:int}", async (
+            int itemId,
+            int? horizon,
+            IMediator mediator,
+            IMemoryCache cache,
+            ITenantContext tenantContext) =>
         {
             var horizonDays = horizon ?? 30;
-            var forecast = await cache.GetOrCreateAsync($"forecast:item:{itemId}:horizon:{horizonDays}", async entry =>
+            var cacheKey = TenantCacheKeys.ForecastForItem(tenantContext.TenantId, itemId, horizonDays);
+            var forecast = await cache.GetOrCreateAsync(cacheKey, async entry =>
             {
                 entry.AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(5);
                 return await mediator.Send(new ForecastDemandQuery(itemId, horizonDays));
@@ -666,10 +672,15 @@ public class Program
             .WithTags("AI")
             .RequireRateLimiting("Ai");
 
-        v1.MapGet("/forecast", async (int? horizon, IMediator mediator, IMemoryCache cache) =>
+        v1.MapGet("/forecast", async (
+            int? horizon,
+            IMediator mediator,
+            IMemoryCache cache,
+            ITenantContext tenantContext) =>
         {
             var horizonDays = horizon ?? 30;
-            var forecasts = await cache.GetOrCreateAsync($"forecast:all:horizon:{horizonDays}", async entry =>
+            var cacheKey = TenantCacheKeys.ForecastForAllItems(tenantContext.TenantId, horizonDays);
+            var forecasts = await cache.GetOrCreateAsync(cacheKey, async entry =>
             {
                 entry.AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(5);
                 return await mediator.Send(new ForecastAllItemsDemandQuery(horizonDays));

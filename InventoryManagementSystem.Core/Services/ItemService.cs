@@ -15,21 +15,28 @@ public class ItemService : IItemService
     private readonly IUnitOfWork _unitOfWork;
     private readonly ILogger<ItemService> _logger;
     private readonly IMemoryCache _cache;
-    private const string ItemsCacheKey = "all_items";
+    private readonly ITenantContext _tenantContext;
     private const int MaxSearchTermLength = 100;
 
-    public ItemService(IItemRepository repo, IUnitOfWork unitOfWork, ILogger<ItemService> logger, IMemoryCache cache)
+    public ItemService(
+        IItemRepository repo,
+        IUnitOfWork unitOfWork,
+        ILogger<ItemService> logger,
+        IMemoryCache cache,
+        ITenantContext tenantContext)
     {
         _repo = repo;
         _unitOfWork = unitOfWork;
         _logger = logger;
         _cache = cache;
+        _tenantContext = tenantContext;
     }
 
     /// <inheritdoc />
     public async Task<IEnumerable<Item>> GetAllAsync()
     {
-        return await _cache.GetOrCreateAsync(ItemsCacheKey, async entry =>
+        var cacheKey = TenantCacheKeys.AllItems(_tenantContext.TenantId);
+        return await _cache.GetOrCreateAsync(cacheKey, async entry =>
         {
             entry.AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(10);
             return await _repo.GetAllAsync();
@@ -51,7 +58,7 @@ public class ItemService : IItemService
         _logger.LogInformation("Creating item {ItemCode}", item.ItemCode);
         var created = await _repo.AddAsync(item);
         await _unitOfWork.SaveChangesAsync();
-        _cache.Remove(ItemsCacheKey);
+        _cache.Remove(TenantCacheKeys.AllItems(_tenantContext.TenantId));
         return created;
     }
 
@@ -61,7 +68,7 @@ public class ItemService : IItemService
         _logger.LogInformation("Updating item {Id}", item.Id);
         await _repo.UpdateAsync(item);
         await _unitOfWork.SaveChangesAsync();
-        _cache.Remove(ItemsCacheKey);
+        _cache.Remove(TenantCacheKeys.AllItems(_tenantContext.TenantId));
     }
 
     /// <inheritdoc />
@@ -73,7 +80,7 @@ public class ItemService : IItemService
             _logger.LogInformation("Deleting item {Id}", id);
             await _repo.DeleteAsync(item);
             await _unitOfWork.SaveChangesAsync();
-            _cache.Remove(ItemsCacheKey);
+            _cache.Remove(TenantCacheKeys.AllItems(_tenantContext.TenantId));
         }
     }
 
