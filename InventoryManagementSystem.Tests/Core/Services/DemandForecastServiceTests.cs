@@ -3,11 +3,13 @@ using AutoFixture;
 using FluentAssertions;
 using InventoryManagementSystem.Core.Entities;
 using InventoryManagementSystem.Core.Interfaces;
+using InventoryManagementSystem.Core.Options;
 using InventoryManagementSystem.Core.Services;
 using InventoryManagementSystem.Tests.Common;
 using InventoryManagementSystem.Tests.Infrastructure;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using Moq;
 
 namespace InventoryManagementSystem.Tests.Core.Services;
@@ -27,7 +29,8 @@ public class DemandForecastServiceTests
             _txRepoMock.Object, _itemRepoMock.Object,
             NullLogger<DemandForecastService>.Instance,
             _cache,
-            new TestTenantContext("test-tenant"));
+            new TestTenantContext("test-tenant"),
+            Options.Create(new ForecastingOptions()));
     }
 
     [Fact]
@@ -82,6 +85,7 @@ public class DemandForecastServiceTests
         result.TotalHistoricalDays.Should().Be(30);
         result.AverageDailyDemand.Should().BeGreaterThan(0);
         result.ForecastedValues.Should().NotBeEmpty();
+        result.ForecastingImplementation.Should().Be(ForecastingImplementations.ManagedMovingAverage);
     }
 
     [Fact]
@@ -216,7 +220,8 @@ public class DemandForecastServiceTests
             itemRepo.Object,
             NullLogger<DemandForecastService>.Instance,
             cache,
-            new TestTenantContext("test-tenant"));
+            new TestTenantContext("test-tenant"),
+            Options.Create(new ForecastingOptions()));
 
         var first = await service.ForecastDemandAsync(7, 5);
         var second = await service.ForecastDemandAsync(7, 5);
@@ -309,7 +314,8 @@ public class DemandForecastServiceTests
             itemRepo.Object,
             NullLogger<DemandForecastService>.Instance,
             cache,
-            new TestTenantContext("test-tenant"));
+            new TestTenantContext("test-tenant"),
+            Options.Create(new ForecastingOptions()));
 
         await service.ForecastAllItemsAsync(5);
 
