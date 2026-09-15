@@ -159,6 +159,28 @@ dotnet ef migrations add MigrationName    # add migration
   --startup-project InventoryManagementSystem.Web
 ```
 
+### Multi-operation transactions
+
+Services that perform multiple persistence operations as one business action can use the
+`IUnitOfWork` transaction boundary:
+
+```csharp
+await unitOfWork.BeginTransactionAsync(cancellationToken);
+try
+{
+    // Add or update entities through the repositories.
+    await unitOfWork.CommitTransactionAsync(cancellationToken);
+}
+catch
+{
+    await unitOfWork.RollbackTransactionAsync(cancellationToken);
+    throw;
+}
+```
+
+`CommitTransactionAsync` saves pending changes before committing and rolls back on failure.
+The normal `SaveChangesAsync` path remains available for single-operation service methods.
+
 ## Deployment
 
 ```bash
