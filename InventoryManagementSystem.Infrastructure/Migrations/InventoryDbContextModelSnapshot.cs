@@ -310,8 +310,15 @@ namespace InventoryManagementSystem.Infrastructure.Migrations
                     b.Property<int>("LocationId")
                         .HasColumnType("integer");
 
+                    b.Property<string>("BatchNumber")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
                     b.Property<int>("Quantity")
                         .HasColumnType("integer");
+
+                    b.Property<DateTime?>("ExpiryDate")
+                        .HasColumnType("timestamp with time zone");
 
                     b.Property<string>("TenantId")
                         .IsRequired()
@@ -334,7 +341,7 @@ namespace InventoryManagementSystem.Infrastructure.Migrations
 
                     b.HasIndex("LocationId");
 
-                    b.HasIndex("ItemId", "LocationId")
+                    b.HasIndex("TenantId", "ItemId", "LocationId", "BatchNumber", "ExpiryDate")
                         .IsUnique();
 
                     b.HasIndex("TenantId");
