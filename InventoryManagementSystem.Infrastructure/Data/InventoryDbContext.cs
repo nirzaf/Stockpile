@@ -249,7 +249,8 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
             entity.HasQueryFilter(e => e.TenantId == CurrentTenantId);
             entity.Property(e => e.TenantId).HasMaxLength(64).IsRequired();
             entity.HasIndex(e => e.TenantId);
-            entity.HasIndex(e => new { e.ItemId, e.LocationId }).IsUnique();
+            entity.Property(e => e.BatchNumber).HasMaxLength(100);
+            entity.HasIndex(e => new { e.TenantId, e.ItemId, e.LocationId, e.BatchNumber, e.ExpiryDate }).IsUnique();
 
             entity.HasOne(s => s.Item)
                   .WithMany(i => i.StockInHands)
