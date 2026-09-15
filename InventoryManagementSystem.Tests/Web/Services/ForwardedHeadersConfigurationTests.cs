@@ -1,6 +1,7 @@
 using System.Net;
 using FluentAssertions;
 using InventoryManagementSystem.Web.Security;
+using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.Extensions.Configuration;
 
