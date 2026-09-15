@@ -50,7 +50,7 @@ public class CustomWebApplicationFactory : WebApplicationFactory<InventoryManage
         });
     }
 
-    public HttpClient CreateAuthenticatedClient(string role = "Admin")
+    public HttpClient CreateAuthenticatedClient(string role = "Admin", string tenantId = "test-tenant")
     {
         var client = CreateClient(new WebApplicationFactoryClientOptions
         {
@@ -64,7 +64,8 @@ public class CustomWebApplicationFactory : WebApplicationFactory<InventoryManage
             {
                 new Claim(ClaimTypes.Name, "testuser@test.com"),
                 new Claim(ClaimTypes.NameIdentifier, "1"),
-                new Claim(ClaimTypes.Role, role)
+                new Claim(ClaimTypes.Role, role),
+                new Claim("tenant_id", tenantId)
             }),
             Expires = DateTime.UtcNow.AddMinutes(5),
             Issuer = "InventoryManagementSystem",
