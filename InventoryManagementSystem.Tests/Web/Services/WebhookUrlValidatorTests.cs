@@ -1,3 +1,4 @@
+using FluentAssertions;
 using InventoryManagementSystem.Web.Security;
 
 namespace InventoryManagementSystem.Tests.Web.Services;
