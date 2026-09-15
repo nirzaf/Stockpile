@@ -14,7 +14,7 @@ public class SoftDeleteTests
             .UseInMemoryDatabase(Guid.NewGuid().ToString())
             .Options;
 
-        await using var context = new InventoryDbContext(options);
+        await using var context = new InventoryDbContext(options, new TestTenantContext("default"));
         var item = new Item
         {
             ItemCode = "SOFT-DELETE-001",

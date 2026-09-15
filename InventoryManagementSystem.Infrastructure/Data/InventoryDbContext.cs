@@ -15,18 +15,19 @@ namespace InventoryManagementSystem.Infrastructure.Data;
 public class InventoryDbContext : IdentityDbContext<ApplicationUser>
 {
     private readonly IHttpContextAccessor? _httpContextAccessor;
-    private readonly string _tenantId;
+    private readonly ITenantContext _tenantContext;
 
     public InventoryDbContext(
         DbContextOptions<InventoryDbContext> options,
+        ITenantContext tenantContext,
         IHttpContextAccessor? httpContextAccessor = null) : base(options)
     {
+        _tenantContext = tenantContext ?? throw new ArgumentNullException(nameof(tenantContext));
         _httpContextAccessor = httpContextAccessor;
-        _tenantId = httpContextAccessor?.HttpContext?.User?.FindFirst("tenant_id")?.Value ?? "default";
     }
 
-    /// <summary>Tenant selected for this request scope, or <c>default</c> for system work.</summary>
-    public string CurrentTenantId => _tenantId;
+    /// <summary>Tenant selected for this request or explicitly-created work scope.</summary>
+    public string CurrentTenantId => _tenantContext.TenantId;
 
     /// <summary>Catalog of items.</summary>
     public DbSet<Item> Items { get; set; } = null!;
