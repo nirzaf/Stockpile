@@ -176,13 +176,23 @@ public class Program
         builder.Services.AddMediatR(cfg =>
             cfg.RegisterServicesFromAssembly(typeof(InventoryManagementSystem.Core.Features.Items.Queries.GetAllItemsQuery).Assembly));
 
-        // CORS policy
+        // CORS policy. Origins are configuration-driven so deployments can expose the API
+        // only to their own trusted browser clients. An empty list intentionally disables
+        // cross-origin browser access while preserving same-origin requests.
+        var allowedOrigins = builder.Configuration
+            .GetSection("Cors:AllowedOrigins")
+            .Get<string[]>() ?? [];
+
         builder.Services.AddCors(options =>
         {
             options.AddPolicy("Default", policy =>
             {
-                policy.AllowAnyOrigin()
-                      .AllowAnyHeader()
+                if (allowedOrigins.Length > 0)
+                {
+                    policy.WithOrigins(allowedOrigins);
+                }
+
+                policy.AllowAnyHeader()
                       .AllowAnyMethod();
             });
         });
