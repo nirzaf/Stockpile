@@ -11,13 +11,14 @@ namespace InventoryManagementSystem.Core.Services;
 /// </summary>
 public class ItemService : IItemService
 {
-    private readonly IRepository<Item> _repo;
+    private readonly IItemRepository _repo;
     private readonly IUnitOfWork _unitOfWork;
     private readonly ILogger<ItemService> _logger;
     private readonly IMemoryCache _cache;
     private const string ItemsCacheKey = "all_items";
+    private const int MaxSearchTermLength = 100;
 
-    public ItemService(IRepository<Item> repo, IUnitOfWork unitOfWork, ILogger<ItemService> logger, IMemoryCache cache)
+    public ItemService(IItemRepository repo, IUnitOfWork unitOfWork, ILogger<ItemService> logger, IMemoryCache cache)
     {
         _repo = repo;
         _unitOfWork = unitOfWork;
@@ -79,9 +80,18 @@ public class ItemService : IItemService
     /// <inheritdoc />
     public async Task<IEnumerable<Item>> SearchAsync(string searchTerm)
     {
-        var term = searchTerm.ToLower();
-        return await _repo.FindAsync(i =>
-            i.ItemCode.ToLower().Contains(term) ||
-            i.Description.ToLower().Contains(term));
+        if (string.IsNullOrWhiteSpace(searchTerm))
+        {
+            return Array.Empty<Item>();
+        }
+
+        var term = searchTerm.Trim();
+        if (term.Length > MaxSearchTermLength)
+        {
+            throw new ArgumentException(
+                $"Search term cannot exceed {MaxSearchTermLength} characters.", nameof(searchTerm));
+        }
+
+        return await _repo.SearchAsync(term);
     }
 }

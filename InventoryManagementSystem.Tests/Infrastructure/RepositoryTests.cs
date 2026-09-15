@@ -32,4 +32,24 @@ public class RepositoryTests
         projectedQuery.Should().BeAssignableTo<IQueryable<string>>();
         (await projectedQuery.SingleAsync()).Should().Be("COMPOSE-001");
     }
+
+    [Fact]
+    public async Task ItemRepository_Search_is_case_insensitive_across_catalog_fields()
+    {
+        var options = new DbContextOptionsBuilder<InventoryDbContext>()
+            .UseInMemoryDatabase(Guid.NewGuid().ToString())
+            .Options;
+
+        await using var context = new InventoryDbContext(options);
+        context.Items.AddRange(
+            new Item { ItemCode = "SEARCH-001", Description = "Widget", Barcode = "12345", Rate = 10m },
+            new Item { ItemCode = "OTHER-001", Description = "Different", Rate = 20m });
+        await context.SaveChangesAsync();
+
+        var repository = new ItemRepository(context);
+
+        var results = await repository.SearchAsync("widget");
+
+        results.Should().ContainSingle(item => item.ItemCode == "SEARCH-001");
+    }
 }
