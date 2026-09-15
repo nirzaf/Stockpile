@@ -13,8 +13,8 @@ permissions:
   actions: read
 
 concurrency:
-  group: security
-  cancel-in-progress: true
+  group: security-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   codeql:
