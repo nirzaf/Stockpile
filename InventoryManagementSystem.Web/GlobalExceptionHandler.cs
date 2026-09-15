@@ -89,10 +89,9 @@ public class GlobalExceptionHandler : IExceptionHandler
             {
                 Status = (int)statusCode,
                 Title = title,
-                Detail = httpContext.RequestServices
-                    .GetRequiredService<IHostEnvironment>().IsDevelopment()
-                    ? exception.Message
-                    : title,
+                // The full exception is logged above for operators. API clients always
+                // receive a stable, non-sensitive message regardless of environment.
+                Detail = title,
                 Instance = httpContext.Request.Path
             };
 
