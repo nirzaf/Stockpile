@@ -31,7 +31,13 @@ using InventoryManagementSystem.Web.BackgroundServices;
 using InventoryManagementSystem.Core.Entities;
 using InventoryManagementSystem.Core.Models;
 using InventoryManagementSystem.Core.Options;
+using InventoryManagementSystem.Core.Diagnostics;
 using InventoryManagementSystem.Web.Security;
+using OpenTelemetry.Metrics;
+using OpenTelemetry.Exporter;
+using OpenTelemetry;
+using OpenTelemetry.Resources;
+using OpenTelemetry.Trace;
 
 namespace InventoryManagementSystem.Web;
 
@@ -55,6 +61,28 @@ public class Program
             .CreateLogger();
 
         builder.Host.UseSerilog();
+
+        var telemetryEnabled = builder.Configuration.GetValue<bool>("OpenTelemetry:Enabled");
+        if (telemetryEnabled)
+        {
+            var openTelemetry = builder.Services.AddOpenTelemetry()
+                .ConfigureResource(resource => resource.AddService("Stockpile"))
+                .WithTracing(tracing => tracing
+                    .AddAspNetCoreInstrumentation()
+                    .AddHttpClientInstrumentation()
+                    .AddEntityFrameworkCoreInstrumentation())
+                .WithMetrics(metrics => metrics
+                    .AddAspNetCoreInstrumentation()
+                    .AddHttpClientInstrumentation()
+                    .AddRuntimeInstrumentation()
+                    .AddMeter(InventoryTelemetry.MeterName));
+
+            var telemetryEndpoint = builder.Configuration["OpenTelemetry:OtlpEndpoint"];
+            if (!string.IsNullOrWhiteSpace(telemetryEndpoint))
+            {
+                openTelemetry.UseOtlpExporter(OtlpExportProtocol.HttpProtobuf, new Uri(telemetryEndpoint));
+            }
+        }
 
         // Production cookie and token protection keys must survive container replacement and
         // be shared by replicas. Development and Testing retain the framework's self-contained
