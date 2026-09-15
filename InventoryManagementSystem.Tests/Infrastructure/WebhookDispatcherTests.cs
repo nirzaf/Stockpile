@@ -6,7 +6,9 @@ using System.Text;
 using FluentAssertions;
 using InventoryManagementSystem.Core.Entities;
 using InventoryManagementSystem.Core.Interfaces;
+using InventoryManagementSystem.Core.Models;
 using InventoryManagementSystem.Infrastructure.Services;
+using InventoryManagementSystem.Web.Tenancy;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
@@ -30,6 +32,7 @@ public class WebhookDispatcherTests
 
         var services = new ServiceCollection();
         services.AddScoped<IRepository<WebhookSubscription>>(_ => repository.Object);
+        services.AddScoped<ITenantContext, TenantContext>();
         using var serviceProvider = services.BuildServiceProvider();
 
         var handler = new RecordingHandler();
@@ -41,9 +44,16 @@ public class WebhookDispatcherTests
             httpClientFactory.Object,
             NullLogger<WebhookDispatcher>.Instance);
 
-        await dispatcher.DispatchAsync("Stock.Low", new { ItemId = 42, TotalStock = 3 });
+        var webhookEvent = WebhookEventFactory.Create(
+            new TestTenantContext("tenant-a"),
+            "Stock.Low",
+            new { ItemId = 42, TotalStock = 3 });
+        await dispatcher.DispatchAsync(webhookEvent);
 
         handler.EventHeader.Should().Be("Stock.Low");
+        handler.Body.Should().Contain($"\"TenantId\":\"{webhookEvent.TenantId}\"");
+        handler.Body.Should().Contain($"\"EventId\":\"{webhookEvent.EventId}\"");
+        handler.Body.Should().Contain("\"EventType\":\"Stock.Low\"");
         handler.Body.Should().Contain("\"ItemId\":42");
         var expectedSignature = Convert.ToHexString(
             HMACSHA256.HashData(Encoding.UTF8.GetBytes("shared-secret"), Encoding.UTF8.GetBytes(handler.Body)))
