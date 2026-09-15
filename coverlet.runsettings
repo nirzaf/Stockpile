@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<RunSettings>
+  <DataCollectionRunSettings>
+    <DataCollectors>
+      <DataCollector friendlyName="XPlat Code Coverage">
+        <Configuration>
+          <Format>cobertura</Format>
+          <Exclude>[*.Tests]*,[InventoryManagementSystem.Web]InventoryManagementSystem.Web.Components.*,[InventoryManagementSystem.Web]AspNetCoreGeneratedDocument.*,[InventoryManagementSystem.Infrastructure]InventoryManagementSystem.Infrastructure.Migrations.*,[InventoryManagementSystem.Infrastructure]InventoryManagementSystem.Infrastructure.Data.SeedData</Exclude>
+          <ExcludeByAttribute>GeneratedCodeAttribute,CompilerGeneratedAttribute</ExcludeByAttribute>
+        </Configuration>
+      </DataCollector>
+    </DataCollectors>
+  </DataCollectionRunSettings>
+</RunSettings>
