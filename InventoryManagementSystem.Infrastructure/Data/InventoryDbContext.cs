@@ -208,8 +208,8 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
             entity.HasQueryFilter(e => !e.IsDeleted && e.TenantId == CurrentTenantId);
             entity.Property(e => e.TenantId).HasMaxLength(64).IsRequired();
             entity.HasIndex(e => e.TenantId);
-            entity.HasIndex(e => e.ItemCode).IsUnique();
-            entity.HasIndex(e => e.Barcode).IsUnique();
+            entity.HasIndex(e => new { e.TenantId, e.ItemCode }).IsUnique();
+            entity.HasIndex(e => new { e.TenantId, e.Barcode }).IsUnique();
             entity.Property(e => e.ItemCode).HasMaxLength(50).IsRequired();
             entity.Property(e => e.Description).HasMaxLength(500);
             entity.Property(e => e.Barcode).HasMaxLength(100);
@@ -278,7 +278,7 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
             entity.HasQueryFilter(e => e.TenantId == CurrentTenantId);
             entity.Property(e => e.TenantId).HasMaxLength(64).IsRequired();
             entity.HasIndex(e => e.TenantId);
-            entity.HasIndex(e => e.PONumber).IsUnique();
+            entity.HasIndex(e => new { e.TenantId, e.PONumber }).IsUnique();
             entity.Property(e => e.PONumber).HasMaxLength(50).IsRequired();
             entity.Property(e => e.TotalAmount).HasColumnType("decimal(18,2)");
             entity.Property(e => e.Status).HasConversion<string>().HasMaxLength(50);

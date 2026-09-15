@@ -23,7 +23,7 @@ else
                 <EditForm Model="@_item" OnValidSubmit="OnValidSubmit">
                     <DataAnnotationsValidator />
                     <MudTextField @bind-Value="_item.ItemCode" Label="Item Code" Required="true" For="@(() => _item.ItemCode)" Class="mb-3" />
-                    <MudTextField @bind-Value="_item.Barcode" Label="Barcode (SKU/EAN)" For="@(() => _item.Barcode)" Class="mb-3" />
+                    <MudTextField @bind-Value="_item.Barcode" Label="Barcode (SKU/EAN)" Placeholder="Scan or enter barcode" For="@(() => _item.Barcode)" Class="mb-3" />
                     <MudTextField @bind-Value="_item.Description" Label="Description" Required="true" For="@(() => _item.Description)" Class="mb-3" />
                     <MudNumericField @bind-Value="_item.Rate" Label="Rate" Format="N2" Required="true" For="@(() => _item.Rate)" Class="mb-3" />
                     <MudSelect T="int?" @bind-Value="_item.SupplierId" Label="Supplier" AnchorOrigin="Origin.BottomCenter" Class="mb-3">

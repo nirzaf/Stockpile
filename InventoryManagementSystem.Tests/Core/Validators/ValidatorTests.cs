@@ -34,6 +34,22 @@ public class ItemValidatorTests
     }
 
     [Fact]
+    public void Validate_BarcodeExceeds100_HasError()
+    {
+        var item = new Item
+        {
+            ItemCode = "CODE",
+            Barcode = new string('1', 101),
+            Description = "Test",
+            Rate = 10m
+        };
+
+        var result = _sut.TestValidate(item);
+
+        result.ShouldHaveValidationErrorFor(x => x.Barcode);
+    }
+
+    [Fact]
     public void Validate_RateZero_HasError()
     {
         var item = new Item { ItemCode = "CODE", Description = "Test", Rate = 0 };

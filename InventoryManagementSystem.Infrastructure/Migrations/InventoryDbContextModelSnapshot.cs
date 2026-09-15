@@ -50,6 +50,11 @@ namespace InventoryManagementSystem.Infrastructure.Migrations
                     b.Property<string>("OldValues")
                         .HasColumnType("text");
 
+                    b.Property<string>("TenantId")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
                     b.Property<DateTime>("Timestamp")
                         .HasColumnType("timestamp with time zone");
 
@@ -58,6 +63,8 @@ namespace InventoryManagementSystem.Infrastructure.Migrations
                         .HasColumnType("text");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("TenantId");
 
                     b.ToTable("AuditLogs");
                 });
@@ -93,6 +100,11 @@ namespace InventoryManagementSystem.Infrastructure.Migrations
                         .HasMaxLength(50)
                         .HasColumnType("character varying(50)");
 
+                    b.Property<string>("TenantId")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
                     b.Property<decimal>("Rate")
                         .HasColumnType("decimal(18,2)");
 
@@ -112,13 +124,15 @@ namespace InventoryManagementSystem.Infrastructure.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("Barcode")
+                    b.HasIndex("TenantId", "Barcode")
                         .IsUnique();
 
-                    b.HasIndex("ItemCode")
+                    b.HasIndex("TenantId", "ItemCode")
                         .IsUnique();
 
                     b.HasIndex("SupplierId");
+
+                    b.HasIndex("TenantId");
 
                     b.ToTable("Items");
                 });
@@ -148,6 +162,11 @@ namespace InventoryManagementSystem.Infrastructure.Migrations
                         .IsRequired()
                         .HasMaxLength(200)
                         .HasColumnType("character varying(200)");
+
+                    b.Property<string>("TenantId")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
 
                     b.Property<DateTime?>("UpdatedAt")
                         .HasColumnType("timestamp with time zone");
@@ -180,6 +199,11 @@ namespace InventoryManagementSystem.Infrastructure.Migrations
                     b.Property<int>("PurchaseOrderId")
                         .HasColumnType("integer");
 
+                    b.Property<string>("TenantId")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
                     b.Property<int>("Quantity")
                         .HasColumnType("integer");
 
@@ -197,6 +221,8 @@ namespace InventoryManagementSystem.Infrastructure.Migrations
                     b.HasIndex("ItemId");
 
                     b.HasIndex("PurchaseOrderId");
+
+                    b.HasIndex("TenantId");
 
                     b.ToTable("OrderDetails");
                 });
@@ -234,6 +260,11 @@ namespace InventoryManagementSystem.Infrastructure.Migrations
                     b.Property<int>("SupplierId")
                         .HasColumnType("integer");
 
+                    b.Property<string>("TenantId")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
                     b.Property<decimal>("TotalAmount")
                         .HasColumnType("decimal(18,2)");
 
@@ -247,12 +278,14 @@ namespace InventoryManagementSystem.Infrastructure.Migrations
 
                     b.HasIndex("OrderDate");
 
-                    b.HasIndex("PONumber")
+                    b.HasIndex("TenantId", "PONumber")
                         .IsUnique();
 
                     b.HasIndex("Status");
 
                     b.HasIndex("SupplierId");
+
+                    b.HasIndex("TenantId");
 
                     b.ToTable("PurchaseOrders");
                 });
@@ -280,6 +313,11 @@ namespace InventoryManagementSystem.Infrastructure.Migrations
                     b.Property<int>("Quantity")
                         .HasColumnType("integer");
 
+                    b.Property<string>("TenantId")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
                     b.Property<DateTime?>("UpdatedAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -298,6 +336,8 @@ namespace InventoryManagementSystem.Infrastructure.Migrations
 
                     b.HasIndex("ItemId", "LocationId")
                         .IsUnique();
+
+                    b.HasIndex("TenantId");
 
                     b.ToTable("StockInHand");
                 });
@@ -339,6 +379,11 @@ namespace InventoryManagementSystem.Infrastructure.Migrations
                     b.Property<int?>("ToLocationId")
                         .HasColumnType("integer");
 
+                    b.Property<string>("TenantId")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
                     b.Property<DateTime>("TransactionDate")
                         .HasColumnType("timestamp with time zone");
 
@@ -364,6 +409,8 @@ namespace InventoryManagementSystem.Infrastructure.Migrations
                     b.HasIndex("TransactionDate");
 
                     b.HasIndex("ItemId", "TransactionDate");
+
+                    b.HasIndex("TenantId");
 
                     b.ToTable("StockTransactions");
                 });
@@ -406,6 +453,11 @@ namespace InventoryManagementSystem.Infrastructure.Migrations
                         .HasMaxLength(50)
                         .HasColumnType("character varying(50)");
 
+                    b.Property<string>("TenantId")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
                     b.Property<DateTime?>("UpdatedAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -439,7 +491,14 @@ namespace InventoryManagementSystem.Infrastructure.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
+                    b.Property<string>("TenantId")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
                     b.HasKey("Id");
+
+                    b.HasIndex("TenantId");
 
                     b.ToTable("WebhookSubscriptions");
                 });
@@ -468,6 +527,11 @@ namespace InventoryManagementSystem.Infrastructure.Migrations
 
                     b.Property<string>("LastName")
                         .HasColumnType("text");
+
+                    b.Property<string>("TenantId")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
 
                     b.Property<bool>("LockoutEnabled")
                         .HasColumnType("boolean");
@@ -510,6 +574,8 @@ namespace InventoryManagementSystem.Infrastructure.Migrations
                     b.HasIndex("NormalizedUserName")
                         .IsUnique()
                         .HasDatabaseName("UserNameIndex");
+
+                    b.HasIndex("TenantId");
 
                     b.ToTable("AspNetUsers", (string)null);
                 });
