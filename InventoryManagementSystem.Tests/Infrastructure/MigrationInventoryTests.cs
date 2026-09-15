@@ -1,4 +1,5 @@
 using FluentAssertions;
+using InventoryManagementSystem.Core.Entities;
 using InventoryManagementSystem.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore.Migrations;
 
@@ -20,5 +21,8 @@ public class MigrationInventoryTests
                 "InventoryManagementSystem.Infrastructure.Migrations.InventoryDbContextModelSnapshot")
             .Should()
             .NotBeNull();
+
+        typeof(ApplicationUser).Namespace.Should().Be("InventoryManagementSystem.Core.Entities");
+        typeof(ApplicationUser).Assembly.Should().NotBe(typeof(InventoryDbContext).Assembly);
     }
 }

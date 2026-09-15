@@ -444,7 +444,7 @@ namespace InventoryManagementSystem.Infrastructure.Migrations
                     b.ToTable("WebhookSubscriptions");
                 });
 
-            modelBuilder.Entity("InventoryManagementSystem.Infrastructure.Data.ApplicationUser", b =>
+            modelBuilder.Entity("InventoryManagementSystem.Core.Entities.ApplicationUser", b =>
                 {
                     b.Property<string>("Id")
                         .HasColumnType("text");
@@ -742,7 +742,7 @@ namespace InventoryManagementSystem.Infrastructure.Migrations
 
             modelBuilder.Entity("Microsoft.AspNetCore.Identity.IdentityUserClaim<string>", b =>
                 {
-                    b.HasOne("InventoryManagementSystem.Infrastructure.Data.ApplicationUser", null)
+                    b.HasOne("InventoryManagementSystem.Core.Entities.ApplicationUser", null)
                         .WithMany()
                         .HasForeignKey("UserId")
                         .OnDelete(DeleteBehavior.Cascade)
@@ -751,7 +751,7 @@ namespace InventoryManagementSystem.Infrastructure.Migrations
 
             modelBuilder.Entity("Microsoft.AspNetCore.Identity.IdentityUserLogin<string>", b =>
                 {
-                    b.HasOne("InventoryManagementSystem.Infrastructure.Data.ApplicationUser", null)
+                    b.HasOne("InventoryManagementSystem.Core.Entities.ApplicationUser", null)
                         .WithMany()
                         .HasForeignKey("UserId")
                         .OnDelete(DeleteBehavior.Cascade)
@@ -766,7 +766,7 @@ namespace InventoryManagementSystem.Infrastructure.Migrations
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
-                    b.HasOne("InventoryManagementSystem.Infrastructure.Data.ApplicationUser", null)
+                    b.HasOne("InventoryManagementSystem.Core.Entities.ApplicationUser", null)
                         .WithMany()
                         .HasForeignKey("UserId")
                         .OnDelete(DeleteBehavior.Cascade)
@@ -775,7 +775,7 @@ namespace InventoryManagementSystem.Infrastructure.Migrations
 
             modelBuilder.Entity("Microsoft.AspNetCore.Identity.IdentityUserToken<string>", b =>
                 {
-                    b.HasOne("InventoryManagementSystem.Infrastructure.Data.ApplicationUser", null)
+                    b.HasOne("InventoryManagementSystem.Core.Entities.ApplicationUser", null)
                         .WithMany()
                         .HasForeignKey("UserId")
                         .OnDelete(DeleteBehavior.Cascade)
