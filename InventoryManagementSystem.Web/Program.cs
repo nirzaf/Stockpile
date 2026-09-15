@@ -227,7 +227,7 @@ public class Program
         {
             client.Timeout = TimeSpan.FromSeconds(10);
         });
-        builder.Services.AddSingleton<IWebhookDispatcher, InventoryManagementSystem.Infrastructure.Services.WebhookDispatcher>();
+        builder.Services.AddScoped<IWebhookDispatcher, InventoryManagementSystem.Infrastructure.Services.WebhookDispatcher>();
         builder.Services.AddSingleton<IIdempotencyKeyStore, IdempotencyKeyStore>();
 
         // FluentValidation — auto-validates MediatR requests via pipeline behavior
@@ -321,6 +321,7 @@ public class Program
         // Background services
         builder.Services.AddSingleton<ITenantForecastRunner, TenantForecastRunner>();
         builder.Services.AddHostedService<ForecastBackgroundService>();
+        builder.Services.AddHostedService<InventoryManagementSystem.Web.BackgroundServices.WebhookDeliveryBackgroundService>();
 
         // Response Compression
         builder.Services.AddResponseCompression(options =>
