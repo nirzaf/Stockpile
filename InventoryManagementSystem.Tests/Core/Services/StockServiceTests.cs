@@ -6,6 +6,7 @@ using InventoryManagementSystem.Core.Exceptions;
 using InventoryManagementSystem.Core.Interfaces;
 using InventoryManagementSystem.Core.Services;
 using InventoryManagementSystem.Tests.Common;
+using InventoryManagementSystem.Tests.Infrastructure;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 
@@ -29,6 +30,7 @@ public class StockServiceTests
             _itemRepoMock.Object,
             _uowMock.Object,
             _webhookDispatcherMock.Object,
+            new TestTenantContext("test-tenant"),
             NullLogger<StockService>.Instance);
     }
 
@@ -277,9 +279,10 @@ public class StockServiceTests
 
         var invocation = _webhookDispatcherMock.Invocations
             .Single(i => i.Method.Name == nameof(IWebhookDispatcher.DispatchAsync) &&
-                         i.Arguments[0] is "Stock.Low");
-        invocation.Arguments[0].Should().Be("Stock.Low");
-        var payload = invocation.Arguments[1];
+                         i.Arguments[0]!.GetType().GetProperty("EventType")!.GetValue(i.Arguments[0]) is "Stock.Low");
+        var webhookEvent = invocation.Arguments[0]!;
+        webhookEvent.GetType().GetProperty("TenantId")!.GetValue(webhookEvent).Should().Be("test-tenant");
+        var payload = webhookEvent.GetType().GetProperty("Payload")!.GetValue(webhookEvent);
         payload!.GetType().GetProperty("ItemId")!.GetValue(payload).Should().Be(1);
         payload.GetType().GetProperty("ItemCode")!.GetValue(payload).Should().Be("LOW-001");
         payload.GetType().GetProperty("TotalStock")!.GetValue(payload).Should().Be(10);

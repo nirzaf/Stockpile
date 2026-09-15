@@ -10,4 +10,7 @@ public interface ITenantContext
 
     /// <summary>Gets a value indicating whether a tenant has been resolved.</summary>
     bool IsResolved { get; }
+
+    /// <summary>Sets the tenant for an HTTP request or explicitly-created work scope.</summary>
+    void SetTenant(string tenantId);
 }
