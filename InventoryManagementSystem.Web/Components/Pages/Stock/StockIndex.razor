@@ -2,12 +2,16 @@
 @using Microsoft.AspNetCore.Authorization
 @attribute [Authorize]
 @inject IStockService StockService
+@inject ISnackbar Snackbar
+@inject IJSRuntime JS
 
 <PageTitle>Stock Overview</PageTitle>
 
 <div class="d-flex justify-space-between align-center mb-4">
     <MudText Typo="Typo.h4" Color="Color.Primary">Stock Overview</MudText>
     <div class="d-flex gap-2">
+        <MudButton Variant="Variant.Outlined" Color="Color.Secondary" OnClick="ExportToCsv">Export CSV</MudButton>
+        <MudButton Variant="Variant.Outlined" Color="Color.Info" OnClick="ExportToExcel">Export Excel</MudButton>
         <MudButton Variant="Variant.Filled" Color="Color.Success" Href="/Stock/Receive">Receive Stock</MudButton>
         <MudButton Variant="Variant.Filled" Color="Color.Info" Href="/Stock/Transfer">Transfer Stock</MudButton>
         <MudButton Variant="Variant.Filled" Color="Color.Warning" Href="/Stock/Sell">Sell Stock</MudButton>
@@ -55,4 +59,27 @@
         if (element.Location?.Name?.Contains(searchString, StringComparison.OrdinalIgnoreCase) == true) return true;
         return false;
     }
+
+    private async Task ExportToCsv()
+    {
+        var bytes = ExportFileBuilder.CreateCsv(ExportHeaders, ExportRows());
+        await JS.InvokeVoidAsync("downloadFile", "Stock_Export.csv", "text/csv", bytes);
+        Snackbar.Add("Exported successfully", Severity.Success);
+    }
+
+    private async Task ExportToExcel()
+    {
+        var bytes = ExportFileBuilder.CreateExcel("Stock", ExportHeaders, ExportRows());
+        await JS.InvokeVoidAsync("downloadFile", "Stock_Export.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", bytes);
+        Snackbar.Add("Exported successfully", Severity.Success);
+    }
+
+    private IEnumerable<object?[]> ExportRows() => _stocks.Select(stock => new object?[]
+    {
+        stock.Item?.ItemCode, stock.Item?.Description, stock.Location?.Name, stock.Quantity,
+        stock.BatchNumber, stock.ExpiryDate
+    });
+
+    private static readonly string[] ExportHeaders =
+        ["Item Code", "Description", "Location", "Quantity", "Batch Number", "Expiry Date"];
 }

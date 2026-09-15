@@ -13,6 +13,7 @@
     <MudText Typo="Typo.h4" Color="Color.Primary">Items</MudText>
     <div>
         <MudButton Variant="Variant.Filled" Color="Color.Secondary" OnClick="ExportToCsv" Class="mr-2">Export to CSV</MudButton>
+        <MudButton Variant="Variant.Filled" Color="Color.Info" OnClick="ExportToExcel" Class="mr-2">Export to Excel</MudButton>
         <MudButton Variant="Variant.Filled" Color="Color.Primary" Href="/Items/Create">Add New Item</MudButton>
     </div>
 </div>
@@ -102,14 +103,26 @@
 
     private async Task ExportToCsv()
     {
-        var builder = new System.Text.StringBuilder();
-        builder.AppendLine("ItemCode,Barcode,Description,Rate,Supplier");
-        foreach (var item in _items)
+        var rows = _items.Select(item => new object?[]
         {
-            builder.AppendLine($"\"{item.ItemCode}\",\"{item.Barcode}\",\"{item.Description}\",{item.Rate},\"{item.Supplier?.Name}\"");
-        }
-        var csvContent = builder.ToString();
-        await JS.InvokeVoidAsync("downloadFile", "Items_Export.csv", "text/csv", csvContent);
+            item.ItemCode, item.Barcode, item.Description, item.Rate, item.ReorderLevel, item.Supplier?.Name
+        });
+        var bytes = ExportFileBuilder.CreateCsv(ItemExportHeaders, rows);
+        await JS.InvokeVoidAsync("downloadFile", "Items_Export.csv", "text/csv", bytes);
         Snackbar.Add("Exported successfully", Severity.Success);
     }
+
+    private async Task ExportToExcel()
+    {
+        var rows = _items.Select(item => new object?[]
+        {
+            item.ItemCode, item.Barcode, item.Description, item.Rate, item.ReorderLevel, item.Supplier?.Name
+        });
+        var bytes = ExportFileBuilder.CreateExcel("Items", ItemExportHeaders, rows);
+        await JS.InvokeVoidAsync("downloadFile", "Items_Export.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", bytes);
+        Snackbar.Add("Exported successfully", Severity.Success);
+    }
+
+    private static readonly string[] ItemExportHeaders =
+        ["Item Code", "Barcode", "Description", "Rate", "Reorder Level", "Supplier"];
 }

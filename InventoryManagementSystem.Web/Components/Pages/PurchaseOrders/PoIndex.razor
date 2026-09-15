@@ -4,12 +4,17 @@
 @inject IPurchaseOrderService POService
 @inject ISnackbar Snackbar
 @inject IDialogService DialogService
+@inject IJSRuntime JS
 
 <PageTitle>Purchase Orders</PageTitle>
 
 <div class="d-flex justify-space-between align-center mb-4">
     <MudText Typo="Typo.h4" Color="Color.Primary">Purchase Orders</MudText>
-    <MudButton Variant="Variant.Filled" Color="Color.Primary" Href="/PurchaseOrders/Create">New Purchase Order</MudButton>
+    <div class="d-flex gap-2">
+        <MudButton Variant="Variant.Outlined" Color="Color.Secondary" OnClick="ExportToCsv">Export CSV</MudButton>
+        <MudButton Variant="Variant.Outlined" Color="Color.Info" OnClick="ExportToExcel">Export Excel</MudButton>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" Href="/PurchaseOrders/Create">New Purchase Order</MudButton>
+    </div>
 </div>
 
 <MudTable Items="@_orders" Dense="true" Hover="true" Striped="true" Filter="new Func<PurchaseOrder,bool>(FilterFunc)">
@@ -78,6 +83,28 @@
         if (element.Supplier?.Name?.Contains(searchString, StringComparison.OrdinalIgnoreCase) == true) return true;
         return false;
     }
+
+    private async Task ExportToCsv()
+    {
+        var bytes = ExportFileBuilder.CreateCsv(ExportHeaders, ExportRows());
+        await JS.InvokeVoidAsync("downloadFile", "PurchaseOrders_Export.csv", "text/csv", bytes);
+        Snackbar.Add("Exported successfully", Severity.Success);
+    }
+
+    private async Task ExportToExcel()
+    {
+        var bytes = ExportFileBuilder.CreateExcel("Purchase Orders", ExportHeaders, ExportRows());
+        await JS.InvokeVoidAsync("downloadFile", "PurchaseOrders_Export.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", bytes);
+        Snackbar.Add("Exported successfully", Severity.Success);
+    }
+
+    private IEnumerable<object?[]> ExportRows() => _orders.Select(order => new object?[]
+    {
+        order.PONumber, order.OrderDate, order.Supplier?.Name, order.Status, order.TotalAmount
+    });
+
+    private static readonly string[] ExportHeaders =
+        ["PO Number", "Order Date", "Supplier", "Status", "Total Amount"];
 
     private async Task DeletePO(PurchaseOrder po)
     {
