@@ -279,7 +279,7 @@ public class StockServiceTests
     }
 
     [Fact]
-    public async Task SellStockAsync_WhenBalanceReachesReorderLevel_DispatchesLowStockNotification()
+    public async Task SellStockAsync_WhenBalanceReachesReorderLevel_QueuesLowStockNotification()
     {
         var item = _fixture.Build<Item>()
             .With(i => i.Id, 1)
@@ -300,7 +300,7 @@ public class StockServiceTests
         await _sut.SellStockAsync(1, 2, 5, "Reorder threshold reached");
 
         var invocation = _webhookDispatcherMock.Invocations
-            .Single(i => i.Method.Name == nameof(IWebhookDispatcher.DispatchAsync) &&
+            .Single(i => i.Method.Name == nameof(IWebhookDispatcher.EnqueueAsync) &&
                          i.Arguments[0]!.GetType().GetProperty("EventType")!.GetValue(i.Arguments[0]) is "Stock.Low");
         var webhookEvent = invocation.Arguments[0]!;
         webhookEvent.GetType().GetProperty("TenantId")!.GetValue(webhookEvent).Should().Be("test-tenant");

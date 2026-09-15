@@ -1,6 +1,8 @@
 using InventoryManagementSystem.Core.Entities;
 using InventoryManagementSystem.Core.Interfaces;
 using InventoryManagementSystem.Core.Models;
+using InventoryManagementSystem.Infrastructure.Data;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using System.Security.Cryptography;
@@ -14,15 +16,58 @@ public class WebhookDispatcher : IWebhookDispatcher
     private readonly IServiceProvider _serviceProvider;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger<WebhookDispatcher> _logger;
+    private readonly InventoryDbContext? _context;
 
     public WebhookDispatcher(
         IServiceProvider serviceProvider,
         IHttpClientFactory httpClientFactory,
-        ILogger<WebhookDispatcher> logger)
+        ILogger<WebhookDispatcher> logger,
+        InventoryDbContext? context = null)
     {
         _serviceProvider = serviceProvider;
         _httpClientFactory = httpClientFactory;
         _logger = logger;
+        _context = context;
+    }
+
+    public async Task EnqueueAsync<T>(WebhookEvent<T> webhookEvent)
+    {
+        if (_context is null)
+        {
+            throw new InvalidOperationException("Webhook enqueueing requires a scoped database context.");
+        }
+
+        if (!string.Equals(_context.CurrentTenantId, webhookEvent.TenantId, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException("Webhook event tenant does not match the current database context.");
+        }
+
+        var subscriptions = await _context.WebhookSubscriptions
+            .AsNoTracking()
+            .Where(subscription => subscription.IsActive &&
+                (subscription.EventType == webhookEvent.EventType || subscription.EventType == "*"))
+            .ToListAsync();
+
+        if (subscriptions.Count == 0)
+        {
+            return;
+        }
+
+        var now = DateTimeOffset.UtcNow;
+        var payload = JsonSerializer.Serialize(webhookEvent);
+        foreach (var subscription in subscriptions)
+        {
+            _context.WebhookDeliveries.Add(new WebhookDelivery
+            {
+                EventId = webhookEvent.EventId,
+                TenantId = webhookEvent.TenantId,
+                SubscriptionId = subscription.Id,
+                EventType = webhookEvent.EventType,
+                Payload = payload,
+                NextAttemptAt = now,
+                CreatedAt = now
+            });
+        }
     }
 
     public async Task DispatchAsync<T>(WebhookEvent<T> webhookEvent)

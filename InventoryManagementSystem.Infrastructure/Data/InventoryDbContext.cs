@@ -56,6 +56,9 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
     /// <summary>Webhook subscriptions for outbound event notifications.</summary>
     public DbSet<WebhookSubscription> WebhookSubscriptions { get; set; } = null!;
 
+    /// <summary>Durable outbound webhook delivery attempts.</summary>
+    public DbSet<WebhookDelivery> WebhookDeliveries { get; set; } = null!;
+
     /// <summary>
     /// Saves pending changes, stamping <see cref="AuditableEntity"/> timestamps, translating
     /// soft-delete <see cref="EntityState.Deleted"/> entries to a flag flip, and emitting
@@ -352,6 +355,20 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
             entity.HasQueryFilter(e => e.TenantId == CurrentTenantId);
             entity.Property(e => e.TenantId).HasMaxLength(64).IsRequired();
             entity.HasIndex(e => e.TenantId);
+        });
+
+        modelBuilder.Entity<WebhookDelivery>(entity =>
+        {
+            entity.HasQueryFilter(e => e.TenantId == CurrentTenantId);
+            entity.Property(e => e.TenantId).HasMaxLength(64).IsRequired();
+            entity.Property(e => e.EventType).HasMaxLength(100).IsRequired();
+            entity.Property(e => e.Payload).IsRequired();
+            entity.Property(e => e.Status).HasConversion<string>().HasMaxLength(32).IsRequired();
+            entity.Property(e => e.LastResponse).HasMaxLength(4096);
+            entity.Property(e => e.LastError).HasMaxLength(4096);
+            entity.HasIndex(e => e.TenantId);
+            entity.HasIndex(e => new { e.EventId, e.SubscriptionId }).IsUnique();
+            entity.HasIndex(e => new { e.Status, e.NextAttemptAt });
         });
     }
 }
