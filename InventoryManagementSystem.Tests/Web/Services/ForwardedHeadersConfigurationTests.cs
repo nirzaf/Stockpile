@@ -2,6 +2,7 @@ using System.Net;
 using FluentAssertions;
 using InventoryManagementSystem.Web.Security;
 using Microsoft.AspNetCore.HttpOverrides;
+using Microsoft.Extensions.Configuration;
 
 namespace InventoryManagementSystem.Tests.Web.Services;
 
