@@ -5,6 +5,7 @@ using InventoryManagementSystem.Core.Interfaces;
 using InventoryManagementSystem.Core.Options;
 using InventoryManagementSystem.Core.Services;
 using InventoryManagementSystem.Core.Validators;
+using InventoryManagementSystem.Infrastructure.Data;
 using InventoryManagementSystem.Infrastructure.Repositories;
 using InventoryManagementSystem.Web.BackgroundServices;
 using InventoryManagementSystem.Web.Services;

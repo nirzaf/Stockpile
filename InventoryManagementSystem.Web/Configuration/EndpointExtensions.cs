@@ -6,6 +6,7 @@ using InventoryManagementSystem.Core.Models;
 using InventoryManagementSystem.Core.Interfaces;
 using InventoryManagementSystem.Infrastructure.Data;
 using InventoryManagementSystem.Web.Services;
+using InventoryManagementSystem.Web.Security;
 using InventoryManagementSystem.Web.Tenancy;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Localization;

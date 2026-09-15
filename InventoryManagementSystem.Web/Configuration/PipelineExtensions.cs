@@ -5,6 +5,7 @@ using InventoryManagementSystem.Infrastructure.Data;
 using InventoryManagementSystem.Web.Middleware;
 using InventoryManagementSystem.Web.Security;
 using InventoryManagementSystem.Web.Tenancy;
+using Serilog;
 
 namespace InventoryManagementSystem.Web.Configuration;
 

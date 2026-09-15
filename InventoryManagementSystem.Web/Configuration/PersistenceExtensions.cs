@@ -1,5 +1,5 @@
-using InventoryManagementSystem.Core.Options;
 using InventoryManagementSystem.Infrastructure.Data;
+using InventoryManagementSystem.Web.Security;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.HttpOverrides;

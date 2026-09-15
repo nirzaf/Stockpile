@@ -2,7 +2,7 @@ using System.Threading.RateLimiting;
 using Asp.Versioning;
 using InventoryManagementSystem.Core.Diagnostics;
 using InventoryManagementSystem.Infrastructure.Data;
-using InventoryManagementSystem.Web.BackgroundServices;
+using InventoryManagementSystem.Web.Security;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.OpenApi;
 using MudBlazor.Services;

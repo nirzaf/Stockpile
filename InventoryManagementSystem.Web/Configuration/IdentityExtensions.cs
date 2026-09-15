@@ -1,6 +1,8 @@
 using System.Security.Cryptography;
 using System.Text;
 using InventoryManagementSystem.Core.Entities;
+using InventoryManagementSystem.Core.Interfaces;
+using InventoryManagementSystem.Infrastructure.Data;
 using InventoryManagementSystem.Web.Security;
 using InventoryManagementSystem.Web.Tenancy;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
