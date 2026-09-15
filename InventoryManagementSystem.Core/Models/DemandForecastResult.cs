@@ -27,6 +27,9 @@ public class DemandForecastResult
     /// <summary>Length of the forecast horizon in days.</summary>
     public int ForecastHorizonDays { get; set; }
 
+    /// <summary>The configured model implementation that produced this result.</summary>
+    public string ForecastingImplementation { get; set; } = string.Empty;
+
     /// <summary>UTC timestamp of when the forecast was generated.</summary>
     public DateTime GeneratedAt { get; set; } = DateTime.UtcNow;
 }
