@@ -227,6 +227,39 @@ public class DemandForecastServiceTests
     }
 
     [Fact]
+    public void BuildDailyDemand_ignores_transfers_and_fills_missing_calendar_days()
+    {
+        var start = new DateTime(2026, 1, 1);
+        var observations = DemandForecastDataPreparation.BuildDailyDemand(
+        [
+            new StockTransaction { TransactionType = TransactionType.Sell, TransactionDate = start, Quantity = 5 },
+            new StockTransaction { TransactionType = TransactionType.Transfer, TransactionDate = start.AddDays(1), Quantity = 100 },
+            new StockTransaction { TransactionType = TransactionType.Sell, TransactionDate = start.AddDays(2), Quantity = 7 }
+        ]);
+
+        observations.Select(observation => observation.Date)
+            .Should().Equal(start, start.AddDays(1), start.AddDays(2));
+        observations.Select(observation => observation.Quantity)
+            .Should().Equal(5, 0, 7);
+    }
+
+    [Fact]
+    public void BuildDailyDemand_returns_empty_for_transfer_only_activity()
+    {
+        var observations = DemandForecastDataPreparation.BuildDailyDemand(
+        [
+            new StockTransaction
+            {
+                TransactionType = TransactionType.Transfer,
+                TransactionDate = new DateTime(2026, 1, 1),
+                Quantity = 100
+            }
+        ]);
+
+        observations.Should().BeEmpty();
+    }
+
+    [Fact]
     public async Task ForecastAllItemsAsync_DoesNotOverlapRepositoryCalls()
     {
         var items = Enumerable.Range(1, 3)

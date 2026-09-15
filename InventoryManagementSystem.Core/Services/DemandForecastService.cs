@@ -83,13 +83,9 @@ public class DemandForecastService : IDemandForecastService
 
         var transactions = await _txRepo.FindAsync(t =>
             t.ItemId == itemId &&
-            (t.TransactionType == TransactionType.Sell || t.TransactionType == TransactionType.Transfer));
+            t.TransactionType == TransactionType.Sell);
 
-        var dailyDemand = transactions
-            .GroupBy(t => t.TransactionDate.Date)
-            .Select(g => new { Date = g.Key, Quantity = (float)g.Sum(t => t.Quantity) })
-            .OrderBy(x => x.Date)
-            .ToList();
+        var dailyDemand = DemandForecastDataPreparation.BuildDailyDemand(transactions);
 
         if (dailyDemand.Count < MinDataPoints)
         {
