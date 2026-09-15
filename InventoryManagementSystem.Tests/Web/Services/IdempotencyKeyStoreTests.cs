@@ -1,25 +1,29 @@
 using FluentAssertions;
+using InventoryManagementSystem.Infrastructure.Data;
+using InventoryManagementSystem.Tests.Infrastructure;
 using InventoryManagementSystem.Web.Services;
+using Microsoft.EntityFrameworkCore;
 
 namespace InventoryManagementSystem.Tests.Web.Services;
 
 public class IdempotencyKeyStoreTests
 {
     [Fact]
-    public async Task ExecuteAsync_WhenSameKeyRunsConcurrently_ExecutesOperationOnce()
+    public async Task ExecuteAsync_WhenSameKeyIsRetried_ExecutesOperationOnce()
     {
-        var store = new IdempotencyKeyStore();
+        await using var context = CreateContext();
+        var store = new IdempotencyKeyStore(context, new TestTenantContext("test-tenant"));
         var executions = 0;
 
-        var requests = Enumerable.Range(0, 10)
-            .Select(_ => store.ExecuteAsync("tenant:POST:/stock/receive", "request-1", async () =>
+        for (var attempt = 0; attempt < 10; attempt++)
+        {
+            await store.ExecuteAsync("POST:/stock/receive", "request-1", "hash-1", async () =>
             {
                 Interlocked.Increment(ref executions);
                 await Task.Delay(25);
-            }));
-
-        await Task.WhenAll(requests);
-        await store.ExecuteAsync("tenant:POST:/stock/receive", "request-1", () =>
+            });
+        }
+        await store.ExecuteAsync("POST:/stock/receive", "request-1", "hash-1", () =>
         {
             Interlocked.Increment(ref executions);
             return Task.CompletedTask;
@@ -31,10 +35,11 @@ public class IdempotencyKeyStoreTests
     [Fact]
     public async Task ExecuteAsync_WhenOperationFails_AllowsRetry()
     {
-        var store = new IdempotencyKeyStore();
+        await using var context = CreateContext();
+        var store = new IdempotencyKeyStore(context, new TestTenantContext("test-tenant"));
         var executions = 0;
 
-        var firstAttempt = () => store.ExecuteAsync("tenant:POST:/stock/receive", "request-2", () =>
+        var firstAttempt = () => store.ExecuteAsync("POST:/stock/receive", "request-2", "hash-2", () =>
         {
             Interlocked.Increment(ref executions);
             throw new InvalidOperationException("transient failure");
@@ -42,7 +47,7 @@ public class IdempotencyKeyStoreTests
 
         await firstAttempt.Should().ThrowAsync<InvalidOperationException>();
 
-        await store.ExecuteAsync("tenant:POST:/stock/receive", "request-2", () =>
+        await store.ExecuteAsync("POST:/stock/receive", "request-2", "hash-2", () =>
         {
             Interlocked.Increment(ref executions);
             return Task.CompletedTask;
@@ -50,4 +55,19 @@ public class IdempotencyKeyStoreTests
 
         executions.Should().Be(2);
     }
+
+    [Fact]
+    public async Task Rejects_reuse_with_a_different_request_hash()
+    {
+        await using var context = CreateContext();
+        var store = new IdempotencyKeyStore(context, new TestTenantContext("test-tenant"));
+        await store.ExecuteAsync("POST:/stock/receive", "request-3", "hash-a", () => Task.CompletedTask);
+
+        await FluentActions.Invoking(() => store.ExecuteAsync("POST:/stock/receive", "request-3", "hash-b", () => Task.CompletedTask))
+            .Should().ThrowAsync<InvalidOperationException>();
+    }
+
+    private static InventoryDbContext CreateContext() => new(
+        new DbContextOptionsBuilder<InventoryDbContext>().UseInMemoryDatabase(Guid.NewGuid().ToString()).Options,
+        new TestTenantContext("test-tenant"));
 }

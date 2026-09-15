@@ -59,6 +59,9 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
     /// <summary>Durable outbound webhook delivery attempts.</summary>
     public DbSet<WebhookDelivery> WebhookDeliveries { get; set; } = null!;
 
+    /// <summary>Durable API idempotency claims and results.</summary>
+    public DbSet<IdempotencyRecord> IdempotencyRecords { get; set; } = null!;
+
     /// <summary>
     /// Saves pending changes, stamping <see cref="AuditableEntity"/> timestamps, translating
     /// soft-delete <see cref="EntityState.Deleted"/> entries to a flag flip, and emitting
@@ -369,6 +372,20 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
             entity.HasIndex(e => e.TenantId);
             entity.HasIndex(e => new { e.EventId, e.SubscriptionId }).IsUnique();
             entity.HasIndex(e => new { e.Status, e.NextAttemptAt });
+        });
+
+        modelBuilder.Entity<IdempotencyRecord>(entity =>
+        {
+            entity.HasQueryFilter(e => e.TenantId == CurrentTenantId);
+            entity.Property(e => e.TenantId).HasMaxLength(64).IsRequired();
+            entity.Property(e => e.Scope).HasMaxLength(256).IsRequired();
+            entity.Property(e => e.Key).HasMaxLength(200).IsRequired();
+            entity.Property(e => e.RequestHash).HasMaxLength(64).IsRequired();
+            entity.Property(e => e.Status).HasConversion<string>().HasMaxLength(32).IsRequired();
+            entity.Property(e => e.ResponseBody).HasMaxLength(16384);
+            entity.Property(e => e.LastError).HasMaxLength(4096);
+            entity.HasIndex(e => new { e.TenantId, e.Scope, e.Key }).IsUnique();
+            entity.HasIndex(e => e.ExpiresAt);
         });
     }
 }
