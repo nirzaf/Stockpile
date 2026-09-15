@@ -142,7 +142,7 @@ public class GlobalExceptionHandlerTests
     }
 
     [Fact]
-    public async Task TryHandleAsync_DevelopmentEnv_IncludesExceptionMessage()
+    public async Task TryHandleAsync_DevelopmentEnv_HidesExceptionDetail()
     {
         var (context, _) = CreateHttpContext("/api/v1/items", isDevelopment: true);
         var exception = new InvalidOperationException("Detailed error message");
@@ -151,7 +151,7 @@ public class GlobalExceptionHandlerTests
 
         var problem = await ReadProblemDetails(context);
         problem.Should().NotBeNull();
-        problem!.Detail.Should().Contain("Detailed error message");
+        problem!.Detail.Should().Be("Operation failed");
     }
 
     [Fact]
