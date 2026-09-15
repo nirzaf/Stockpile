@@ -15,6 +15,7 @@ using InventoryManagementSystem.Web.Services;
 using InventoryManagementSystem.Web.Tenancy;
 using MediatR;
 using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.OpenApi;
 using MudBlazor.Services;
@@ -54,6 +55,23 @@ public class Program
             .CreateLogger();
 
         builder.Host.UseSerilog();
+
+        // Production cookie and token protection keys must survive container replacement and
+        // be shared by replicas. Development and Testing retain the framework's self-contained
+        // key repositories so local runs do not require external storage.
+        builder.Services.AddOptions<KeyStorageOptions>()
+            .Bind(builder.Configuration.GetSection(KeyStorageOptions.SectionName));
+        var dataProtection = builder.Services.AddDataProtection()
+            .SetApplicationName("Stockpile");
+        if (builder.Environment.IsProduction())
+        {
+            var keyPath = builder.Configuration
+                .GetSection(KeyStorageOptions.SectionName)
+                .GetValue<string>(nameof(KeyStorageOptions.KeyStoragePath))
+                ?? "/app/data/keys";
+            Directory.CreateDirectory(keyPath);
+            dataProtection.PersistKeysToFileSystem(new DirectoryInfo(keyPath));
+        }
 
         // Database (skip PostgreSQL in Testing — replaced by InMemory in test factory)
         if (!builder.Environment.IsEnvironment("Testing"))
