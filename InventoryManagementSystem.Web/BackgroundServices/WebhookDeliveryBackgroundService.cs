@@ -4,6 +4,7 @@ using System.Text;
 using InventoryManagementSystem.Core.Entities;
 using InventoryManagementSystem.Infrastructure.Data;
 using InventoryManagementSystem.Web.Tenancy;
+using InventoryManagementSystem.Web.Security;
 using Microsoft.EntityFrameworkCore;
 
 namespace InventoryManagementSystem.Web.BackgroundServices;
@@ -84,6 +85,13 @@ public sealed class WebhookDeliveryBackgroundService(
 
         try
         {
+            var validationError = await WebhookUrlValidator.ValidateAsync(url, cancellationToken);
+            if (validationError != null)
+            {
+                await CompleteAsync(deliveryId, tenantId, null, null, validationError, cancellationToken);
+                return true;
+            }
+
             using var request = new HttpRequestMessage(HttpMethod.Post, url)
             {
                 Content = new StringContent(payload, Encoding.UTF8, "application/json")

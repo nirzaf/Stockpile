@@ -30,6 +30,7 @@ using InventoryManagementSystem.Web.BackgroundServices;
 using InventoryManagementSystem.Core.Entities;
 using InventoryManagementSystem.Core.Models;
 using InventoryManagementSystem.Core.Options;
+using InventoryManagementSystem.Web.Security;
 
 namespace InventoryManagementSystem.Web;
 
@@ -226,6 +227,10 @@ public class Program
         builder.Services.AddHttpClient("Webhooks", client =>
         {
             client.Timeout = TimeSpan.FromSeconds(10);
+        }).ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
+        {
+            // Redirects can move an otherwise safe URL into a private network.
+            AllowAutoRedirect = false
         });
         builder.Services.AddScoped<IWebhookDispatcher, InventoryManagementSystem.Infrastructure.Services.WebhookDispatcher>();
         builder.Services.AddSingleton<IIdempotencyKeyStore, IdempotencyKeyStore>();
@@ -549,12 +554,12 @@ public class Program
             .WithDescription("Receives stock. Supply Idempotency-Key to safely retry a request.")
             .RequireAuthorization(policy => policy.RequireRole("Admin", "Manager", "Staff"));
 
-        static string? ValidateWebhookRequest(WebhookSubscriptionRequest request)
+        static async Task<string?> ValidateWebhookRequestAsync(WebhookSubscriptionRequest request)
         {
-            if (string.IsNullOrWhiteSpace(request.Url) || request.Url.Length > 2048 ||
-                !Uri.TryCreate(request.Url, UriKind.Absolute, out var uri) || uri.Scheme != Uri.UriSchemeHttps)
+            var urlError = await WebhookUrlValidator.ValidateAsync(request.Url);
+            if (urlError != null)
             {
-                return "Url must be an absolute HTTPS URL no longer than 2048 characters.";
+                return urlError;
             }
 
             if (string.IsNullOrWhiteSpace(request.EventType) || request.EventType.Length > 100)
@@ -589,7 +594,7 @@ public class Program
             IRepository<WebhookSubscription> repository,
             IUnitOfWork unitOfWork) =>
         {
-            var validationError = ValidateWebhookRequest(request);
+            var validationError = await ValidateWebhookRequestAsync(request);
             if (validationError != null)
             {
                 return Results.BadRequest(ApiResponse<object>.CreateFailure(validationError));
@@ -615,7 +620,7 @@ public class Program
             IRepository<WebhookSubscription> repository,
             IUnitOfWork unitOfWork) =>
         {
-            var validationError = ValidateWebhookRequest(request);
+            var validationError = await ValidateWebhookRequestAsync(request);
             if (validationError != null)
             {
                 return Results.BadRequest(ApiResponse<object>.CreateFailure(validationError));
