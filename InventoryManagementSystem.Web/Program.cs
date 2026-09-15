@@ -15,6 +15,7 @@ using InventoryManagementSystem.Web.Services;
 using InventoryManagementSystem.Web.Tenancy;
 using MediatR;
 using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.OpenApi;
 using MudBlazor.Services;
