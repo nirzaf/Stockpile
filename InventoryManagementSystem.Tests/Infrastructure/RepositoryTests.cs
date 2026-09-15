@@ -52,4 +52,20 @@ public class RepositoryTests
 
         results.Should().ContainSingle(item => item.ItemCode == "SEARCH-001");
     }
+
+    [Fact]
+    public void Item_barcode_model_index_is_unique()
+    {
+        var options = new DbContextOptionsBuilder<InventoryDbContext>()
+            .UseInMemoryDatabase(Guid.NewGuid().ToString())
+            .Options;
+
+        using var context = new InventoryDbContext(options);
+        var barcodeIndex = context.Model.FindEntityType(typeof(Item))!
+            .GetIndexes()
+            .Single(index => index.Properties.Select(property => property.Name)
+                .SequenceEqual(new[] { nameof(Item.TenantId), nameof(Item.Barcode) }));
+
+        barcodeIndex.IsUnique.Should().BeTrue();
+    }
 }
