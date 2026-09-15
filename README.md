@@ -166,13 +166,14 @@ dotnet ef migrations add MigrationName    # add migration
 dotnet publish -c Release -o ./publish
 
 # Docker Compose (production)
-cp .env.example .env && docker compose up -d
+cp .env.example .env    # set DB_PASSWORD, JWT_SECRET, and admin settings
+./scripts/deploy.sh --migrate
 
 # Automated deployment script
-./scripts/deploy.sh --build
+./scripts/deploy.sh --build --migrate
 ```
 
-The CI pipeline (`.github/workflows/ci.yml`) builds, tests, and pushes a Docker image to GitHub Container Registry on every push to `master`.
+The production deployment script applies committed EF migrations through a one-shot SDK migrator before starting the runtime container. The web process does not run migrations on production startup. The CI pipeline (`.github/workflows/ci.yml`) builds, tests, and pushes a Docker image to GitHub Container Registry on every push to `master`.
 
 ## CI/CD
 

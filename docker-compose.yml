@@ -36,6 +36,20 @@ services:
       db:
         condition: service_healthy
 
+  migrator:
+    profiles: ["migrations"]
+    build:
+      context: .
+      dockerfile: Dockerfile.migrator
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Production
+      - DISABLE_HTTPS=true
+      - ConnectionStrings__DefaultConnection=Host=db;Database=${DB_NAME:-InventoryDB};Username=${DB_USER:-postgres};Password=${DB_PASSWORD}
+      - JwtSettings__Secret=${JWT_SECRET:?Set JWT_SECRET in .env}
+    depends_on:
+      db:
+        condition: service_healthy
+
 volumes:
   pgdata:
     driver: local
