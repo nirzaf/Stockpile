@@ -1,11 +1,14 @@
+using InventoryManagementSystem.Core.Interfaces;
+
 namespace InventoryManagementSystem.Core.Entities;
 
 /// <summary>
 /// Represents a subscriber that receives webhook events. Maps to the
 /// <c>WebhookSubscriptions</c> table.
 /// </summary>
-public class WebhookSubscription
+public class WebhookSubscription : ITenantScoped
 {
+    public string TenantId { get; set; } = "default";
     public int Id { get; set; }
 
     /// <summary>HTTPS endpoint that will receive event payloads via POST.</summary>

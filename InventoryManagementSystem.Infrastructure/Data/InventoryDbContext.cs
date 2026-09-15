@@ -1,4 +1,5 @@
 using InventoryManagementSystem.Core.Entities;
+using InventoryManagementSystem.Core.Interfaces;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
@@ -14,13 +15,18 @@ namespace InventoryManagementSystem.Infrastructure.Data;
 public class InventoryDbContext : IdentityDbContext<ApplicationUser>
 {
     private readonly IHttpContextAccessor? _httpContextAccessor;
+    private readonly string _tenantId;
 
     public InventoryDbContext(
         DbContextOptions<InventoryDbContext> options,
         IHttpContextAccessor? httpContextAccessor = null) : base(options)
     {
         _httpContextAccessor = httpContextAccessor;
+        _tenantId = httpContextAccessor?.HttpContext?.User?.FindFirst("tenant_id")?.Value ?? "default";
     }
+
+    /// <summary>Tenant selected for this request scope, or <c>default</c> for system work.</summary>
+    public string CurrentTenantId => _tenantId;
 
     /// <summary>Catalog of items.</summary>
     public DbSet<Item> Items { get; set; } = null!;
@@ -67,6 +73,13 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
     {
         var currentUser = _httpContextAccessor?.HttpContext?.User?.Identity?.Name ?? "System";
         var utcNow = DateTime.UtcNow;
+
+        foreach (var entry in ChangeTracker.Entries<ITenantScoped>()
+                     .Where(entry => entry.State != EntityState.Unchanged && entry.State != EntityState.Detached))
+        {
+            // Tenant ownership is taken from the authenticated request, never from client input.
+            entry.Entity.TenantId = CurrentTenantId;
+        }
 
         foreach (var entry in ChangeTracker.Entries<AuditableEntity>())
         {
@@ -183,9 +196,18 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
     {
         base.OnModelCreating(modelBuilder);
 
+        modelBuilder.Entity<ApplicationUser>(entity =>
+        {
+            entity.HasQueryFilter(e => e.TenantId == CurrentTenantId);
+            entity.Property(e => e.TenantId).HasMaxLength(64).IsRequired();
+            entity.HasIndex(e => e.TenantId);
+        });
+
         modelBuilder.Entity<Item>(entity =>
         {
-            entity.HasQueryFilter(e => !e.IsDeleted);
+            entity.HasQueryFilter(e => !e.IsDeleted && e.TenantId == CurrentTenantId);
+            entity.Property(e => e.TenantId).HasMaxLength(64).IsRequired();
+            entity.HasIndex(e => e.TenantId);
             entity.HasIndex(e => e.ItemCode).IsUnique();
             entity.HasIndex(e => e.Barcode).IsUnique();
             entity.Property(e => e.ItemCode).HasMaxLength(50).IsRequired();
@@ -203,7 +225,9 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
 
         modelBuilder.Entity<Supplier>(entity =>
         {
-            entity.HasQueryFilter(e => !e.IsDeleted);
+            entity.HasQueryFilter(e => !e.IsDeleted && e.TenantId == CurrentTenantId);
+            entity.Property(e => e.TenantId).HasMaxLength(64).IsRequired();
+            entity.HasIndex(e => e.TenantId);
             entity.Property(e => e.Name).HasMaxLength(200).IsRequired();
             entity.Property(e => e.ContactPerson).HasMaxLength(200);
             entity.Property(e => e.Phone).HasMaxLength(50);
@@ -213,13 +237,18 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
 
         modelBuilder.Entity<Location>(entity =>
         {
-            entity.HasQueryFilter(e => !e.IsDeleted);
+            entity.HasQueryFilter(e => !e.IsDeleted && e.TenantId == CurrentTenantId);
+            entity.Property(e => e.TenantId).HasMaxLength(64).IsRequired();
+            entity.HasIndex(e => e.TenantId);
             entity.Property(e => e.Name).HasMaxLength(200).IsRequired();
             entity.Property(e => e.Address).HasMaxLength(500);
         });
 
         modelBuilder.Entity<StockInHand>(entity =>
         {
+            entity.HasQueryFilter(e => e.TenantId == CurrentTenantId);
+            entity.Property(e => e.TenantId).HasMaxLength(64).IsRequired();
+            entity.HasIndex(e => e.TenantId);
             entity.HasIndex(e => new { e.ItemId, e.LocationId }).IsUnique();
 
             entity.HasOne(s => s.Item)
@@ -246,6 +275,9 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
 
         modelBuilder.Entity<PurchaseOrder>(entity =>
         {
+            entity.HasQueryFilter(e => e.TenantId == CurrentTenantId);
+            entity.Property(e => e.TenantId).HasMaxLength(64).IsRequired();
+            entity.HasIndex(e => e.TenantId);
             entity.HasIndex(e => e.PONumber).IsUnique();
             entity.Property(e => e.PONumber).HasMaxLength(50).IsRequired();
             entity.Property(e => e.TotalAmount).HasColumnType("decimal(18,2)");
@@ -262,6 +294,9 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
 
         modelBuilder.Entity<OrderDetail>(entity =>
         {
+            entity.HasQueryFilter(e => e.TenantId == CurrentTenantId);
+            entity.Property(e => e.TenantId).HasMaxLength(64).IsRequired();
+            entity.HasIndex(e => e.TenantId);
             entity.Property(e => e.UnitPrice).HasColumnType("decimal(18,2)");
 
             entity.HasOne(od => od.PurchaseOrder)
@@ -277,6 +312,9 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
 
         modelBuilder.Entity<StockTransaction>(entity =>
         {
+            entity.HasQueryFilter(e => e.TenantId == CurrentTenantId);
+            entity.Property(e => e.TenantId).HasMaxLength(64).IsRequired();
+            entity.HasIndex(e => e.TenantId);
             entity.Property(e => e.TransactionType).HasConversion<string>().HasMaxLength(50).IsRequired();
             entity.Property(e => e.Notes).HasMaxLength(500);
             entity.Property(e => e.BatchNumber).HasMaxLength(100);
@@ -298,6 +336,20 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
                   .WithMany()
                   .HasForeignKey(st => st.ToLocationId)
                   .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        modelBuilder.Entity<AuditLog>(entity =>
+        {
+            entity.HasQueryFilter(e => e.TenantId == CurrentTenantId);
+            entity.Property(e => e.TenantId).HasMaxLength(64).IsRequired();
+            entity.HasIndex(e => e.TenantId);
+        });
+
+        modelBuilder.Entity<WebhookSubscription>(entity =>
+        {
+            entity.HasQueryFilter(e => e.TenantId == CurrentTenantId);
+            entity.Property(e => e.TenantId).HasMaxLength(64).IsRequired();
+            entity.HasIndex(e => e.TenantId);
         });
     }
 }
@@ -327,6 +379,7 @@ public class AuditEntry
     {
         return new AuditLog
         {
+            TenantId = Entry.Entity is ITenantScoped tenant ? tenant.TenantId : "default",
             EntityName = TableName,
             Action = Action,
             Username = UserId,
