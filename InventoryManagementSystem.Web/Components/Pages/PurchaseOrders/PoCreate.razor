@@ -20,14 +20,14 @@
                 
                 <MudGrid>
                     <MudItem xs="12" sm="6">
-                        <MudTextField @bind-Value="_po.PONumber" Label="PO Number" Required="true" Class="mb-3" />
+                        <MudTextField T="string" @bind-Value="_po.PONumber" Label="PO Number" Required="true" Class="mb-3" />
                     </MudItem>
                     <MudItem xs="12" sm="6">
                         <MudSelect T="int" @bind-Value="_po.SupplierId" Label="Supplier" AnchorOrigin="Origin.BottomCenter" Required="true" Class="mb-3">
-                            <MudSelectItem Value="@(0)">-- Select Supplier --</MudSelectItem>
+                            <MudSelectItem T="int" Value="0">-- Select Supplier --</MudSelectItem>
                             @foreach (var supplier in _suppliers)
                             {
-                                <MudSelectItem Value="@supplier.Id">@supplier.Name</MudSelectItem>
+                                <MudSelectItem T="int" Value="@supplier.Id">@supplier.Name</MudSelectItem>
                             }
                         </MudSelect>
                     </MudItem>
@@ -39,19 +39,19 @@
                 {
                     <MudGrid Class="align-center mb-2">
                         <MudItem xs="5">
-                            <MudSelect @bind-Value="item.ItemId" Label="Item" AnchorOrigin="Origin.BottomCenter" Required="true">
-                                <MudSelectItem Value="@(0)">-- Select Item --</MudSelectItem>
+                            <MudSelect T="int" @bind-Value="item.ItemId" Label="Item" AnchorOrigin="Origin.BottomCenter" Required="true">
+                                <MudSelectItem T="int" Value="0">-- Select Item --</MudSelectItem>
                                 @foreach (var i in _items)
                                 {
-                                    <MudSelectItem Value="@i.Id">@i.ItemCode - @i.Description</MudSelectItem>
+                                    <MudSelectItem T="int" Value="@i.Id">@i.ItemCode - @i.Description</MudSelectItem>
                                 }
                             </MudSelect>
                         </MudItem>
                         <MudItem xs="3">
-                            <MudNumericField @bind-Value="item.Quantity" Label="Qty" Min="1" Required="true" />
+                            <MudNumericField T="int" @bind-Value="item.Quantity" Label="Qty" Min="1" Required="true" />
                         </MudItem>
                         <MudItem xs="3">
-                            <MudNumericField @bind-Value="item.UnitPrice" Label="Unit Price" Format="N2" Required="true" />
+                            <MudNumericField T="decimal" @bind-Value="item.UnitPrice" Label="Unit Price" Format="N2" Required="true" />
                         </MudItem>
                         <MudItem xs="1" Class="d-flex justify-center align-end">
                             <MudIconButton Icon="@Icons.Material.Filled.Delete" Color="Color.Error" OnClick="@(e => RemoveLineItem(item))" />
