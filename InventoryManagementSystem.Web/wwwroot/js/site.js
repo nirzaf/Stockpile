@@ -3,7 +3,12 @@
 
 // Write your JavaScript code.
 window.downloadFile = (filename, contentType, content) => {
-    const file = new File([content], filename, { type: contentType });
+    // Blazor may marshal byte[] as either a Uint8Array or a base64 string depending
+    // on the hosting/runtime path. Decode the latter so exports are not corrupted.
+    const fileContent = typeof content === "string"
+        ? Uint8Array.from(atob(content), character => character.charCodeAt(0))
+        : content;
+    const file = new File([fileContent], filename, { type: contentType });
     const exportUrl = URL.createObjectURL(file);
     const a = document.createElement("a");
     a.href = exportUrl;
