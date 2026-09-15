@@ -21,7 +21,7 @@ public sealed class PostgreSqlIntegrationTests
         _fixture = fixture;
     }
 
-    [Fact]
+    [PostgreSqlFact]
     public async Task Migrations_create_relational_schema_and_tenant_scoped_unique_constraints()
     {
         _fixture.EnsureEnabled();
@@ -46,7 +46,7 @@ public sealed class PostgreSqlIntegrationTests
         (await tenantB.Items.CountAsync()).Should().Be(1);
     }
 
-    [Fact]
+    [PostgreSqlFact]
     public async Task Global_filters_isolate_tenant_rows_in_PostgreSQL()
     {
         _fixture.EnsureEnabled();
@@ -72,7 +72,7 @@ public sealed class PostgreSqlIntegrationTests
         visibleItems[0].ItemCode.Should().Be(tenantAItem);
     }
 
-    [Fact]
+    [PostgreSqlFact]
     public async Task PostgreSQL_search_translates_case_insensitive_item_search()
     {
         _fixture.EnsureEnabled();
@@ -88,7 +88,7 @@ public sealed class PostgreSqlIntegrationTests
         result.Should().ContainSingle(item => item.Description == "Warehouse Widget");
     }
 
-    [Fact]
+    [PostgreSqlFact]
     public async Task SaveChanges_writes_audit_rows_to_PostgreSQL()
     {
         _fixture.EnsureEnabled();
@@ -108,7 +108,7 @@ public sealed class PostgreSqlIntegrationTests
         audit.KeyValues.Should().Contain(item.Id.ToString());
     }
 
-    [Fact]
+    [PostgreSqlFact]
     public async Task Identity_users_are_persisted_in_the_relational_schema()
     {
         _fixture.EnsureEnabled();
@@ -130,7 +130,7 @@ public sealed class PostgreSqlIntegrationTests
             .Should().Be("identity-tenant");
     }
 
-    [Fact]
+    [PostgreSqlFact]
     public async Task Explicit_transactions_rollback_rows_in_PostgreSQL()
     {
         _fixture.EnsureEnabled();
@@ -148,7 +148,7 @@ public sealed class PostgreSqlIntegrationTests
         (await verify.Items.CountAsync(item => item.ItemCode == itemCode)).Should().Be(0);
     }
 
-    [Fact]
+    [PostgreSqlFact]
     public async Task PostgreSQL_xmin_detects_concurrent_stock_updates()
     {
         _fixture.EnsureEnabled();

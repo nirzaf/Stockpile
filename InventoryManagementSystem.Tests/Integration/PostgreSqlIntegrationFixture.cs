@@ -81,3 +81,18 @@ public sealed class PostgreSqlIntegrationCollection : ICollectionFixture<Postgre
 {
     public const string Name = "PostgreSQL integration collection";
 }
+
+/// <summary>Runs only when the PostgreSQL integration suite has been explicitly enabled.</summary>
+public sealed class PostgreSqlFactAttribute : Xunit.FactAttribute
+{
+    public PostgreSqlFactAttribute()
+    {
+        if (!string.Equals(
+                Environment.GetEnvironmentVariable("RUN_POSTGRES_TESTS"),
+                "true",
+                StringComparison.OrdinalIgnoreCase))
+        {
+            Skip = "PostgreSQL integration tests are opt-in. Set RUN_POSTGRES_TESTS=true to run them.";
+        }
+    }
+}
