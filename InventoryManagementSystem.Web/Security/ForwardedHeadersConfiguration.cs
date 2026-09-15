@@ -28,7 +28,7 @@ public static class ForwardedHeadersConfiguration
             if (parts.Length == 2 && IPAddress.TryParse(parts[0], out var prefix) &&
                 int.TryParse(parts[1], out var prefixLength))
             {
-                options.KnownNetworks.Add(new IPNetwork(prefix, prefixLength));
+                options.KnownIPNetworks.Add(new System.Net.IPNetwork(prefix, prefixLength));
             }
         }
     }
