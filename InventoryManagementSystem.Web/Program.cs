@@ -11,6 +11,7 @@ using InventoryManagementSystem.Core.Validators;
 using InventoryManagementSystem.Infrastructure.Data;
 using InventoryManagementSystem.Infrastructure.Repositories;
 using InventoryManagementSystem.Web.Middleware;
+using InventoryManagementSystem.Web.Services;
 using MediatR;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
