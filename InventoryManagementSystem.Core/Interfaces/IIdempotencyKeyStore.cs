@@ -4,8 +4,8 @@ namespace InventoryManagementSystem.Core.Interfaces;
 public interface IIdempotencyKeyStore
 {
     /// <summary>
-    /// Runs an operation once for the supplied scope and key. Concurrent or subsequent
-    /// successful requests await/reuse the original operation; failed operations may retry.
+    /// Runs an operation once for the supplied scope, key, and request hash. Concurrent or
+    /// subsequent successful requests await/reuse the durable result; failed operations may retry.
     /// </summary>
-    Task ExecuteAsync(string scope, string key, Func<Task> operation);
+    Task ExecuteAsync(string scope, string key, string requestHash, Func<Task> operation);
 }

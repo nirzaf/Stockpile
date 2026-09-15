@@ -251,7 +251,7 @@ public class Program
             AllowAutoRedirect = false
         });
         builder.Services.AddScoped<IWebhookDispatcher, InventoryManagementSystem.Infrastructure.Services.WebhookDispatcher>();
-        builder.Services.AddSingleton<IIdempotencyKeyStore, IdempotencyKeyStore>();
+        builder.Services.AddScoped<IIdempotencyKeyStore, IdempotencyKeyStore>();
 
         // FluentValidation — auto-validates MediatR requests via pipeline behavior
         builder.Services.AddValidatorsFromAssemblyContaining<ItemValidator>();
