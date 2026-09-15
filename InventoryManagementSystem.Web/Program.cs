@@ -134,6 +134,15 @@ public class Program
             };
         });
 
+        builder.Services.AddAuthorization(options =>
+        {
+            options.AddPolicy("Api", policy =>
+            {
+                policy.AddAuthenticationSchemes(JwtBearerDefaults.AuthenticationScheme);
+                policy.RequireAuthenticatedUser();
+            });
+        });
+
         // MudBlazor
         builder.Services.AddMudServices();
 
@@ -349,7 +358,7 @@ public class Program
 
         var v1 = app.MapGroup("/api/v1")
             .WithTags("API v1")
-            .RequireAuthorization()
+            .RequireAuthorization("Api")
             .RequireRateLimiting("Api");
 
         v1.MapPost("/auth/token", async (TokenRequest req, UserManager<ApplicationUser> userManager, SignInManager<ApplicationUser> signInManager) =>
