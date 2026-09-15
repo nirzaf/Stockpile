@@ -1,6 +1,6 @@
 {
   "ConnectionStrings": {
-    "DefaultConnection": "Host=localhost;Database=InventoryDB;Username=postgres;Password=yourpassword"
+    "DefaultConnection": ""
   },
   "Logging": {
     "LogLevel": {
@@ -9,7 +9,12 @@
     }
   },
   "AdminSettings": {
-    "Email": "admin@example.com",
-    "Password": "ChangeMe123"
+    "Email": "",
+    "Password": ""
+  },
+  "JwtSettings": {
+    "Secret": "",
+    "Issuer": "InventoryManagementSystem",
+    "Audience": "InventoryManagementSystem"
   }
 }

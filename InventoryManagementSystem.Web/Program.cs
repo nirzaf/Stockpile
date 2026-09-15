@@ -92,8 +92,26 @@ public class Program
         // [Authorize] policy and the request path; the controllers explicitly call
         // [Authorize(AuthenticationSchemes = "Bearer")] on the API controllers.
         var jwtSettings = builder.Configuration.GetSection("JwtSettings");
-        var secretKey = jwtSettings["Secret"] ?? "SuperSecretKeyForDevelopmentPurposesOnlyDoNotUseInProduction123!";
-        var key = Encoding.ASCII.GetBytes(secretKey);
+        var secretKey = jwtSettings["Secret"];
+        if (string.IsNullOrWhiteSpace(secretKey))
+        {
+            if (builder.Environment.IsEnvironment("Testing"))
+            {
+                secretKey = Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32));
+            }
+            else
+            {
+                throw new InvalidOperationException(
+                    "JwtSettings:Secret must be configured through user secrets or the deployment environment.");
+            }
+        }
+
+        if (Encoding.UTF8.GetByteCount(secretKey) < 32)
+        {
+            throw new InvalidOperationException("JwtSettings:Secret must be at least 32 bytes long.");
+        }
+
+        var key = Encoding.UTF8.GetBytes(secretKey);
 
         builder.Services.AddAuthentication(options =>
         {

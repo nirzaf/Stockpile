@@ -62,7 +62,7 @@ The app runs in any modern browser on a desktop, tablet, or phone, and uses a cl
 2. On the **Login** page, enter the **email** and **password** you were given.
 3. Click **Log in**.
 
-> **Default admin (development only):** `admin@inventory.com` / `Admin@123` — change this immediately in any non-test environment.
+> **Development credentials:** An administrator must provide `ADMIN_EMAIL` and `ADMIN_PASSWORD` through the local environment or user secrets. No default credentials are committed.
 
 If you forget your password, contact your administrator — they can reset it for you.
 
