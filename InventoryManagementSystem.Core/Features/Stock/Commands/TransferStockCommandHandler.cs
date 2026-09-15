@@ -19,6 +19,8 @@ public class TransferStockCommandHandler : IRequestHandler<TransferStockCommand>
     {
         _logger.LogDebug("Handling TransferStockCommand item={ItemId}, from={From}, to={To}, qty={Qty}",
             request.ItemId, request.FromLocationId, request.ToLocationId, request.Quantity);
-        await _stockService.TransferStockAsync(request.ItemId, request.FromLocationId, request.ToLocationId, request.Quantity, request.Notes);
+        await _stockService.TransferStockAsync(
+            request.ItemId, request.FromLocationId, request.ToLocationId, request.Quantity, request.Notes,
+            request.BatchNumber, request.ExpiryDate);
     }
 }

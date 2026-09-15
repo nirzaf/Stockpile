@@ -18,6 +18,8 @@ public class ReceiveStockCommandHandler : IRequestHandler<ReceiveStockCommand>
     public async Task Handle(ReceiveStockCommand request, CancellationToken cancellationToken)
     {
         _logger.LogDebug("Handling ReceiveStockCommand item={ItemId}, loc={LocId}, qty={Qty}", request.ItemId, request.LocationId, request.Quantity);
-        await _stockService.ReceiveStockAsync(request.ItemId, request.LocationId, request.Quantity, request.Notes);
+        await _stockService.ReceiveStockAsync(
+            request.ItemId, request.LocationId, request.Quantity, request.Notes,
+            request.BatchNumber, request.ExpiryDate);
     }
 }

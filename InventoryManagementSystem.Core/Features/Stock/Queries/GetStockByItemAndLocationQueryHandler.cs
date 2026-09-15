@@ -19,6 +19,7 @@ public class GetStockByItemAndLocationQueryHandler : IRequestHandler<GetStockByI
     public async Task<StockInHand?> Handle(GetStockByItemAndLocationQuery request, CancellationToken cancellationToken)
     {
         _logger.LogDebug("Handling GetStockByItemAndLocationQuery item={ItemId}, loc={LocId}", request.ItemId, request.LocationId);
-        return await _stockService.GetByItemAndLocationAsync(request.ItemId, request.LocationId);
+        return await _stockService.GetByItemAndLocationAsync(
+            request.ItemId, request.LocationId, request.BatchNumber, request.ExpiryDate);
     }
 }
