@@ -12,12 +12,18 @@ public class PurchaseOrderService : IPurchaseOrderService
 {
     private readonly IRepository<PurchaseOrder> _poRepo;
     private readonly IUnitOfWork _unitOfWork;
+    private readonly IWebhookDispatcher _webhookDispatcher;
     private readonly ILogger<PurchaseOrderService> _logger;
 
-    public PurchaseOrderService(IRepository<PurchaseOrder> poRepo, IUnitOfWork unitOfWork, ILogger<PurchaseOrderService> logger)
+    public PurchaseOrderService(
+        IRepository<PurchaseOrder> poRepo,
+        IUnitOfWork unitOfWork,
+        IWebhookDispatcher webhookDispatcher,
+        ILogger<PurchaseOrderService> logger)
     {
         _poRepo = poRepo;
         _unitOfWork = unitOfWork;
+        _webhookDispatcher = webhookDispatcher;
         _logger = logger;
     }
 
@@ -60,10 +66,22 @@ public class PurchaseOrderService : IPurchaseOrderService
         if (!Enum.TryParse<PurchaseOrderStatus>(status, ignoreCase: true, out var parsedStatus))
             throw new ArgumentException($"Invalid status: {status}");
 
+        var previousStatus = po.Status;
         po.Status = parsedStatus;
         await _poRepo.UpdateAsync(po);
         await _unitOfWork.SaveChangesAsync();
         _logger.LogInformation("Updated PO {Id} status to {Status}", id, parsedStatus);
+
+        if (previousStatus != parsedStatus)
+        {
+            await _webhookDispatcher.DispatchAsync("PurchaseOrder.StatusChanged", new
+            {
+                PurchaseOrderId = po.Id,
+                PONumber = po.PONumber,
+                PreviousStatus = previousStatus.ToString(),
+                Status = parsedStatus.ToString()
+            });
+        }
     }
 
     /// <inheritdoc />

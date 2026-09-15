@@ -253,4 +253,36 @@ public class StockServiceTests
         await act.Should().ThrowAsync<InvalidOperationException>()
             .WithMessage("Insufficient stock for sale");
     }
+
+    [Fact]
+    public async Task SellStockAsync_WhenBalanceReachesReorderLevel_DispatchesLowStockNotification()
+    {
+        var item = _fixture.Build<Item>()
+            .With(i => i.Id, 1)
+            .With(i => i.ItemCode, "LOW-001")
+            .With(i => i.ReorderLevel, 10)
+            .Create();
+        var stock = _fixture.Build<StockInHand>()
+            .With(s => s.ItemId, 1)
+            .With(s => s.LocationId, 2)
+            .With(s => s.Quantity, 15)
+            .Create();
+        _itemRepoMock.Setup(r => r.GetByIdAsync(1)).ReturnsAsync(item);
+        _stockRepoMock.SetupSequence(r => r.FindAsync(
+                It.IsAny<Expression<Func<StockInHand, bool>>>()))
+            .ReturnsAsync(new List<StockInHand> { stock })
+            .ReturnsAsync(new List<StockInHand> { stock });
+
+        await _sut.SellStockAsync(1, 2, 5, "Reorder threshold reached");
+
+        var invocation = _webhookDispatcherMock.Invocations
+            .Single(i => i.Method.Name == nameof(IWebhookDispatcher.DispatchAsync) &&
+                         i.Arguments[0] is "Stock.Low");
+        invocation.Arguments[0].Should().Be("Stock.Low");
+        var payload = invocation.Arguments[1];
+        payload!.GetType().GetProperty("ItemId")!.GetValue(payload).Should().Be(1);
+        payload.GetType().GetProperty("ItemCode")!.GetValue(payload).Should().Be("LOW-001");
+        payload.GetType().GetProperty("TotalStock")!.GetValue(payload).Should().Be(10);
+        payload.GetType().GetProperty("ReorderLevel")!.GetValue(payload).Should().Be(10);
+    }
 }
