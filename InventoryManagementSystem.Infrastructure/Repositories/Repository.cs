@@ -62,6 +62,7 @@ public class Repository<T> : IRepository<T> where T : class
     public virtual async Task<IEnumerable<T>> GetPagedAsync(int page, int pageSize)
     {
         return await _dbSet.AsNoTracking()
+            .OrderBy(entity => EF.Property<object>(entity, "Id"))
             .Skip((page - 1) * pageSize)
             .Take(pageSize)
             .ToListAsync();
