@@ -6,7 +6,7 @@ services:
     environment:
       POSTGRES_DB: ${DB_NAME:-InventoryDB}
       POSTGRES_USER: ${DB_USER:-postgres}
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-inventory123}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
     volumes:
       - pgdata:/var/lib/postgresql/data
     ports:
@@ -26,9 +26,10 @@ services:
     environment:
       - ASPNETCORE_ENVIRONMENT=${ASPNETCORE_ENVIRONMENT:-Production}
       - DISABLE_HTTPS=true
-      - ConnectionStrings__DefaultConnection=Host=db;Database=${DB_NAME:-InventoryDB};Username=${DB_USER:-postgres};Password=${DB_PASSWORD:-inventory123}
-      - AdminSettings__Email=${ADMIN_EMAIL:-admin@inventory.com}
-      - AdminSettings__Password=${ADMIN_PASSWORD:-Admin@123}
+      - ConnectionStrings__DefaultConnection=Host=db;Database=${DB_NAME:-InventoryDB};Username=${DB_USER:-postgres};Password=${DB_PASSWORD}
+      - AdminSettings__Email=${ADMIN_EMAIL-}
+      - AdminSettings__Password=${ADMIN_PASSWORD-}
+      - JwtSettings__Secret=${JWT_SECRET:?Set JWT_SECRET in .env}
     ports:
       - "${APP_PORT:-8080}:8080"
     depends_on:

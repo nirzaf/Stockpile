@@ -70,14 +70,14 @@ A modern inventory management web application for tracking items, stock levels, 
 git clone https://github.com/nirzaf/Stockpile.git
 cd InventoryManagementSystem
 cp .env.example .env        # edit credentials if desired
-docker compose up -d        # starts app + PostgreSQL
+docker compose up -d        # starts app + PostgreSQL after required secrets are set
 ```
 
 The app will be available at **http://localhost:8080**.
 
 Swagger UI is available at **http://localhost:8080/swagger** in the Development environment for interactive API exploration.
 
-Default admin: `admin@inventory.com` / `Admin@123` (change in `.env`).
+Set `DB_PASSWORD`, `ADMIN_EMAIL`, `ADMIN_PASSWORD`, and `JWT_SECRET` in `.env` before starting. There are no committed default credentials.
 
 ### Manual Setup
 
@@ -87,8 +87,9 @@ Default admin: `admin@inventory.com` / `Admin@123` (change in `.env`).
 # 1. Create the database
 createdb InventoryDB
 
-# 2. Set the connection string
-export ConnectionStrings__DefaultConnection="Host=localhost;Database=InventoryDB;Username=postgres;Password=yourpassword"
+# 2. Set the connection string and JWT secret through your shell environment
+export ConnectionStrings__DefaultConnection="Host=localhost;Database=InventoryDB;Username=postgres;Password=$DB_PASSWORD"
+export JwtSettings__Secret="$JWT_SECRET"
 
 # 3. Run migrations and start
 cd InventoryManagementSystem.Web
@@ -96,6 +97,16 @@ dotnet run
 ```
 
 Open **https://localhost:5001** in your browser.
+
+For local Development runs, configure the database connection, JWT secret, and optional seed administrator with ASP.NET User Secrets instead of committing them:
+
+```bash
+dotnet user-secrets init --project InventoryManagementSystem.Web
+dotnet user-secrets set "ConnectionStrings:DefaultConnection" "Host=localhost;Database=InventoryDB;Username=postgres;Password=<local-password>" --project InventoryManagementSystem.Web
+dotnet user-secrets set "JwtSettings:Secret" "<at-least-32-byte-local-secret>" --project InventoryManagementSystem.Web
+dotnet user-secrets set "AdminSettings:Email" "<admin-email>" --project InventoryManagementSystem.Web
+dotnet user-secrets set "AdminSettings:Password" "<admin-password>" --project InventoryManagementSystem.Web
+```
 
 ## API Reference
 

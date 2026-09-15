@@ -33,12 +33,13 @@ When deploying this application:
 - Rotate secrets regularly
 - Keep dependencies updated (`dotnet list package --vulnerable`)
 - Do not commit `appsettings.Development.json` or `.env` files containing secrets
+- If a credential was ever committed, rotate it even after removing the file from the current branch
 
 ## Database Security
 
 - The application uses PostgreSQL with Entity Framework Core
 - Connection strings should use environment variables (`ConnectionStrings__DefaultConnection`) in production
-- Default admin credentials in `appsettings.Development.json` are for local development only
+- Development seed credentials must be supplied through user secrets or environment variables; none are committed
 - The seed data only runs in Development environment
 
 ## Supported Versions
