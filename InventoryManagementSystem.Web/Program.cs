@@ -335,7 +335,9 @@ public class Program
         });
 
         // Rate limiting
-        // Two fixed-window policies are defined because the cost profiles are very
+        // API callers get independent fixed windows per tenant and client. AI remains a
+        // deliberately global fixed window so a fleet of callers cannot overwhelm CPU.
+        // Two policies are defined because the cost profiles are very
         // different:
         //   * "Api" — 100 req/min covers the standard tier of CRUD traffic and
         //     protects the database from accidental or malicious bursts. 10-request
@@ -347,13 +349,15 @@ public class Program
         builder.Services.AddRateLimiter(options =>
         {
             options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
-            // API endpoints: 100 requests/minute
-            options.AddFixedWindowLimiter("Api", limiter =>
-            {
-                limiter.PermitLimit = 100;
-                limiter.Window = TimeSpan.FromMinutes(1);
-                limiter.QueueLimit = 10;
-            });
+            options.AddPolicy("Api", httpContext =>
+                RateLimitPartition.GetFixedWindowLimiter(
+                    RateLimitPartitionKey.ForApi(httpContext),
+                    _ => new FixedWindowRateLimiterOptions
+                    {
+                        PermitLimit = 100,
+                        Window = TimeSpan.FromMinutes(1),
+                        QueueLimit = 10
+                    }));
             // AI endpoints: 10 requests/minute (CPU-intensive ML.NET)
             options.AddFixedWindowLimiter("Ai", limiter =>
             {
