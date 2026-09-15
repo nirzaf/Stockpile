@@ -94,9 +94,4 @@ public class Repository<T> : IRepository<T> where T : class
         return Task.CompletedTask;
     }
 
-    /// <inheritdoc />
-    public virtual async Task SaveChangesAsync()
-    {
-        await _context.SaveChangesAsync();
-    }
 }
