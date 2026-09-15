@@ -1,9 +1,11 @@
 @page "/"
 @using Microsoft.AspNetCore.Authorization
+@using Microsoft.Extensions.Caching.Memory
 @attribute [Authorize]
 @inject IItemService ItemService
 @inject IStockService StockService
 @inject IPurchaseOrderService POService
+@inject IMemoryCache Cache
 
 <PageTitle>Dashboard</PageTitle>
 
@@ -69,9 +71,21 @@
 
     protected override async Task OnInitializedAsync()
     {
-        _itemCount = await ItemService.GetCountAsync();
-        _poCount = await POService.GetCountAsync();
-        var stockItems = await StockService.GetAllAsync();
-        _stockCount = stockItems.Sum(s => s.Quantity);
+        _itemCount = await Cache.GetOrCreateAsync("dashboard:item-count", async entry =>
+        {
+            entry.AbsoluteExpirationRelativeToNow = TimeSpan.FromSeconds(30);
+            return await ItemService.GetCountAsync();
+        }) ?? 0;
+        _poCount = await Cache.GetOrCreateAsync("dashboard:purchase-order-count", async entry =>
+        {
+            entry.AbsoluteExpirationRelativeToNow = TimeSpan.FromSeconds(30);
+            return await POService.GetCountAsync();
+        }) ?? 0;
+        _stockCount = await Cache.GetOrCreateAsync("dashboard:stock-count", async entry =>
+        {
+            entry.AbsoluteExpirationRelativeToNow = TimeSpan.FromSeconds(30);
+            var stockItems = await StockService.GetAllAsync();
+            return stockItems.Sum(s => s.Quantity);
+        }) ?? 0;
     }
 }

@@ -432,18 +432,28 @@ public class Program
 
         // === AI / ML endpoints ===
 
-        v1.MapGet("/forecast/{itemId:int}", async (int itemId, int? horizon, IMediator mediator) =>
+        v1.MapGet("/forecast/{itemId:int}", async (int itemId, int? horizon, IMediator mediator, IMemoryCache cache) =>
         {
-            var forecast = await mediator.Send(new ForecastDemandQuery(itemId, horizon ?? 30));
+            var horizonDays = horizon ?? 30;
+            var forecast = await cache.GetOrCreateAsync($"forecast:item:{itemId}:horizon:{horizonDays}", async entry =>
+            {
+                entry.AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(5);
+                return await mediator.Send(new ForecastDemandQuery(itemId, horizonDays));
+            });
             return Results.Ok(ApiResponse<DemandForecastResult>.CreateSuccess(forecast));
         })
             .WithName("ForecastDemand")
             .WithTags("AI")
             .RequireRateLimiting("Ai");
 
-        v1.MapGet("/forecast", async (int? horizon, IMediator mediator) =>
+        v1.MapGet("/forecast", async (int? horizon, IMediator mediator, IMemoryCache cache) =>
         {
-            var forecasts = await mediator.Send(new ForecastAllItemsDemandQuery(horizon ?? 30));
+            var horizonDays = horizon ?? 30;
+            var forecasts = await cache.GetOrCreateAsync($"forecast:all:horizon:{horizonDays}", async entry =>
+            {
+                entry.AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(5);
+                return await mediator.Send(new ForecastAllItemsDemandQuery(horizonDays));
+            });
             return Results.Ok(ApiResponse<IReadOnlyList<DemandForecastResult>>.CreateSuccess(forecasts));
         })
             .WithName("ForecastAllDemand")
