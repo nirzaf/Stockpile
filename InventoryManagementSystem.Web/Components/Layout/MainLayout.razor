@@ -17,7 +17,7 @@
                 </MudText>
                 <MudIconButton Icon="@(_isDarkMode ? Icons.Material.Filled.LightMode : Icons.Material.Filled.DarkMode)"
                                Color="Color.Inherit" Size="Size.Small" OnClick="ToggleDarkMode"
-                               Title="Toggle dark mode" Class="mr-2" />
+                               aria-label="Toggle dark mode" Class="mr-2" />
                 <form action="/Account/Logout" method="post">
                     <AntiforgeryToken />
                     <MudButton ButtonType="ButtonType.Submit" Variant="Variant.Outlined" Color="Color.Inherit" Size="Size.Small" StartIcon="@Icons.Material.Filled.Logout">
