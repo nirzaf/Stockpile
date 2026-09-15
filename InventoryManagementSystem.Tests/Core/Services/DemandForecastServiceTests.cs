@@ -18,14 +18,14 @@ public class DemandForecastServiceTests
     private readonly Mock<IRepository<Item>> _itemRepoMock = new();
     private readonly DemandForecastService _sut;
 
-    private readonly Mock<IMemoryCache> _cacheMock = new();
+    private readonly IMemoryCache _cache = new MemoryCache(new MemoryCacheOptions());
 
     public DemandForecastServiceTests()
     {
         _sut = new DemandForecastService(
             _txRepoMock.Object, _itemRepoMock.Object,
             NullLogger<DemandForecastService>.Instance,
-            _cacheMock.Object);
+            _cache);
     }
 
     [Fact]
