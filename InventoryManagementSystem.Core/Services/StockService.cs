@@ -139,12 +139,12 @@ public class StockService : IStockService
                 Notes = notes
             });
 
+            await _webhookDispatcher.EnqueueAsync(WebhookEventFactory.Create(_tenantContext, "Stock.Received",
+                new { ItemId = itemId, LocationId = locationId, Quantity = quantity, Notes = notes, BatchNumber = batchNumber, ExpiryDate = expiryDate }));
             await _unitOfWork.SaveChangesAsync();
         });
 
         _logger.LogInformation("Received {Qty} of item {ItemId} at location {LocId}", quantity, itemId, locationId);
-        await _webhookDispatcher.DispatchAsync(WebhookEventFactory.Create(_tenantContext, "Stock.Received",
-            new { ItemId = itemId, LocationId = locationId, Quantity = quantity, Notes = notes, BatchNumber = batchNumber, ExpiryDate = expiryDate }));
         await CheckLowStockAsync(itemId);
     }
 
@@ -194,12 +194,12 @@ public class StockService : IStockService
                 Notes = notes
             });
 
+            await _webhookDispatcher.EnqueueAsync(WebhookEventFactory.Create(_tenantContext, "Stock.Transferred",
+                new { ItemId = itemId, FromLocationId = fromLocationId, ToLocationId = toLocationId, Quantity = quantity, Notes = notes, BatchNumber = batchNumber, ExpiryDate = expiryDate }));
             await _unitOfWork.SaveChangesAsync();
         });
 
         _logger.LogInformation("Transferred {Qty} of item {ItemId} from {From} to {To}", quantity, itemId, fromLocationId, toLocationId);
-        await _webhookDispatcher.DispatchAsync(WebhookEventFactory.Create(_tenantContext, "Stock.Transferred",
-            new { ItemId = itemId, FromLocationId = fromLocationId, ToLocationId = toLocationId, Quantity = quantity, Notes = notes, BatchNumber = batchNumber, ExpiryDate = expiryDate }));
         await CheckLowStockAsync(itemId);
     }
 
@@ -229,12 +229,12 @@ public class StockService : IStockService
                 Notes = notes
             });
 
+            await _webhookDispatcher.EnqueueAsync(WebhookEventFactory.Create(_tenantContext, "Stock.Sold",
+                new { ItemId = itemId, LocationId = locationId, Quantity = quantity, Notes = notes, BatchNumber = batchNumber, ExpiryDate = expiryDate }));
             await _unitOfWork.SaveChangesAsync();
         });
 
         _logger.LogInformation("Sold {Qty} of item {ItemId} from location {LocId}", quantity, itemId, locationId);
-        await _webhookDispatcher.DispatchAsync(WebhookEventFactory.Create(_tenantContext, "Stock.Sold",
-            new { ItemId = itemId, LocationId = locationId, Quantity = quantity, Notes = notes, BatchNumber = batchNumber, ExpiryDate = expiryDate }));
         await CheckLowStockAsync(itemId);
     }
 
@@ -252,7 +252,7 @@ public class StockService : IStockService
             {
                 _logger.LogWarning("Low stock alert for item {ItemCode}: Total Stock is {TotalStock}, Reorder Level is {ReorderLevel}", 
                     item.ItemCode, totalStock, item.ReorderLevel);
-                await _webhookDispatcher.DispatchAsync(WebhookEventFactory.Create(_tenantContext, "Stock.Low", new
+                await _webhookDispatcher.EnqueueAsync(WebhookEventFactory.Create(_tenantContext, "Stock.Low", new
                 {
                     ItemId = itemId,
                     ItemCode = item.ItemCode,

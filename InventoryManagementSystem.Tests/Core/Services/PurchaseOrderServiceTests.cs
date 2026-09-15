@@ -157,7 +157,7 @@ public class PurchaseOrderServiceTests
     }
 
     [Fact]
-    public async Task UpdateStatusAsync_WhenStatusChanges_DispatchesNotification()
+    public async Task UpdateStatusAsync_WhenStatusChanges_QueuesNotification()
     {
         // Arrange
         var po = _fixture.Build<PurchaseOrder>()
@@ -171,7 +171,7 @@ public class PurchaseOrderServiceTests
 
         // Assert
         var invocation = _webhookDispatcherMock.Invocations
-            .Single(i => i.Method.Name == nameof(IWebhookDispatcher.DispatchAsync));
+            .Single(i => i.Method.Name == nameof(IWebhookDispatcher.EnqueueAsync));
         var webhookEvent = invocation.Arguments[0]!;
         webhookEvent.GetType().GetProperty("EventType")!.GetValue(webhookEvent)
             .Should().Be("PurchaseOrder.StatusChanged");
@@ -186,7 +186,7 @@ public class PurchaseOrderServiceTests
     }
 
     [Fact]
-    public async Task UpdateStatusAsync_WhenStatusDoesNotChange_DoesNotDispatchNotification()
+    public async Task UpdateStatusAsync_WhenStatusDoesNotChange_DoesNotQueueNotification()
     {
         // Arrange
         var po = _fixture.Build<PurchaseOrder>()

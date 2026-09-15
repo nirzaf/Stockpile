@@ -73,12 +73,9 @@ public class PurchaseOrderService : IPurchaseOrderService
         var previousStatus = po.Status;
         po.Status = parsedStatus;
         await _poRepo.UpdateAsync(po);
-        await _unitOfWork.SaveChangesAsync();
-        _logger.LogInformation("Updated PO {Id} status to {Status}", id, parsedStatus);
-
         if (previousStatus != parsedStatus)
         {
-            await _webhookDispatcher.DispatchAsync(WebhookEventFactory.Create(_tenantContext, "PurchaseOrder.StatusChanged", new
+            await _webhookDispatcher.EnqueueAsync(WebhookEventFactory.Create(_tenantContext, "PurchaseOrder.StatusChanged", new
             {
                 PurchaseOrderId = po.Id,
                 PONumber = po.PONumber,
@@ -86,6 +83,8 @@ public class PurchaseOrderService : IPurchaseOrderService
                 Status = parsedStatus.ToString()
             }));
         }
+        await _unitOfWork.SaveChangesAsync();
+        _logger.LogInformation("Updated PO {Id} status to {Status}", id, parsedStatus);
     }
 
     /// <inheritdoc />
