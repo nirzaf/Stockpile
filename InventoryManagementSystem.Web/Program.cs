@@ -35,6 +35,7 @@ using InventoryManagementSystem.Core.Diagnostics;
 using InventoryManagementSystem.Web.Security;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Exporter;
+using OpenTelemetry;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
 
