@@ -4,6 +4,7 @@ using InventoryManagementSystem.Core.Entities;
 using InventoryManagementSystem.Core.Interfaces;
 using InventoryManagementSystem.Core.Services;
 using InventoryManagementSystem.Tests.Common;
+using InventoryManagementSystem.Tests.Infrastructure;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 
@@ -23,6 +24,7 @@ public class PurchaseOrderServiceTests
             _poRepoMock.Object,
             _uowMock.Object,
             _webhookDispatcherMock.Object,
+            new TestTenantContext("test-tenant"),
             NullLogger<PurchaseOrderService>.Instance);
     }
 
@@ -170,8 +172,12 @@ public class PurchaseOrderServiceTests
         // Assert
         var invocation = _webhookDispatcherMock.Invocations
             .Single(i => i.Method.Name == nameof(IWebhookDispatcher.DispatchAsync));
-        invocation.Arguments[0].Should().Be("PurchaseOrder.StatusChanged");
-        var payload = invocation.Arguments[1];
+        var webhookEvent = invocation.Arguments[0]!;
+        webhookEvent.GetType().GetProperty("EventType")!.GetValue(webhookEvent)
+            .Should().Be("PurchaseOrder.StatusChanged");
+        webhookEvent.GetType().GetProperty("TenantId")!.GetValue(webhookEvent)
+            .Should().Be("test-tenant");
+        var payload = webhookEvent.GetType().GetProperty("Payload")!.GetValue(webhookEvent);
         payload.Should().NotBeNull();
         payload!.GetType().GetProperty("PurchaseOrderId")!.GetValue(payload).Should().Be(po.Id);
         payload.GetType().GetProperty("PONumber")!.GetValue(payload).Should().Be("PO-1001");

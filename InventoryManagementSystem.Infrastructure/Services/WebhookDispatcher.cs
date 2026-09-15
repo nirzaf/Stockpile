@@ -1,14 +1,11 @@
-using System;
-using System.Linq;
-using System.Net.Http;
+using InventoryManagementSystem.Core.Entities;
+using InventoryManagementSystem.Core.Interfaces;
+using InventoryManagementSystem.Core.Models;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
-using System.Threading.Tasks;
-using InventoryManagementSystem.Core.Entities;
-using InventoryManagementSystem.Core.Interfaces;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Logging;
 
 namespace InventoryManagementSystem.Infrastructure.Services;
 
@@ -28,13 +25,16 @@ public class WebhookDispatcher : IWebhookDispatcher
         _logger = logger;
     }
 
-    public async Task DispatchAsync<T>(string eventType, T payload)
+    public async Task DispatchAsync<T>(WebhookEvent<T> webhookEvent)
     {
         try
         {
             using var scope = _serviceProvider.CreateScope();
+            var tenantContext = scope.ServiceProvider.GetRequiredService<ITenantContext>();
+            tenantContext.SetTenant(webhookEvent.TenantId);
             var repo = scope.ServiceProvider.GetRequiredService<IRepository<WebhookSubscription>>();
-            var subscriptions = await repo.FindAsync(s => s.IsActive && (s.EventType == eventType || s.EventType == "*"));
+            var subscriptions = await repo.FindAsync(s => s.IsActive &&
+                (s.EventType == webhookEvent.EventType || s.EventType == "*"));
 
             if (!subscriptions.Any())
             {
@@ -42,20 +42,16 @@ public class WebhookDispatcher : IWebhookDispatcher
             }
 
             var client = _httpClientFactory.CreateClient("Webhooks");
-            var jsonPayload = JsonSerializer.Serialize(new
-            {
-                Event = eventType,
-                Timestamp = DateTime.UtcNow,
-                Data = payload
-            });
+            var jsonPayload = JsonSerializer.Serialize(webhookEvent);
 
             var deliveries = subscriptions.Select(subscription =>
-                SendAsync(subscription, client, eventType, jsonPayload));
+                SendAsync(subscription, client, webhookEvent.EventType, jsonPayload));
             await Task.WhenAll(deliveries);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to dispatch webhook event {Event}", eventType);
+            _logger.LogError(ex, "Failed to dispatch webhook event {EventId} for tenant {TenantId}",
+                webhookEvent.EventId, webhookEvent.TenantId);
         }
     }
 

@@ -1,5 +1,6 @@
 using InventoryManagementSystem.Core.Entities;
 using InventoryManagementSystem.Core.Interfaces;
+using InventoryManagementSystem.Core.Models;
 using Microsoft.Extensions.Logging;
 
 namespace InventoryManagementSystem.Core.Services;
@@ -13,17 +14,20 @@ public class PurchaseOrderService : IPurchaseOrderService
     private readonly IRepository<PurchaseOrder> _poRepo;
     private readonly IUnitOfWork _unitOfWork;
     private readonly IWebhookDispatcher _webhookDispatcher;
+    private readonly ITenantContext _tenantContext;
     private readonly ILogger<PurchaseOrderService> _logger;
 
     public PurchaseOrderService(
         IRepository<PurchaseOrder> poRepo,
         IUnitOfWork unitOfWork,
         IWebhookDispatcher webhookDispatcher,
+        ITenantContext tenantContext,
         ILogger<PurchaseOrderService> logger)
     {
         _poRepo = poRepo;
         _unitOfWork = unitOfWork;
         _webhookDispatcher = webhookDispatcher;
+        _tenantContext = tenantContext;
         _logger = logger;
     }
 
@@ -74,13 +78,13 @@ public class PurchaseOrderService : IPurchaseOrderService
 
         if (previousStatus != parsedStatus)
         {
-            await _webhookDispatcher.DispatchAsync("PurchaseOrder.StatusChanged", new
+            await _webhookDispatcher.DispatchAsync(WebhookEventFactory.Create(_tenantContext, "PurchaseOrder.StatusChanged", new
             {
                 PurchaseOrderId = po.Id,
                 PONumber = po.PONumber,
                 PreviousStatus = previousStatus.ToString(),
                 Status = parsedStatus.ToString()
-            });
+            }));
         }
     }
 

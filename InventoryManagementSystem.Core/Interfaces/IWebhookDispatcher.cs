@@ -1,13 +1,12 @@
-using System.Threading.Tasks;
+using InventoryManagementSystem.Core.Models;
 
 namespace InventoryManagementSystem.Core.Interfaces;
 
 /// <summary>Dispatches event notifications to all subscribed webhook endpoints.</summary>
 public interface IWebhookDispatcher
 {
-    /// <summary>Sends a typed payload to every active webhook subscription matching the event type.</summary>
+    /// <summary>Sends an explicit tenant-aware event to matching active subscriptions.</summary>
     /// <typeparam name="T">The payload type.</typeparam>
-    /// <param name="eventType">A stable event name (e.g. <c>stock.received</c>).</param>
-    /// <param name="payload">The serializable payload to send.</param>
-    Task DispatchAsync<T>(string eventType, T payload);
+    /// <param name="webhookEvent">The immutable event envelope.</param>
+    Task DispatchAsync<T>(WebhookEvent<T> webhookEvent);
 }
