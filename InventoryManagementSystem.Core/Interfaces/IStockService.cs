@@ -12,8 +12,9 @@ public interface IStockService
     /// <summary>Gets the current stock-in-hand for a specific item at a specific location.</summary>
     /// <param name="itemId">The item identifier.</param>
     /// <param name="locationId">The location identifier.</param>
+    /// <param name="batchNumber">Optional batch or lot identifier.</param>
     /// <returns>The stock-in-hand row, or <see langword="null"/> if none exists.</returns>
-    Task<StockInHand?> GetByItemAndLocationAsync(int itemId, int locationId);
+    Task<StockInHand?> GetByItemAndLocationAsync(int itemId, int locationId, string? batchNumber = null);
 
     /// <summary>Gets stock transactions within an optional date range.</summary>
     /// <param name="from">Inclusive start date, or <see langword="null"/> for no lower bound.</param>

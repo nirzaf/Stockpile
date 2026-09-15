@@ -122,6 +122,22 @@ public class StockServiceTests
     }
 
     [Fact]
+    public async Task ReceiveStockAsync_NewBatch_PersistsBatchMetadataOnStockInHand()
+    {
+        SetupStockFindAsync(new List<StockInHand>());
+        var expiryDate = DateTime.UtcNow.AddMonths(6);
+
+        await _sut.ReceiveStockAsync(1, 2, 30, "New batch", "LOT-001", expiryDate);
+
+        _stockRepoMock.Verify(r => r.AddAsync(It.Is<StockInHand>(stock =>
+            stock.ItemId == 1 &&
+            stock.LocationId == 2 &&
+            stock.Quantity == 30 &&
+            stock.BatchNumber == "LOT-001" &&
+            stock.ExpiryDate == expiryDate)), Times.Once);
+    }
+
+    [Fact]
     public async Task ReceiveStockAsync_NonPositiveQuantity_Throws()
     {
         var act = () => _sut.ReceiveStockAsync(1, 2, 0, null);

@@ -14,4 +14,10 @@ public class StockInHand : AuditableEntity
 
     /// <summary>The current quantity of this item at this location.</summary>
     public int Quantity { get; set; }
+
+    /// <summary>Optional batch or lot identifier for regulated inventory.</summary>
+    public string? BatchNumber { get; set; }
+
+    /// <summary>Optional expiry date for the tracked batch or lot.</summary>
+    public DateTime? ExpiryDate { get; set; }
 }
