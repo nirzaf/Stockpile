@@ -2,6 +2,7 @@ using InventoryManagementSystem.Core.Interfaces;
 using InventoryManagementSystem.Infrastructure.Data;
 using InventoryManagementSystem.Tests.Infrastructure;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Testcontainers.PostgreSql;
 using Xunit.Sdk;
 
@@ -61,6 +62,7 @@ public sealed class PostgreSqlIntegrationFixture : IAsyncLifetime
 
         var options = new DbContextOptionsBuilder<InventoryDbContext>()
             .UseNpgsql(ConnectionString)
+            .ConfigureWarnings(warnings => warnings.Ignore(RelationalEventId.PendingModelChangesWarning))
             .Options;
 
         return new InventoryDbContext(options, new TestTenantContext(tenantId));
