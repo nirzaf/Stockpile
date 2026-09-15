@@ -8,6 +8,7 @@ using MediatR;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
+using InventoryManagementSystem.Web.Security;
 
 namespace InventoryManagementSystem.Web.Controllers.Api.V1;
 
