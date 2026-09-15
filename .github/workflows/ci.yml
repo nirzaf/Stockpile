@@ -61,6 +61,14 @@ jobs:
             --settings coverlet.runsettings \
             --results-directory ./coverage
 
+      - name: PostgreSQL integration tests
+        env:
+          RUN_POSTGRES_TESTS: "true"
+        run: |
+          dotnet test InventoryManagementSystem.Tests/InventoryManagementSystem.Tests.csproj \
+            --no-build --configuration Release \
+            --verbosity normal --filter "Category=PostgreSQL"
+
       - name: Install ReportGenerator
         run: |
           dotnet tool install --global dotnet-reportgenerator-globaltool --version 5.4.12
