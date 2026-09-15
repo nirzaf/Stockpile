@@ -1,6 +1,7 @@
 using InventoryManagementSystem.Core.Entities;
 using InventoryManagementSystem.Core.Interfaces;
 using InventoryManagementSystem.Core.Models;
+using InventoryManagementSystem.Core.Diagnostics;
 using Microsoft.Extensions.Logging;
 
 namespace InventoryManagementSystem.Core.Services;
@@ -88,6 +89,7 @@ public class StockService : IStockService
                     throw;
                 }
                 _logger.LogWarning("Concurrency conflict detected, retrying operation. Retries remaining: {Retries}", retries);
+                InventoryTelemetry.ConcurrencyRetries.Add(1);
 
                 // The change tracker is stale after a failed SaveChangesAsync — without
                 // clearing, the next attempt would re-attach the now-divergent original
@@ -252,6 +254,7 @@ public class StockService : IStockService
             {
                 _logger.LogWarning("Low stock alert for item {ItemCode}: Total Stock is {TotalStock}, Reorder Level is {ReorderLevel}", 
                     item.ItemCode, totalStock, item.ReorderLevel);
+                InventoryTelemetry.LowStockAlerts.Add(1);
                 await _webhookDispatcher.EnqueueAsync(WebhookEventFactory.Create(_tenantContext, "Stock.Low", new
                 {
                     ItemId = itemId,

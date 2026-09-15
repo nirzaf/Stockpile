@@ -2,6 +2,7 @@ using System.Net;
 using System.Security.Cryptography;
 using System.Text;
 using InventoryManagementSystem.Core.Entities;
+using InventoryManagementSystem.Core.Diagnostics;
 using InventoryManagementSystem.Infrastructure.Data;
 using InventoryManagementSystem.Web.Tenancy;
 using InventoryManagementSystem.Web.Security;
@@ -146,6 +147,7 @@ public sealed class WebhookDeliveryBackgroundService(
         await db.SaveChangesAsync(cancellationToken);
         if (delivery.Status == WebhookDeliveryStatus.DeadLetter)
         {
+            InventoryTelemetry.WebhookFailures.Add(1);
             logger.LogError("Webhook delivery {DeliveryId} moved to dead letter for tenant {TenantId}: {Error}", id, tenantId, error ?? $"HTTP {(int?)statusCode}");
         }
     }
