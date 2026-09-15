@@ -79,6 +79,28 @@ public class StockServiceTests
     }
 
     [Fact]
+    public async Task GetByItemAndLocationAsync_distinguishes_same_batch_by_expiry_date()
+    {
+        var earlierExpiry = new DateTime(2027, 1, 1);
+        var laterExpiry = new DateTime(2028, 1, 1);
+        var stock = new[]
+        {
+            new StockInHand { ItemId = 1, LocationId = 2, BatchNumber = "LOT-001", ExpiryDate = earlierExpiry, Quantity = 10 },
+            new StockInHand { ItemId = 1, LocationId = 2, BatchNumber = "LOT-001", ExpiryDate = laterExpiry, Quantity = 20 }
+        };
+        _stockRepoMock.Setup(repository => repository.FindAsync(
+                It.IsAny<Expression<Func<StockInHand, bool>>>()))
+            .Returns((Expression<Func<StockInHand, bool>> predicate) =>
+                Task.FromResult<IEnumerable<StockInHand>>(stock.Where(predicate.Compile()).ToArray()));
+
+        var result = await _sut.GetByItemAndLocationAsync(1, 2, "LOT-001", laterExpiry);
+
+        result.Should().NotBeNull();
+        result!.Quantity.Should().Be(20);
+        result.ExpiryDate.Should().Be(laterExpiry);
+    }
+
+    [Fact]
     public async Task GetTransactionsAsync_ReturnsFilteredTransactions()
     {
         var txs = _fixture.CreateMany<StockTransaction>(5).ToList();
