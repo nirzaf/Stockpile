@@ -1,5 +1,6 @@
 using InventoryManagementSystem.Core.Interfaces;
 using InventoryManagementSystem.Infrastructure.Data;
+using InventoryManagementSystem.Tests.Infrastructure;
 using Microsoft.EntityFrameworkCore;
 using Testcontainers.PostgreSql;
 using Xunit.Sdk;
@@ -69,7 +70,7 @@ public sealed class PostgreSqlIntegrationFixture : IAsyncLifetime
     {
         if (!IsEnabled)
         {
-            throw new SkipException(
+            throw SkipException.ForSkip(
                 "PostgreSQL integration tests are opt-in. Set RUN_POSTGRES_TESTS=true to run them.");
         }
     }
