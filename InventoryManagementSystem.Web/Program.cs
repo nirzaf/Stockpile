@@ -438,7 +438,8 @@ public class Program
             return Results.Ok(ApiResponse<DemandForecastResult>.CreateSuccess(forecast));
         })
             .WithName("ForecastDemand")
-            .WithTags("AI");
+            .WithTags("AI")
+            .RequireRateLimiting("Ai");
 
         v1.MapGet("/forecast", async (int? horizon, IMediator mediator) =>
         {
@@ -446,7 +447,8 @@ public class Program
             return Results.Ok(ApiResponse<IReadOnlyList<DemandForecastResult>>.CreateSuccess(forecasts));
         })
             .WithName("ForecastAllDemand")
-            .WithTags("AI");
+            .WithTags("AI")
+            .RequireRateLimiting("Ai");
 
         v1.MapGet("/anomalies", async (DateTime? from, DateTime? to, IMediator mediator) =>
         {
@@ -454,7 +456,8 @@ public class Program
             return Results.Ok(ApiResponse<IReadOnlyList<StockAnomaly>>.CreateSuccess(anomalies));
         })
             .WithName("DetectAnomalies")
-            .WithTags("AI");
+            .WithTags("AI")
+            .RequireRateLimiting("Ai");
 
         // Auto-apply EF Core migrations (Development only)
         if (app.Environment.IsDevelopment())
