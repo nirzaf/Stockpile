@@ -1,13 +1,16 @@
 using System;
 
+using InventoryManagementSystem.Core.Interfaces;
+
 namespace InventoryManagementSystem.Core.Entities;
 
 /// <summary>
 /// Represents an immutable audit record. Maps to the <c>AuditLogs</c> table.
 /// Populated automatically by <c>InventoryDbContext.SaveChangesAsync</c>.
 /// </summary>
-public class AuditLog
+public class AuditLog : ITenantScoped
 {
+    public string TenantId { get; set; } = "default";
     public int Id { get; set; }
 
     /// <summary>CLR type name of the audited entity.</summary>

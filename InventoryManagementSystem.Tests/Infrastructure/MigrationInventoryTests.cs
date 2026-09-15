@@ -21,6 +21,10 @@ public class MigrationInventoryTests
                 "InventoryManagementSystem.Infrastructure.Migrations.InventoryDbContextModelSnapshot")
             .Should()
             .NotBeNull();
+        infrastructureAssembly.GetType(
+                "InventoryManagementSystem.Infrastructure.Migrations.AddTenantIsolation")
+            .Should()
+            .NotBeNull();
 
         typeof(ApplicationUser).Namespace.Should().Be("InventoryManagementSystem.Core.Entities");
         typeof(ApplicationUser).Assembly.GetName().Name.Should().Be("InventoryManagementSystem.Core");
