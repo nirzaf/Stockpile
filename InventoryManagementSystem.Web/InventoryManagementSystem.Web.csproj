@@ -36,6 +36,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <NoWarn>$(NoWarn);CS1591</NoWarn>
+    <WarningsAsErrors>$(WarningsAsErrors);AV0021;MUD0002</WarningsAsErrors>
   </PropertyGroup>
 
 </Project>
