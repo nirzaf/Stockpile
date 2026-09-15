@@ -22,6 +22,7 @@ public class SwaggerTests : IClassFixture<CustomWebApplicationFactory>
 
         document.Info.Title.Should().Be("Inventory Management System API");
         document.Paths.Should().ContainKey("/api/v1/items");
-        document.Components.SecuritySchemes.Should().ContainKey("Bearer");
+        document.Components.Should().NotBeNull();
+        document.Components!.SecuritySchemes.Should().ContainKey("Bearer");
     }
 }
