@@ -462,9 +462,6 @@ public class Program
             .RequireAuthorization("Api")
             .RequireRateLimiting("Api");
 
-        const int defaultPageSize = 25;
-        const int maxPageSize = 100;
-
         v1.MapPost("/auth/token", async (
             TokenRequest req,
             UserManager<ApplicationUser> userManager,

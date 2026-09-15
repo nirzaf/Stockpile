@@ -1,4 +1,5 @@
 using Asp.Versioning;
+using InventoryManagementSystem.Core.Entities;
 using InventoryManagementSystem.Core.Features.Items.Commands;
 using InventoryManagementSystem.Core.Features.Items.Queries;
 using InventoryManagementSystem.Core.Models;
