@@ -1,4 +1,3 @@
-using System.Linq.Expressions;
 using AutoFixture;
 using FluentAssertions;
 using InventoryManagementSystem.Core.Entities;
@@ -14,7 +13,7 @@ namespace InventoryManagementSystem.Tests.Core.Services;
 public class ItemServiceTests
 {
     private readonly Fixture _fixture = InventoryFixtureFactory.Create();
-    private readonly Mock<IRepository<Item>> _repoMock = new();
+    private readonly Mock<IItemRepository> _repoMock = new();
     private readonly Mock<IUnitOfWork> _uowMock = new();
     private readonly IMemoryCache _cache = new MemoryCache(new MemoryCacheOptions());
     private readonly ItemService _sut;
@@ -163,7 +162,7 @@ public class ItemServiceTests
         // Arrange
         var term = "WIDGET";
         var item = _fixture.Build<Item>().With(i => i.ItemCode, "WIDGET-001").Create();
-        _repoMock.Setup(r => r.FindAsync(It.IsAny<Expression<Func<Item, bool>>>()))
+        _repoMock.Setup(r => r.SearchAsync(term))
             .ReturnsAsync(new[] { item });
 
         // Act
@@ -171,5 +170,25 @@ public class ItemServiceTests
 
         // Assert
         result.Should().ContainSingle().Which.Should().BeEquivalentTo(item);
+    }
+
+    [Fact]
+    public async Task SearchAsync_WhenTermIsEmpty_ReturnsNoItems()
+    {
+        var result = await _sut.SearchAsync("  ");
+
+        result.Should().BeEmpty();
+        _repoMock.Verify(r => r.SearchAsync(It.IsAny<string>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task SearchAsync_WhenTermIsTooLong_ThrowsArgumentException()
+    {
+        var longTerm = new string('x', 101);
+
+        var action = () => _sut.SearchAsync(longTerm);
+
+        await action.Should().ThrowAsync<ArgumentException>();
+        _repoMock.Verify(r => r.SearchAsync(It.IsAny<string>()), Times.Never);
     }
 }
