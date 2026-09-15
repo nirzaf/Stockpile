@@ -14,6 +14,7 @@
                     @context.User.Identity?.Name
                 </MudText>
                 <form action="/Account/Logout" method="post">
+                    <AntiforgeryToken />
                     <MudButton ButtonType="ButtonType.Submit" Variant="Variant.Outlined" Color="Color.Inherit" Size="Size.Small" StartIcon="@Icons.Material.Filled.Logout">
                         Logout
                     </MudButton>
