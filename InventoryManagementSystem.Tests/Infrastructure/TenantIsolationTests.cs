@@ -1,8 +1,6 @@
-using System.Security.Claims;
 using FluentAssertions;
 using InventoryManagementSystem.Core.Entities;
 using InventoryManagementSystem.Infrastructure.Data;
-using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 
 namespace InventoryManagementSystem.Tests.Infrastructure;
@@ -49,13 +47,6 @@ public class TenantIsolationTests
         var options = new DbContextOptionsBuilder<InventoryDbContext>()
             .UseInMemoryDatabase(databaseName)
             .Options;
-        var httpContext = new DefaultHttpContext
-        {
-            User = new ClaimsPrincipal(new ClaimsIdentity(
-                new[] { new Claim("tenant_id", tenantId) },
-                authenticationType: "Test"))
-        };
-
-        return new InventoryDbContext(options, new HttpContextAccessor { HttpContext = httpContext });
+        return new InventoryDbContext(options, new TestTenantContext(tenantId));
     }
 }

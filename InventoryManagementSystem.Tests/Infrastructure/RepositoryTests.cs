@@ -15,7 +15,7 @@ public class RepositoryTests
             .UseInMemoryDatabase(Guid.NewGuid().ToString())
             .Options;
 
-        await using var context = new InventoryDbContext(options);
+        await using var context = new InventoryDbContext(options, new TestTenantContext("default"));
         context.Items.Add(new Item
         {
             ItemCode = "COMPOSE-001",
@@ -40,7 +40,7 @@ public class RepositoryTests
             .UseInMemoryDatabase(Guid.NewGuid().ToString())
             .Options;
 
-        await using var context = new InventoryDbContext(options);
+        await using var context = new InventoryDbContext(options, new TestTenantContext("default"));
         context.Items.AddRange(
             new Item { ItemCode = "SEARCH-001", Description = "Widget", Barcode = "12345", Rate = 10m },
             new Item { ItemCode = "OTHER-001", Description = "Different", Rate = 20m });
@@ -60,7 +60,7 @@ public class RepositoryTests
             .UseInMemoryDatabase(Guid.NewGuid().ToString())
             .Options;
 
-        using var context = new InventoryDbContext(options);
+        using var context = new InventoryDbContext(options, new TestTenantContext("default"));
         var barcodeIndex = context.Model.FindEntityType(typeof(Item))!
             .GetIndexes()
             .Single(index => index.Properties.Select(property => property.Name)
