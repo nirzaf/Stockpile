@@ -1,17 +1,20 @@
 using InventoryManagementSystem.Core.Entities;
 using InventoryManagementSystem.Core.Interfaces;
 using InventoryManagementSystem.Core.Models;
+using InventoryManagementSystem.Core.Options;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Caching.Memory;
+using Microsoft.Extensions.Options;
 using Microsoft.ML;
 using Microsoft.ML.Transforms.TimeSeries;
 
 namespace InventoryManagementSystem.Core.Services;
 
 /// <summary>
-/// Demand forecast service. Uses ML.NET's SSA (Singular Spectrum Analysis) time-series
-/// forecaster per item, falling back to a moving average if the ML model fails. Results
-/// are cached in memory until the process restarts.
+/// Demand forecast service. Uses the configured forecasting implementation per item.
+/// Production defaults to the platform-independent managed moving average; ML.NET's SSA
+/// implementation remains available as an explicit opt-in. Results are cached in memory
+/// until the process restarts.
 /// </summary>
 public class DemandForecastService : IDemandForecastService
 {
@@ -20,6 +23,7 @@ public class DemandForecastService : IDemandForecastService
     private readonly ILogger<DemandForecastService> _logger;
     private readonly IMemoryCache _cache;
     private readonly ITenantContext _tenantContext;
+    private readonly ForecastingOptions _forecastingOptions;
 
     private const int MinDataPoints = 5;
     private const int DefaultWindowSize = 7;
@@ -31,13 +35,15 @@ public class DemandForecastService : IDemandForecastService
         IRepository<Item> itemRepo,
         ILogger<DemandForecastService> logger,
         IMemoryCache cache,
-        ITenantContext tenantContext)
+        ITenantContext tenantContext,
+        IOptions<ForecastingOptions> forecastingOptions)
     {
         _txRepo = txRepo;
         _itemRepo = itemRepo;
         _logger = logger;
         _cache = cache;
         _tenantContext = tenantContext;
+        _forecastingOptions = forecastingOptions.Value;
     }
 
     /// <inheritdoc />
@@ -78,7 +84,8 @@ public class DemandForecastService : IDemandForecastService
         {
             ItemId = itemId,
             ItemName = item?.ItemCode ?? $"Item #{itemId}",
-            ForecastHorizonDays = horizonDays
+            ForecastHorizonDays = horizonDays,
+            ForecastingImplementation = _forecastingOptions.Implementation
         };
 
         var transactions = await _txRepo.FindAsync(t =>
@@ -97,23 +104,52 @@ public class DemandForecastService : IDemandForecastService
         result.TotalHistoricalDays = dailyDemand.Count;
         result.AverageDailyDemand = dailyDemand.Average(d => d.Quantity);
 
+        if (string.Equals(_forecastingOptions.Implementation,
+                ForecastingImplementations.ManagedMovingAverage,
+                StringComparison.OrdinalIgnoreCase))
+        {
+            result.ForecastedValues = Enumerable.Repeat(result.AverageDailyDemand, horizonDays).ToList();
+            _logger.LogInformation(
+                "Demand forecast generated using the managed moving-average implementation for item {ItemId}: {Horizon}d horizon from {Days}d history",
+                itemId, horizonDays, dailyDemand.Count);
+            return result;
+        }
+
+        if (string.Equals(_forecastingOptions.Implementation,
+                ForecastingImplementations.Ssa,
+                StringComparison.OrdinalIgnoreCase))
+        {
+            GenerateSsaForecast(result, dailyDemand, horizonDays, itemId);
+            return result;
+        }
+
+        throw new InvalidOperationException(
+            $"Unsupported forecasting implementation '{_forecastingOptions.Implementation}'.");
+    }
+
+    private void GenerateSsaForecast(
+        DemandForecastResult result,
+        IReadOnlyList<DailyDemandObservation> dailyDemand,
+        int horizonDays,
+        int itemId)
+    {
+        // Seed ML.NET with a fixed value (42) so that two forecast runs over the same
+        // history produce identical results — important for reproducible batch jobs and tests.
+        var mlContext = new MLContext(seed: 42);
+
+        var values = dailyDemand.Select(d => d.Quantity).ToArray();
+        var data = values.Select(v => new DemandDataPoint { Quantity = v }).ToList();
+
+        var dataView = mlContext.Data.LoadFromEnumerable(data);
+
+        // SSA window: roughly half the series length, capped at 7 days (a week). SSA
+        // handles seasonality better than ARIMA with limited history, which is the
+        // realistic case for a small business that just started tracking transactions.
+        var windowSize = Math.Min(DefaultWindowSize, values.Length / 2);
+        if (windowSize < 2) windowSize = 2;
+
         try
         {
-            // Seed ML.NET with a fixed value (42) so that two forecast runs over the same
-            // history produce identical results — important for reproducible batch jobs and tests.
-            var mlContext = new MLContext(seed: 42);
-
-            var values = dailyDemand.Select(d => d.Quantity).ToArray();
-            var data = values.Select(v => new DemandDataPoint { Quantity = v }).ToList();
-
-            var dataView = mlContext.Data.LoadFromEnumerable(data);
-
-            // SSA window: roughly half the series length, capped at 7 days (a week). SSA
-            // handles seasonality better than ARIMA with limited history, which is the
-            // realistic case for a small business that just started tracking transactions.
-            var windowSize = Math.Min(DefaultWindowSize, values.Length / 2);
-            if (windowSize < 2) windowSize = 2;
-
             var pipeline = mlContext.Forecasting.ForecastBySsa(
                 outputColumnName: nameof(DemandPrediction.ForecastedQuantity),
                 inputColumnName: nameof(DemandDataPoint.Quantity),
@@ -138,14 +174,14 @@ public class DemandForecastService : IDemandForecastService
         }
         catch (Exception ex)
         {
-            // ML.NET can fail on degenerate inputs (e.g. all-zero series, NaN, constant
-            // values). Falling back to a flat moving-average keeps the API contract intact
-            // and avoids surfacing a 500 to the caller for a non-essential insight.
-            _logger.LogError(ex, "ML forecast failed for item {ItemId}, falling back to moving average", itemId);
-            result.ForecastedValues = Enumerable.Repeat(result.AverageDailyDemand, horizonDays).ToList();
+            // SSA is opt-in because its native runtime must be installed by the deployment.
+            // Never silently switch to another model: the caller needs an actionable failure
+            // and the configured implementation must remain truthful in the response.
+            _logger.LogError(ex,
+                "ML.NET SSA forecast failed for item {ItemId}; the configured SSA runtime is unavailable or rejected the input",
+                itemId);
+            throw;
         }
-
-        return result;
     }
 
     private async Task<IReadOnlyList<DemandForecastResult>> GenerateForecastAllItemsAsync(int horizonDays = 30)

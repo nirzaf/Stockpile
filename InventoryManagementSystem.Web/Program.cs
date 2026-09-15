@@ -29,6 +29,7 @@ using Microsoft.Extensions.Caching.Memory;
 using InventoryManagementSystem.Web.BackgroundServices;
 using InventoryManagementSystem.Core.Entities;
 using InventoryManagementSystem.Core.Models;
+using InventoryManagementSystem.Core.Options;
 
 namespace InventoryManagementSystem.Web;
 
@@ -213,6 +214,11 @@ public class Program
         builder.Services.AddScoped<IPurchaseOrderService, PurchaseOrderService>();
 
         // AI / ML.NET services (platform-independent, no Azure)
+        builder.Services.AddOptions<ForecastingOptions>()
+            .Bind(builder.Configuration.GetSection(ForecastingOptions.SectionName))
+            .Validate(options => ForecastingImplementations.IsSupported(options.Implementation),
+                $"{ForecastingOptions.SectionName}:Implementation must be '{ForecastingImplementations.ManagedMovingAverage}' or '{ForecastingImplementations.Ssa}'.")
+            .ValidateOnStart();
         builder.Services.AddScoped<IDemandForecastService, DemandForecastService>();
         builder.Services.AddScoped<IAnomalyDetectionService, AnomalyDetectionService>();
 

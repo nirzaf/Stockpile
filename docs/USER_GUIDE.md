@@ -286,6 +286,13 @@ The system includes an optional AI module (powered by **ML.NET**) that runs enti
 - **Demand forecasting** — predicts the quantity of an item that will be needed in the next 30 days, based on historical receive/transfer/sell patterns.
 - **Anomaly detection** — flags unusual stock movements (sudden spikes or drops) that may indicate theft, mis-entry, or supply issues.
 
+Demand forecasting uses the explicitly configured `managed-moving-average` implementation
+in the production multi-architecture Docker image. It is deterministic and has no native
+runtime dependency. ML.NET SSA is available only as an explicit deployment choice with
+`Forecasting__Implementation=ssa`; if its native dependencies are missing, the request
+fails and is logged instead of silently changing models. See
+[`docs/FORECASTING_RUNTIME.md`](FORECASTING_RUNTIME.md) for deployment details.
+
 These are exposed as a **headless API** (and the system pre-trains its models in the background every few hours). If your administrator has enabled them, you can ask for forecasts and anomaly reports via the API. Swagger documentation is available at `/swagger` in the development environment.
 
 > The web UI surfaces high-level metrics on the dashboard; the detailed per-item forecasts and anomalies are currently consumed via the API and built-in reports. Speak to your administrator about integration into other dashboards.
