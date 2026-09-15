@@ -1,11 +1,9 @@
 @page "/"
 @using Microsoft.AspNetCore.Authorization
-@using Microsoft.Extensions.Caching.Memory
 @attribute [Authorize]
 @inject IItemService ItemService
 @inject IStockService StockService
 @inject IPurchaseOrderService POService
-@inject IMemoryCache Cache
 
 <PageTitle>Dashboard</PageTitle>
 
@@ -34,6 +32,49 @@
 </MudGrid>
 
 <MudGrid Class="mt-4">
+    <MudItem xs="12" md="8">
+        <MudPaper Elevation="1" Class="pa-4">
+            <MudText Typo="Typo.subtitle1" Class="mb-2">Stock Movement — Last 30 Days</MudText>
+            <MudChart ChartType="ChartType.Line" ChartSeries="@_movementSeries" XAxisLabels="@_movementLabels"
+                      Width="100%" Height="300px" />
+        </MudPaper>
+    </MudItem>
+    <MudItem xs="12" md="4">
+        <MudPaper Elevation="1" Class="pa-4">
+            <MudText Typo="Typo.subtitle1" Class="mb-2">Low Stock Alerts</MudText>
+            @if (_lowStockAlerts.Count == 0)
+            {
+                <MudAlert Severity="Severity.Success" Dense="true">No items are below reorder level.</MudAlert>
+            }
+            else
+            {
+                <MudList T="string" Dense="true">
+                    @foreach (var alert in _lowStockAlerts)
+                    {
+                        <MudListItem T="string">@alert.ItemCode <span class="text-secondary">(@alert.Quantity / @alert.ReorderLevel)</span></MudListItem>
+                    }
+                </MudList>
+            }
+        </MudPaper>
+    </MudItem>
+</MudGrid>
+
+<MudGrid Class="mt-4">
+    <MudItem xs="12" md="6">
+        <MudPaper Elevation="1" Class="pa-4">
+            <MudText Typo="Typo.subtitle1" Class="mb-2">Top Movers — Last 30 Days</MudText>
+            <MudTable Items="@_topMovers" Dense="true" Hover="true">
+                <HeaderContent>
+                    <MudTh>Item</MudTh>
+                    <MudTh Style="text-align:right">Units Sold</MudTh>
+                </HeaderContent>
+                <RowTemplate>
+                    <MudTd DataLabel="Item">@context.ItemCode</MudTd>
+                    <MudTd DataLabel="Units Sold" Style="text-align:right">@context.Quantity</MudTd>
+                </RowTemplate>
+            </MudTable>
+        </MudPaper>
+    </MudItem>
     <MudItem xs="12" md="6">
         <MudPaper Elevation="1">
             <MudText Typo="Typo.subtitle1" Class="pa-3 mud-theme-secondary">Quick Actions</MudText>
@@ -47,6 +88,9 @@
             </div>
         </MudPaper>
     </MudItem>
+</MudGrid>
+
+<MudGrid Class="mt-4">
     <MudItem xs="12" md="6">
         <MudPaper Elevation="1">
             <MudText Typo="Typo.subtitle1" Class="pa-3 mud-theme-secondary">Navigation</MudText>
@@ -68,24 +112,55 @@
     private int _itemCount;
     private int _poCount;
     private int _stockCount;
+    private string[] _movementLabels = [];
+    private List<ChartSeries<double>> _movementSeries = [];
+    private List<TopMover> _topMovers = [];
+    private List<LowStockAlert> _lowStockAlerts = [];
 
     protected override async Task OnInitializedAsync()
     {
-        _itemCount = await Cache.GetOrCreateAsync("dashboard:item-count", async entry =>
-        {
-            entry.AbsoluteExpirationRelativeToNow = TimeSpan.FromSeconds(30);
-            return await ItemService.GetCountAsync();
-        });
-        _poCount = await Cache.GetOrCreateAsync("dashboard:purchase-order-count", async entry =>
-        {
-            entry.AbsoluteExpirationRelativeToNow = TimeSpan.FromSeconds(30);
-            return await POService.GetCountAsync();
-        });
-        _stockCount = await Cache.GetOrCreateAsync("dashboard:stock-count", async entry =>
-        {
-            entry.AbsoluteExpirationRelativeToNow = TimeSpan.FromSeconds(30);
-            var stockItems = await StockService.GetAllAsync();
-            return stockItems.Sum(s => s.Quantity);
-        });
+        var items = (await ItemService.GetAllAsync()).ToList();
+        var stock = (await StockService.GetAllAsync()).ToList();
+        var transactions = (await StockService.GetTransactionsAsync(DateTime.UtcNow.AddDays(-30), null)).ToList();
+
+        _itemCount = items.Count;
+        _poCount = await POService.GetCountAsync();
+        _stockCount = stock.Sum(s => s.Quantity);
+
+        var itemCodes = items.ToDictionary(item => item.Id, item => item.ItemCode);
+        var dates = Enumerable.Range(0, 30)
+            .Select(offset => DateTime.UtcNow.Date.AddDays(-29 + offset))
+            .ToArray();
+        _movementLabels = dates.Select(date => date.ToString("MM/dd")).ToArray();
+        var received = transactions.Where(t => t.TransactionType == TransactionType.Receive)
+            .GroupBy(t => t.TransactionDate.Date)
+            .ToDictionary(group => group.Key, group => group.Sum(t => t.Quantity));
+        var sold = transactions.Where(t => t.TransactionType == TransactionType.Sell)
+            .GroupBy(t => t.TransactionDate.Date)
+            .ToDictionary(group => group.Key, group => group.Sum(t => t.Quantity));
+        _movementSeries =
+        [
+            new ChartSeries<double> { Name = "Received", Data = dates.Select(date => (double)received.GetValueOrDefault(date)).ToArray() },
+            new ChartSeries<double> { Name = "Sold", Data = dates.Select(date => (double)sold.GetValueOrDefault(date)).ToArray() }
+        ];
+
+        _topMovers = transactions
+            .Where(transaction => transaction.TransactionType == TransactionType.Sell)
+            .GroupBy(transaction => transaction.ItemId)
+            .Select(group => new TopMover(itemCodes.GetValueOrDefault(group.Key, $"Item {group.Key}"), group.Sum(t => t.Quantity)))
+            .OrderByDescending(mover => mover.Quantity)
+            .Take(5)
+            .ToList();
+
+        var quantitiesByItem = stock.GroupBy(balance => balance.ItemId)
+            .ToDictionary(group => group.Key, group => group.Sum(balance => balance.Quantity));
+        _lowStockAlerts = items
+            .Where(item => quantitiesByItem.GetValueOrDefault(item.Id) <= item.ReorderLevel)
+            .Select(item => new LowStockAlert(item.ItemCode, quantitiesByItem.GetValueOrDefault(item.Id), item.ReorderLevel))
+            .OrderBy(alert => alert.Quantity)
+            .ToList();
     }
+
+    private sealed record TopMover(string ItemCode, int Quantity);
+    private sealed record LowStockAlert(string ItemCode, int Quantity, int ReorderLevel);
 }
