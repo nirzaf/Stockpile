@@ -27,6 +27,7 @@ RUN dotnet test InventoryManagementSystem.Tests/InventoryManagementSystem.Tests.
 WORKDIR /src/InventoryManagementSystem.Web
 RUN dotnet publish -c Release -o /app --no-restore
 RUN mkdir -p /app/logs
+RUN mkdir -p /app/data/keys && chown -R app:app /app/data
 
 # === Runtime Stage ===
 FROM mcr.microsoft.com/dotnet/aspnet:10.0.11 AS runtime
