@@ -387,7 +387,7 @@ public class Program
         v1.MapPost("/stock/receive", async (ReceiveStockCommand cmd, IMediator mediator) =>
         {
             await mediator.Send(cmd);
-            return Results.Ok(ApiResponse.CreateSuccess());
+            return Results.NoContent();
         })
             .WithName("ReceiveStock")
             .WithTags("Stock")
