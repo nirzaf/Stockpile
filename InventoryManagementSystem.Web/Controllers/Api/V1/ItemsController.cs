@@ -5,6 +5,7 @@ using InventoryManagementSystem.Core.Models;
 using MediatR;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 
 namespace InventoryManagementSystem.Web.Controllers.Api.V1;
 
@@ -13,6 +14,7 @@ namespace InventoryManagementSystem.Web.Controllers.Api.V1;
 [Route("api/v{version:apiVersion}/items")]
 [Produces("application/json")]
 [Authorize(Policy = "Api")]
+[EnableRateLimiting("Api")]
 public class ItemsController : ControllerBase
 {
     private readonly IMediator _mediator;
@@ -42,7 +44,9 @@ public class ItemsController : ControllerBase
     public async Task<IActionResult> GetById(int id)
     {
         var item = await _mediator.Send(new GetItemByIdQuery(id));
-        return item is null ? NotFound() : Ok(item);
+        return item is null
+            ? NotFound(ApiResponse<Item>.CreateFailure("Item not found"))
+            : Ok(ApiResponse<Item>.CreateSuccess(item));
     }
 
     /// <summary>Search items</summary>
@@ -51,7 +55,7 @@ public class ItemsController : ControllerBase
     public async Task<IActionResult> Search([FromQuery] string q)
     {
         var items = await _mediator.Send(new SearchItemsQuery(q));
-        return Ok(items);
+        return Ok(ApiResponse<IEnumerable<Core.Entities.Item>>.CreateSuccess(items));
     }
 
     /// <summary>Create a new item</summary>
@@ -61,7 +65,7 @@ public class ItemsController : ControllerBase
     public async Task<IActionResult> Create([FromBody] CreateItemCommand command)
     {
         var item = await _mediator.Send(command);
-        return CreatedAtAction(nameof(GetById), new { id = item.Id }, item);
+        return CreatedAtAction(nameof(GetById), new { id = item.Id }, ApiResponse<Core.Entities.Item>.CreateSuccess(item));
     }
 
     /// <summary>Update an existing item</summary>
