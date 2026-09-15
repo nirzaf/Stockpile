@@ -441,7 +441,7 @@ public class Program
                 entry.AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(5);
                 return await mediator.Send(new ForecastDemandQuery(itemId, horizonDays));
             });
-            return Results.Ok(ApiResponse<DemandForecastResult>.CreateSuccess(forecast));
+            return Results.Ok(ApiResponse<DemandForecastResult>.CreateSuccess(forecast!));
         })
             .WithName("ForecastDemand")
             .WithTags("AI")
@@ -455,7 +455,7 @@ public class Program
                 entry.AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(5);
                 return await mediator.Send(new ForecastAllItemsDemandQuery(horizonDays));
             });
-            return Results.Ok(ApiResponse<IReadOnlyList<DemandForecastResult>>.CreateSuccess(forecasts));
+            return Results.Ok(ApiResponse<IReadOnlyList<DemandForecastResult>>.CreateSuccess(forecasts!));
         })
             .WithName("ForecastAllDemand")
             .WithTags("AI")
