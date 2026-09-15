@@ -159,25 +159,22 @@ public class DemandForecastService : IDemandForecastService
     {
         var items = await _itemRepo.GetAllAsync();
         
-        var forecastTasks = items.Select(async item =>
+        var results = new List<DemandForecastResult>();
+        foreach (var item in items)
         {
             try
             {
-                return await ForecastDemandAsync(item.Id, horizonDays);
+                var forecast = await ForecastDemandAsync(item.Id, horizonDays);
+                if (forecast.ForecastedValues.Count > 0)
+                {
+                    results.Add(forecast);
+                }
             }
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "Forecast failed for item {ItemId}, skipping", item.Id);
-                return null;
             }
-        });
-
-        var forecasts = await Task.WhenAll(forecastTasks);
-        var results = forecasts
-            .Where(f => f is not null)
-            .Where(f => f!.ForecastedValues.Count > 0)
-            .Select(f => f!)
-            .ToList();
+        }
 
         return results;
     }

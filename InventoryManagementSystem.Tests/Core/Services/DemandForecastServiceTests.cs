@@ -222,4 +222,60 @@ public class DemandForecastServiceTests
         itemRepo.Verify(r => r.FindAsync(It.IsAny<Expression<Func<Item, bool>>>()), Times.Once);
         transactionRepo.Verify(r => r.FindAsync(It.IsAny<Expression<Func<StockTransaction, bool>>>()), Times.Once);
     }
+
+    [Fact]
+    public async Task ForecastAllItemsAsync_DoesNotOverlapRepositoryCalls()
+    {
+        var items = Enumerable.Range(1, 3)
+            .Select(id => _fixture.Build<Item>().With(item => item.Id, id).Create())
+            .ToList();
+        var transactions = items.SelectMany(item => Enumerable.Range(1, 10).Select(day =>
+            _fixture.Build<StockTransaction>()
+                .With(transaction => transaction.ItemId, item.Id)
+                .With(transaction => transaction.TransactionDate, DateTime.UtcNow.AddDays(-day))
+                .With(transaction => transaction.TransactionType, TransactionType.Sell)
+                .With(transaction => transaction.Quantity, 10)
+                .Create())).ToList();
+        var itemRepo = new Mock<IRepository<Item>>();
+        var transactionRepo = new Mock<IRepository<StockTransaction>>();
+        var activeTransactionQueries = 0;
+        var overlappedTransactionQueries = false;
+
+        itemRepo.Setup(r => r.GetAllAsync()).ReturnsAsync(items);
+        itemRepo.Setup(r => r.FindAsync(It.IsAny<Expression<Func<Item, bool>>>()))
+            .ReturnsAsync(items);
+
+        transactionRepo
+            .Setup(r => r.FindAsync(It.IsAny<Expression<Func<StockTransaction, bool>>>()))
+            .Returns((Expression<Func<StockTransaction, bool>> _) => ObserveTransactionsAsync());
+
+        async Task<IEnumerable<StockTransaction>> ObserveTransactionsAsync()
+        {
+            if (Interlocked.Increment(ref activeTransactionQueries) > 1)
+            {
+                overlappedTransactionQueries = true;
+            }
+
+            try
+            {
+                await Task.Delay(10);
+                return transactions;
+            }
+            finally
+            {
+                Interlocked.Decrement(ref activeTransactionQueries);
+            }
+        }
+
+        using var cache = new MemoryCache(new MemoryCacheOptions());
+        var service = new DemandForecastService(
+            transactionRepo.Object,
+            itemRepo.Object,
+            NullLogger<DemandForecastService>.Instance,
+            cache);
+
+        await service.ForecastAllItemsAsync(5);
+
+        overlappedTransactionQueries.Should().BeFalse();
+    }
 }
