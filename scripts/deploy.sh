@@ -30,7 +30,7 @@ if [ -f .env ]; then
     set +a
     echo "✅ Loaded .env configuration"
 else
-    echo "⚠️  No .env file found — using defaults from docker-compose.yml"
+    echo "⚠️  No .env file found — required database and JWT settings must be exported"
 fi
 
 # Pull latest images or build locally
@@ -42,21 +42,26 @@ else
     docker compose pull 2>/dev/null || true
 fi
 
-# Start stack
-echo "🚀 Starting services..."
-docker compose up -d --wait
+# Start the database first when migrations were requested. Production migrations
+# run in the isolated SDK migrator service, never in the application process.
+if [ "$DO_MIGRATE" = true ]; then
+    echo "🚀 Starting database..."
+    docker compose up -d --wait db
+
+    echo "🗄️  Running database migrations..."
+    docker compose --profile migrations run --rm migrator
+
+    echo "🚀 Starting application..."
+    docker compose up -d --wait app
+else
+    echo "🚀 Starting services..."
+    docker compose up -d --wait
+fi
 
 # Show status
 echo ""
 echo "📊 Service status:"
 docker compose ps
-
-# Run migrations if requested
-if [ "$DO_MIGRATE" = true ]; then
-    echo ""
-    echo "🗄️  Running database migrations..."
-    docker compose exec -T app dotnet ef database update --no-build || true
-fi
 
 echo ""
 echo "✅ Deployment complete!"
