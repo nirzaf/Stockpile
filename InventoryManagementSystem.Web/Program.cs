@@ -22,6 +22,7 @@ using Microsoft.IdentityModel.Tokens;
 using System.Text;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.RateLimiting;
+using Microsoft.Extensions.Caching.Memory;
 using InventoryManagementSystem.Web.BackgroundServices;
 using InventoryManagementSystem.Core.Entities;
 using InventoryManagementSystem.Core.Models;

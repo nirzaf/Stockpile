@@ -75,17 +75,17 @@
         {
             entry.AbsoluteExpirationRelativeToNow = TimeSpan.FromSeconds(30);
             return await ItemService.GetCountAsync();
-        }) ?? 0;
+        });
         _poCount = await Cache.GetOrCreateAsync("dashboard:purchase-order-count", async entry =>
         {
             entry.AbsoluteExpirationRelativeToNow = TimeSpan.FromSeconds(30);
             return await POService.GetCountAsync();
-        }) ?? 0;
+        });
         _stockCount = await Cache.GetOrCreateAsync("dashboard:stock-count", async entry =>
         {
             entry.AbsoluteExpirationRelativeToNow = TimeSpan.FromSeconds(30);
             var stockItems = await StockService.GetAllAsync();
             return stockItems.Sum(s => s.Quantity);
-        }) ?? 0;
+        });
     }
 }
