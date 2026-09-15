@@ -48,10 +48,10 @@
             }
             else
             {
-                <MudList Dense="true">
+                <MudList T="string" Dense="true">
                     @foreach (var alert in _lowStockAlerts)
                     {
-                        <MudListItem>@alert.ItemCode <span class="text-secondary">(@alert.Quantity / @alert.ReorderLevel)</span></MudListItem>
+                        <MudListItem T="string">@alert.ItemCode <span class="text-secondary">(@alert.Quantity / @alert.ReorderLevel)</span></MudListItem>
                     }
                 </MudList>
             }
@@ -113,7 +113,7 @@
     private int _poCount;
     private int _stockCount;
     private string[] _movementLabels = [];
-    private List<ChartSeries> _movementSeries = [];
+    private List<ChartSeries<double>> _movementSeries = [];
     private List<TopMover> _topMovers = [];
     private List<LowStockAlert> _lowStockAlerts = [];
 
@@ -140,8 +140,8 @@
             .ToDictionary(group => group.Key, group => group.Sum(t => t.Quantity));
         _movementSeries =
         [
-            new ChartSeries { Name = "Received", Data = dates.Select(date => (double)received.GetValueOrDefault(date)).ToArray() },
-            new ChartSeries { Name = "Sold", Data = dates.Select(date => (double)sold.GetValueOrDefault(date)).ToArray() }
+            new ChartSeries<double> { Name = "Received", Data = dates.Select(date => (double)received.GetValueOrDefault(date)).ToArray() },
+            new ChartSeries<double> { Name = "Sold", Data = dates.Select(date => (double)sold.GetValueOrDefault(date)).ToArray() }
         ];
 
         _topMovers = transactions
