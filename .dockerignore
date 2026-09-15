@@ -10,6 +10,8 @@
 **/packages
 **/Tests/
 **/*.Tests/
+!InventoryManagementSystem.Tests/
+!InventoryManagementSystem.Tests/**
 **/TestResults
 **/*.md
 **/*.log

@@ -1,0 +1,89 @@
+name: Security
+
+on:
+  pull_request:
+    branches: [master]
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
+  actions: read
+
+concurrency:
+  group: security
+  cancel-in-progress: true
+
+jobs:
+  codeql:
+    name: CodeQL
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 10.0.300
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v4
+        with:
+          languages: csharp
+          build-mode: manual
+
+      - name: Restore
+        run: dotnet restore
+
+      - name: Build for CodeQL
+        run: dotnet build InventoryManagementSystem.sln --configuration Release --no-restore
+
+      - name: Analyze
+        uses: github/codeql-action/analyze@v4
+        with:
+          category: /language:csharp
+
+  container:
+    name: Container vulnerability scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Build release image
+        run: docker build --file Dockerfile --tag stockpile:security .
+
+      - name: Generate Trivy SARIF report
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: image
+          scan-ref: stockpile:security
+          format: sarif
+          output: trivy-results.sarif
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          limit-severities-for-sarif: true
+          exit-code: '0'
+
+      - name: Upload Trivy results
+        if: always()
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: trivy-results.sarif
+          category: trivy-container
+
+      - name: Enforce container vulnerability policy
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: image
+          scan-ref: stockpile:security
+          format: table
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: '1'
+          skip-setup-trivy: true
