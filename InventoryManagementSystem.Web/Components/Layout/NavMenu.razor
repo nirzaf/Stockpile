@@ -17,8 +17,8 @@
 
     <MudDivider Class="my-2" />
     <MudSelect T="string" Label='@L["Language"]' Value="@SelectedCulture" ValueChanged="ChangeCulture" Dense="true" Class="mx-3">
-        <MudSelectItem T="string" Value="en-US">@L["English"]</MudSelectItem>
-        <MudSelectItem T="string" Value="ar-SA">@L["Arabic"]</MudSelectItem>
+        <MudSelectItem T="string" Value="@("en-US")">@L["English"]</MudSelectItem>
+        <MudSelectItem T="string" Value="@("ar-SA")">@L["Arabic"]</MudSelectItem>
     </MudSelect>
 </MudNavMenu>
 
