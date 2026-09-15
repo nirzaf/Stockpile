@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 env:
-  DOTNET_VERSION: 10.0.x
+  DOTNET_VERSION: 10.0.300
 
 permissions:
   contents: read
@@ -31,6 +31,10 @@ jobs:
         uses: actions/setup-dotnet@v6
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Verify pinned .NET SDK
+        shell: bash
+        run: test "$(dotnet --version)" = "${DOTNET_VERSION}"
 
       - name: Cache NuGet packages
         uses: actions/cache@v6
