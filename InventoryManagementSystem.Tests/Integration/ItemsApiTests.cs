@@ -118,8 +118,7 @@ public class ItemsApiTests : IClassFixture<CustomWebApplicationFactory>
         var command = new { ItemCode = "", Description = "", Rate = 0m };
         var response = await client.PostAsJsonAsync("/api/v1/items", command);
 
-        // Should fail with validation in production; InMemory DB allows it
-        response.StatusCode.Should().BeOneOf(HttpStatusCode.BadRequest, HttpStatusCode.InternalServerError, HttpStatusCode.Created);
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
 
     [Fact]

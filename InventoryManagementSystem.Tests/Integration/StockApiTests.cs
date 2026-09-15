@@ -114,8 +114,7 @@ public class StockApiTests : IClassFixture<CustomWebApplicationFactory>
         var command = new { ItemId = item.Id, LocationId = loc.Id, Quantity = 0, Notes = "test" };
         var response = await client.PostAsJsonAsync("/api/v1/stock/receive", command);
 
-        // Service throws ArgumentException → caught by GlobalExceptionHandler → 400
-        response.StatusCode.Should().BeOneOf(HttpStatusCode.BadRequest, HttpStatusCode.Conflict);
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
 
     [Fact]
@@ -174,7 +173,7 @@ public class StockApiTests : IClassFixture<CustomWebApplicationFactory>
         var command = new { ItemId = item.Id, FromLocationId = loc.Id, ToLocationId = loc.Id, Quantity = 10, Notes = "same" };
         var response = await client.PostAsJsonAsync("/api/v1/stock/transfer", command);
 
-        response.StatusCode.Should().BeOneOf(HttpStatusCode.BadRequest, HttpStatusCode.Conflict);
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
 
     [Fact]
