@@ -30,6 +30,9 @@ services:
       - AdminSettings__Email=${ADMIN_EMAIL-}
       - AdminSettings__Password=${ADMIN_PASSWORD-}
       - JwtSettings__Secret=${JWT_SECRET:?Set JWT_SECRET in .env}
+      - DataProtection__KeyStoragePath=/app/data/keys
+    volumes:
+      - dataprotection:/app/data
     ports:
       - "${APP_PORT:-8080}:8080"
     depends_on:
@@ -52,4 +55,6 @@ services:
 
 volumes:
   pgdata:
+    driver: local
+  dataprotection:
     driver: local
