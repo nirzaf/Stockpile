@@ -2,9 +2,12 @@ using Asp.Versioning;
 using InventoryManagementSystem.Core.Entities;
 using InventoryManagementSystem.Core.Features.Stock.Commands;
 using InventoryManagementSystem.Core.Features.Stock.Queries;
+using InventoryManagementSystem.Core.Interfaces;
+using InventoryManagementSystem.Core.Models;
 using MediatR;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 
 namespace InventoryManagementSystem.Web.Controllers.Api.V1;
 
@@ -13,6 +16,7 @@ namespace InventoryManagementSystem.Web.Controllers.Api.V1;
 [Route("api/v{version:apiVersion}/stock")]
 [Produces("application/json")]
 [Authorize(Policy = "Api")]
+[EnableRateLimiting("Api")]
 public class StockController : ControllerBase
 {
     private readonly IMediator _mediator;
@@ -28,7 +32,7 @@ public class StockController : ControllerBase
     public async Task<IActionResult> GetAll()
     {
         var stock = await _mediator.Send(new GetAllStockQuery());
-        return Ok(stock);
+        return Ok(ApiResponse<IEnumerable<StockInHand>>.CreateSuccess(stock));
     }
 
     /// <summary>Get stock at specific item/location</summary>
@@ -43,7 +47,9 @@ public class StockController : ControllerBase
     {
         var stock = await _mediator.Send(
             new GetStockByItemAndLocationQuery(itemId, locationId, batchNumber, expiryDate));
-        return stock is null ? NotFound() : Ok(stock);
+        return stock is null
+            ? NotFound(ApiResponse<StockInHand>.CreateFailure("Stock not found"))
+            : Ok(ApiResponse<StockInHand>.CreateSuccess(stock));
     }
 
     /// <summary>Get stock transactions with optional date filter</summary>
@@ -52,16 +58,31 @@ public class StockController : ControllerBase
     public async Task<IActionResult> GetTransactions([FromQuery] DateTime? from, [FromQuery] DateTime? to)
     {
         var transactions = await _mediator.Send(new GetStockTransactionsQuery(from, to));
-        return Ok(transactions);
+        return Ok(ApiResponse<IEnumerable<StockTransaction>>.CreateSuccess(transactions));
     }
 
     /// <summary>Receive stock into a location</summary>
     [HttpPost("receive")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
-    public async Task<IActionResult> Receive([FromBody] ReceiveStockCommand command)
+    [Authorize(Roles = "Admin,Manager,Staff")]
+    public async Task<IActionResult> Receive([FromBody] ReceiveStockCommand command, [FromServices] IIdempotencyKeyStore idempotencyKeyStore, [FromServices] ITenantContext tenantContext)
     {
-        await _mediator.Send(command);
+        var idempotencyKey = Request.Headers["Idempotency-Key"].ToString();
+        if (idempotencyKey.Length > 200)
+        {
+            return BadRequest(ApiResponse<object>.CreateFailure("Idempotency-Key must be 200 characters or fewer."));
+        }
+
+        if (string.IsNullOrWhiteSpace(idempotencyKey))
+        {
+            await _mediator.Send(command);
+        }
+        else
+        {
+            var scope = $"{tenantContext.TenantId}:{Request.Method}:{Request.Path}";
+            await idempotencyKeyStore.ExecuteAsync(scope, idempotencyKey, () => _mediator.Send(command));
+        }
         return NoContent();
     }
 
@@ -69,6 +90,7 @@ public class StockController : ControllerBase
     [HttpPost("transfer")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [Authorize(Roles = "Admin,Manager,Staff")]
     public async Task<IActionResult> Transfer([FromBody] TransferStockCommand command)
     {
         await _mediator.Send(command);
@@ -79,6 +101,7 @@ public class StockController : ControllerBase
     [HttpPost("sell")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [Authorize(Roles = "Admin,Manager,Staff")]
     public async Task<IActionResult> Sell([FromBody] SellStockCommand command)
     {
         await _mediator.Send(command);
