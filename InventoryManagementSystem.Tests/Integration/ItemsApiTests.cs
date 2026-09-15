@@ -42,6 +42,21 @@ public class ItemsApiTests : IClassFixture<CustomWebApplicationFactory>
     }
 
     [Fact]
+    public async Task GetAll_WithPageSize_ReturnsOnlyRequestedItemsAndTotalCount()
+    {
+        var client = AuthClient;
+        await SeedItemAsync($"PAGE-{Guid.NewGuid():N}".Substring(0, 15));
+        await SeedItemAsync($"PAGE-{Guid.NewGuid():N}".Substring(0, 15));
+
+        var response = await client.GetAsync("/api/v1/items?page=1&pageSize=1");
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        body.GetProperty("data").GetProperty("items").GetArrayLength().Should().Be(1);
+        body.GetProperty("data").GetProperty("totalCount").GetInt32().Should().BeGreaterThanOrEqualTo(2);
+    }
+
+    [Fact]
     public async Task GetAll_Unauthenticated_Returns401OrRedirect()
     {
         var client = AnonClient;
