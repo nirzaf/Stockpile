@@ -23,6 +23,6 @@ public class MigrationInventoryTests
             .NotBeNull();
 
         typeof(ApplicationUser).Namespace.Should().Be("InventoryManagementSystem.Core.Entities");
-        typeof(ApplicationUser).Assembly.Should().NotBe(typeof(InventoryDbContext).Assembly);
+        typeof(ApplicationUser).Assembly.GetName().Name.Should().Be("InventoryManagementSystem.Core");
     }
 }
