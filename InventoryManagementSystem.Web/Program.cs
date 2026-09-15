@@ -283,7 +283,11 @@ public class Program
             options.ApiVersionReader = ApiVersionReader.Combine(
                 new UrlSegmentApiVersionReader(),
                 new HeaderApiVersionReader("x-api-version"));
-        }).AddMvc();
+        }).AddMvc().AddApiExplorer(options =>
+        {
+            options.GroupNameFormat = "'v'VVV";
+            options.SubstituteApiVersionInUrl = true;
+        });
 
         // Swagger/OpenAPI
         builder.Services.AddEndpointsApiExplorer();
@@ -451,13 +455,12 @@ public class Program
             .AddInteractiveServerRenderMode();
         app.MapHealthChecks("/health");
 
+        // Minimal APIs are the single public resource style. The attribute-routed controller
+        // classes remain internal compatibility code and are intentionally not mapped here.
         var v1 = app.MapGroup("/api/v1")
             .WithTags("API v1")
             .RequireAuthorization("Api")
             .RequireRateLimiting("Api");
-
-        const int defaultPageSize = 25;
-        const int maxPageSize = 100;
 
         v1.MapPost("/auth/token", async (
             TokenRequest req,
@@ -494,65 +497,6 @@ public class Program
         .AllowAnonymous()
         .WithName("GenerateToken")
         .WithTags("Auth");
-
-        v1.MapGet("/items", async (int? page, int? pageSize, IMediator mediator) =>
-        {
-            var requestedPage = Math.Max(page ?? 1, 1);
-            var requestedPageSize = Math.Clamp(pageSize ?? defaultPageSize, 1, maxPageSize);
-            var pagedItems = await mediator.Send(new GetItemsPagedQuery(requestedPage, requestedPageSize));
-            return Results.Ok(ApiResponse<ItemsPagedResult>.CreateSuccess(pagedItems));
-        })
-            .WithName("GetAllItems")
-            .WithTags("Items");
-
-        v1.MapGet("/items/{id:int}", async (int id, IMediator mediator) =>
-        {
-            var item = await mediator.Send(new GetItemByIdQuery(id));
-            return item is null 
-                ? Results.NotFound(ApiResponse<Item>.CreateFailure("Item not found")) 
-                : Results.Ok(ApiResponse<Item>.CreateSuccess(item));
-        })
-            .WithName("GetItemById")
-            .WithTags("Items");
-
-        v1.MapGet("/stock", async (IMediator mediator) =>
-        {
-            var stock = await mediator.Send(new GetAllStockQuery());
-            return Results.Ok(ApiResponse<IEnumerable<StockInHand>>.CreateSuccess(stock));
-        })
-            .WithName("GetAllStock")
-            .WithTags("Stock");
-
-        v1.MapPost("/stock/receive", async (
-            ReceiveStockCommand cmd,
-            HttpRequest request,
-            IMediator mediator,
-            IIdempotencyKeyStore idempotencyKeyStore,
-            ITenantContext tenantContext) =>
-        {
-            var idempotencyKey = request.Headers["Idempotency-Key"].ToString();
-            if (idempotencyKey.Length > 200)
-            {
-                return Results.BadRequest(ApiResponse<object>.CreateFailure(
-                    "Idempotency-Key must be 200 characters or fewer."));
-            }
-
-            if (string.IsNullOrWhiteSpace(idempotencyKey))
-            {
-                await mediator.Send(cmd);
-            }
-            else
-            {
-                var scope = $"{tenantContext.TenantId}:{request.Method}:{request.Path}";
-                await idempotencyKeyStore.ExecuteAsync(scope, idempotencyKey, () => mediator.Send(cmd));
-            }
-
-            return Results.NoContent();
-        })
-            .WithName("ReceiveStock")
-            .WithTags("Stock")
-            .WithDescription("Receives stock. Supply Idempotency-Key to safely retry a request.")
-            .RequireAuthorization(policy => policy.RequireRole("Admin", "Manager", "Staff"));
 
         static async Task<string?> ValidateWebhookRequestAsync(WebhookSubscriptionRequest request)
         {
