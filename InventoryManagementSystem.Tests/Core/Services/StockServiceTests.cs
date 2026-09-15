@@ -2,6 +2,7 @@ using System.Linq.Expressions;
 using AutoFixture;
 using FluentAssertions;
 using InventoryManagementSystem.Core.Entities;
+using InventoryManagementSystem.Core.Exceptions;
 using InventoryManagementSystem.Core.Interfaces;
 using InventoryManagementSystem.Core.Services;
 using InventoryManagementSystem.Tests.Common;
@@ -127,6 +128,26 @@ public class StockServiceTests
 
         await act.Should().ThrowAsync<ArgumentException>()
             .WithMessage("Quantity must be positive");
+    }
+
+    [Fact]
+    public async Task ReceiveStockAsync_ConcurrencyConflict_ReloadsAndRetries()
+    {
+        var firstRead = new StockInHand { ItemId = 1, LocationId = 2, Quantity = 50 };
+        var refreshedRead = new StockInHand { ItemId = 1, LocationId = 2, Quantity = 50 };
+        _stockRepoMock.SetupSequence(r => r.FindAsync(
+                It.IsAny<Expression<Func<StockInHand, bool>>>()))
+            .ReturnsAsync(new List<StockInHand> { firstRead })
+            .ReturnsAsync(new List<StockInHand> { refreshedRead });
+        _uowMock.SetupSequence(u => u.SaveChangesAsync(default))
+            .ThrowsAsync(new ConcurrencyException("simulated conflict"))
+            .ReturnsAsync(1);
+
+        await _sut.ReceiveStockAsync(1, 2, 25, null);
+
+        refreshedRead.Quantity.Should().Be(75);
+        _uowMock.Verify(u => u.ClearTracker(), Times.Once);
+        _uowMock.Verify(u => u.SaveChangesAsync(default), Times.Exactly(2));
     }
 
     [Fact]
