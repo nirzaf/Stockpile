@@ -24,7 +24,7 @@ public class ForwardedHeadersConfigurationTests
         ForwardedHeadersConfiguration.Configure(options, configuration);
 
         options.KnownProxies.Should().Contain(IPAddress.Parse("192.0.2.10"));
-        options.KnownIPNetworks.Should().Contain(network => network.Prefix.Equals(IPAddress.Parse("198.51.100.0")) && network.PrefixLength == 24);
+        options.KnownIPNetworks.Should().Contain(network => network.BaseAddress.Equals(IPAddress.Parse("198.51.100.0")) && network.PrefixLength == 24);
         options.ForwardLimit.Should().Be(1);
     }
 }
