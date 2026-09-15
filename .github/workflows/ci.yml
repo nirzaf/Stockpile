@@ -58,6 +58,7 @@ jobs:
           dotnet test --no-build --configuration Release \
             --verbosity normal \
             --collect:"XPlat Code Coverage" \
+            --settings coverlet.runsettings \
             --results-directory ./coverage
 
       - name: Install ReportGenerator
