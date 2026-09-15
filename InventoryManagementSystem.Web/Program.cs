@@ -474,15 +474,11 @@ public class Program
             if (!result.Succeeded) return Results.Unauthorized();
 
             var tokenHandler = new System.IdentityModel.Tokens.Jwt.JwtSecurityTokenHandler();
+            var roles = await userManager.GetRolesAsync(user);
             var tokenDescriptor = new SecurityTokenDescriptor
             {
-                Subject = new System.Security.Claims.ClaimsIdentity(new[]
-                {
-                    new System.Security.Claims.Claim(System.Security.Claims.ClaimTypes.Name, user.UserName ?? ""),
-                    new System.Security.Claims.Claim(System.Security.Claims.ClaimTypes.NameIdentifier, user.Id),
-                    new System.Security.Claims.Claim("tenant_id", tenantContext.TenantId),
-                    new System.Security.Claims.Claim(System.Security.Claims.ClaimTypes.Role, (await userManager.GetRolesAsync(user)).FirstOrDefault() ?? "Staff")
-                }),
+                Subject = new System.Security.Claims.ClaimsIdentity(
+                    JwtClaimsFactory.Create(user, tenantContext.TenantId, roles)),
                 Expires = DateTime.UtcNow.AddHours(2),
                 Issuer = jwtSettings["Issuer"] ?? "InventoryManagementSystem",
                 Audience = jwtSettings["Audience"] ?? "InventoryManagementSystem",
