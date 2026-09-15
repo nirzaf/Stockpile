@@ -23,6 +23,9 @@ public class Repository<T> : IRepository<T> where T : class
     }
 
     /// <inheritdoc />
+    public virtual IQueryable<T> Query() => _dbSet.AsNoTracking();
+
+    /// <inheritdoc />
     public virtual async Task<T?> GetByIdAsync(int id)
     {
         return await _dbSet.FindAsync(id);

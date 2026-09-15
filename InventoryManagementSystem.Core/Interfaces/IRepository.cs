@@ -6,6 +6,16 @@ namespace InventoryManagementSystem.Core.Interfaces;
 /// <typeparam name="T">The entity type managed by this repository.</typeparam>
 public interface IRepository<T> where T : class
 {
+    /// <summary>
+    /// Returns a read-only, composable query for the entity set.
+    /// </summary>
+    /// <remarks>
+    /// The query is backed by the scoped DbContext and is executed when enumerated. Callers
+    /// should keep composition within the request scope and use projection/pagination before
+    /// materializing results.
+    /// </remarks>
+    IQueryable<T> Query();
+
     /// <summary>Gets an entity by its primary key.</summary>
     /// <param name="id">The entity identifier.</param>
     /// <returns>The entity, or <see langword="null"/> if not found.</returns>
