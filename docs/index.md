@@ -40,7 +40,7 @@ docker compose up -d        # starts app + PostgreSQL
 
 The app will be available at **http://localhost:8080**.
 
-Default admin: `admin@inventory.com` / `Admin@123` (change in `.env`).
+Configure the administrator credentials and JWT signing key in `.env` before starting. No default credentials are committed.
 
 > For full installation, configuration, and deployment instructions, see the [README on GitHub](https://github.com/nirzaf/Stockpile/blob/master/README.md).
 
