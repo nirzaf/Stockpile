@@ -14,6 +14,11 @@
     <MudNavLink Href="/PurchaseOrders" Icon="@Icons.Material.Filled.Receipt">@L["Purchase Orders"]</MudNavLink>
     <MudNavLink Href="/Suppliers" Icon="@Icons.Material.Filled.Business">@L["Suppliers"]</MudNavLink>
     <MudNavLink Href="/Locations" Icon="@Icons.Material.Filled.LocationOn">@L["Locations"]</MudNavLink>
+    <AuthorizeView Roles="Admin">
+        <Authorized>
+            <MudNavLink Href="/Users" Icon="@Icons.Material.Filled.People">User Management</MudNavLink>
+        </Authorized>
+    </AuthorizeView>
 
     <MudDivider Class="my-2" />
     <MudSelect T="string" Label='@L["Language"]' Value="@SelectedCulture" ValueChanged="ChangeCulture" Dense="true" Class="mx-3">
