@@ -58,12 +58,40 @@ jobs:
           dotnet test --no-build --configuration Release \
             --verbosity normal \
             --collect:"XPlat Code Coverage" \
+            --settings coverlet.runsettings \
             --results-directory ./coverage
+
+      - name: Install ReportGenerator
+        run: |
+          dotnet tool install --global dotnet-reportgenerator-globaltool --version 5.4.12
+          echo "$HOME/.dotnet/tools" >> "$GITHUB_PATH"
+
+      - name: Generate and enforce coverage report
+        shell: bash
+        run: |
+          reportgenerator \
+            -reports:"coverage/**/coverage.cobertura.xml" \
+            -targetdir:"coverage-report" \
+            -reporttypes:"Html;TextSummary"
+          cat coverage-report/Summary.txt
+          line_coverage=$(sed -n 's/^  Line coverage: \([0-9.]*\)%.*/\1/p' coverage-report/Summary.txt)
+          if [ -z "$line_coverage" ]; then
+            echo "Unable to read line coverage from ReportGenerator summary" >&2
+            exit 1
+          fi
+          awk -v coverage="$line_coverage" 'BEGIN {
+            if (coverage < 70) {
+              printf "Line coverage %.2f%% is below the 70%% CI minimum\n", coverage
+              exit 1
+            }
+          }'
 
       - name: Upload coverage report
         uses: actions/upload-artifact@v7
         with:
           name: coverage-report
-          path: coverage/
+          path: |
+            coverage/
+            coverage-report/
           if-no-files-found: warn
           retention-days: 14
