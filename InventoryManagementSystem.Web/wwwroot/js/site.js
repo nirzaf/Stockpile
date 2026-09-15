@@ -18,3 +18,15 @@ window.downloadFile = (filename, contentType, content) => {
     document.body.removeChild(a);
     URL.revokeObjectURL(exportUrl);
 }
+
+window.stockpileTheme = {
+    getDarkMode: () => {
+        const stored = window.localStorage.getItem("stockpile-dark-mode");
+        return stored === null
+            ? window.matchMedia("(prefers-color-scheme: dark)").matches
+            : stored === "true";
+    },
+    setDarkMode: enabled => {
+        window.localStorage.setItem("stockpile-dark-mode", enabled ? "true" : "false");
+    }
+};
