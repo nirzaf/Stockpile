@@ -51,5 +51,7 @@ public class RateLimitPartitionKeyTests
     {
         public string TenantId { get; } = tenant;
         public bool IsResolved => true;
+
+        public void SetTenant(string tenantId) => throw new NotSupportedException();
     }
 }
