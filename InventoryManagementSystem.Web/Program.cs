@@ -101,6 +101,10 @@ public class Program
             dataProtection.PersistKeysToFileSystem(new DirectoryInfo(keyPath));
         }
 
+        builder.Services.AddOptions<ForwardedHeadersOptions>()
+            .Configure<IConfiguration>((options, configuration) =>
+                ForwardedHeadersConfiguration.Configure(options, configuration));
+
         // Database (skip PostgreSQL in Testing — replaced by InMemory in test factory)
         if (!builder.Environment.IsEnvironment("Testing"))
         {
@@ -422,6 +426,10 @@ public class Program
             .AddDbContextCheck<InventoryDbContext>();
 
         var app = builder.Build();
+
+        // Process forwarded protocol/host only after validating the sender against the
+        // configured proxy/network allow-list, before HTTPS and tenant resolution.
+        app.UseForwardedHeaders();
 
         var supportedCultures = new[] { "en-US", "ar-SA" };
         var localizationOptions = new RequestLocalizationOptions()
