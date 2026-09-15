@@ -18,6 +18,8 @@ public class SellStockCommandHandler : IRequestHandler<SellStockCommand>
     public async Task Handle(SellStockCommand request, CancellationToken cancellationToken)
     {
         _logger.LogDebug("Handling SellStockCommand item={ItemId}, loc={LocId}, qty={Qty}", request.ItemId, request.LocationId, request.Quantity);
-        await _stockService.SellStockAsync(request.ItemId, request.LocationId, request.Quantity, request.Notes);
+        await _stockService.SellStockAsync(
+            request.ItemId, request.LocationId, request.Quantity, request.Notes,
+            request.BatchNumber, request.ExpiryDate);
     }
 }

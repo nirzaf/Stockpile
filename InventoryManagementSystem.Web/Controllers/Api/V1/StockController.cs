@@ -35,9 +35,14 @@ public class StockController : ControllerBase
     [HttpGet("in-hand/{itemId:int}/{locationId:int}")]
     [ProducesResponseType(typeof(StockInHand), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public async Task<IActionResult> GetByItemAndLocation(int itemId, int locationId)
+    public async Task<IActionResult> GetByItemAndLocation(
+        int itemId,
+        int locationId,
+        [FromQuery] string? batchNumber,
+        [FromQuery] DateTime? expiryDate)
     {
-        var stock = await _mediator.Send(new GetStockByItemAndLocationQuery(itemId, locationId));
+        var stock = await _mediator.Send(
+            new GetStockByItemAndLocationQuery(itemId, locationId, batchNumber, expiryDate));
         return stock is null ? NotFound() : Ok(stock);
     }
 

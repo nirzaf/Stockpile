@@ -42,9 +42,17 @@ public class StockService : IStockService
     public async Task<IEnumerable<StockInHand>> GetAllAsync() => await _stockRepo.GetAllAsync();
 
     /// <inheritdoc />
-    public async Task<StockInHand?> GetByItemAndLocationAsync(int itemId, int locationId, string? batchNumber = null)
+    public async Task<StockInHand?> GetByItemAndLocationAsync(
+        int itemId,
+        int locationId,
+        string? batchNumber = null,
+        DateTime? expiryDate = null)
     {
-        var results = await _stockRepo.FindAsync(s => s.ItemId == itemId && s.LocationId == locationId && s.BatchNumber == batchNumber);
+        var results = await _stockRepo.FindAsync(s =>
+            s.ItemId == itemId &&
+            s.LocationId == locationId &&
+            s.BatchNumber == batchNumber &&
+            s.ExpiryDate == expiryDate);
         return results.FirstOrDefault();
     }
 
@@ -100,7 +108,7 @@ public class StockService : IStockService
 
         await ExecuteWithRetryAsync(async () =>
         {
-            var existing = await GetByItemAndLocationAsync(itemId, locationId, batchNumber);
+            var existing = await GetByItemAndLocationAsync(itemId, locationId, batchNumber, expiryDate);
             if (existing != null)
             {
                 existing.Quantity += quantity;
@@ -148,14 +156,14 @@ public class StockService : IStockService
 
         await ExecuteWithRetryAsync(async () =>
         {
-            var source = await GetByItemAndLocationAsync(itemId, fromLocationId, batchNumber);
+            var source = await GetByItemAndLocationAsync(itemId, fromLocationId, batchNumber, expiryDate);
             if (source == null || source.Quantity < quantity)
                 throw new InvalidOperationException("Insufficient stock at source location");
 
             source.Quantity -= quantity;
             await _stockRepo.UpdateAsync(source);
 
-            var dest = await GetByItemAndLocationAsync(itemId, toLocationId, batchNumber);
+            var dest = await GetByItemAndLocationAsync(itemId, toLocationId, batchNumber, expiryDate);
             if (dest != null)
             {
                 dest.Quantity += quantity;
@@ -202,7 +210,7 @@ public class StockService : IStockService
 
         await ExecuteWithRetryAsync(async () =>
         {
-            var stock = await GetByItemAndLocationAsync(itemId, locationId, batchNumber);
+            var stock = await GetByItemAndLocationAsync(itemId, locationId, batchNumber, expiryDate);
             if (stock == null || stock.Quantity < quantity)
                 throw new InvalidOperationException("Insufficient stock for sale");
 
@@ -226,7 +234,7 @@ public class StockService : IStockService
 
         _logger.LogInformation("Sold {Qty} of item {ItemId} from location {LocId}", quantity, itemId, locationId);
         await _webhookDispatcher.DispatchAsync(WebhookEventFactory.Create(_tenantContext, "Stock.Sold",
-            new { ItemId = itemId, LocationId = locationId, Quantity = quantity, Notes = notes }));
+            new { ItemId = itemId, LocationId = locationId, Quantity = quantity, Notes = notes, BatchNumber = batchNumber, ExpiryDate = expiryDate }));
         await CheckLowStockAsync(itemId);
     }
 

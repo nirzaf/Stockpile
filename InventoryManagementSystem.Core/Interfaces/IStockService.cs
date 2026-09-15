@@ -13,8 +13,9 @@ public interface IStockService
     /// <param name="itemId">The item identifier.</param>
     /// <param name="locationId">The location identifier.</param>
     /// <param name="batchNumber">Optional batch or lot identifier.</param>
+    /// <param name="expiryDate">Optional expiry date for the lot.</param>
     /// <returns>The stock-in-hand row, or <see langword="null"/> if none exists.</returns>
-    Task<StockInHand?> GetByItemAndLocationAsync(int itemId, int locationId, string? batchNumber = null);
+    Task<StockInHand?> GetByItemAndLocationAsync(int itemId, int locationId, string? batchNumber = null, DateTime? expiryDate = null);
 
     /// <summary>Gets stock transactions within an optional date range.</summary>
     /// <param name="from">Inclusive start date, or <see langword="null"/> for no lower bound.</param>

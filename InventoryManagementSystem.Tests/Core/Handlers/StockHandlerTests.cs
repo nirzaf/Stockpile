@@ -47,6 +47,24 @@ public class StockHandlerTests
     }
 
     [Fact]
+    public async Task GetStockByItemAndLocationQueryHandler_ForwardsLotIdentity()
+    {
+        var expiryDate = new DateTime(2030, 1, 1);
+        var stock = _fixture.Create<StockInHand>();
+        var serviceMock = new Mock<IStockService>();
+        serviceMock.Setup(s => s.GetByItemAndLocationAsync(1, 2, "LOT-001", expiryDate))
+            .ReturnsAsync(stock);
+        var handler = new GetStockByItemAndLocationQueryHandler(serviceMock.Object,
+            NullLogger<GetStockByItemAndLocationQueryHandler>.Instance);
+
+        var result = await handler.Handle(
+            new GetStockByItemAndLocationQuery(1, 2, "LOT-001", expiryDate), CancellationToken.None);
+
+        result.Should().BeSameAs(stock);
+        serviceMock.Verify(s => s.GetByItemAndLocationAsync(1, 2, "LOT-001", expiryDate), Times.Once);
+    }
+
+    [Fact]
     public async Task ReceiveStockCommandHandler_DelegatesToService()
     {
         var serviceMock = new Mock<IStockService>();
@@ -57,6 +75,20 @@ public class StockHandlerTests
         await handler.Handle(cmd, CancellationToken.None);
 
         serviceMock.Verify(s => s.ReceiveStockAsync(1, 2, 25, "Notes"), Times.Once);
+    }
+
+    [Fact]
+    public async Task ReceiveStockCommandHandler_ForwardsLotIdentity()
+    {
+        var serviceMock = new Mock<IStockService>();
+        var handler = new ReceiveStockCommandHandler(serviceMock.Object,
+            NullLogger<ReceiveStockCommandHandler>.Instance);
+        var expiryDate = new DateTime(2030, 1, 1);
+        var cmd = new ReceiveStockCommand(1, 2, 25, "Notes", "LOT-001", expiryDate);
+
+        await handler.Handle(cmd, CancellationToken.None);
+
+        serviceMock.Verify(s => s.ReceiveStockAsync(1, 2, 25, "Notes", "LOT-001", expiryDate), Times.Once);
     }
 
     [Fact]
