@@ -1,4 +1,6 @@
 using System.Security.Claims;
+using System.IdentityModel.Tokens.Jwt;
+using System.Text;
 using System.Text.Encodings.Web;
 using InventoryManagementSystem.Infrastructure.Data;
 using Microsoft.AspNetCore.Authentication;
@@ -9,16 +11,19 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Microsoft.IdentityModel.Tokens;
 
 namespace InventoryManagementSystem.Tests.Integration;
 
 public class CustomWebApplicationFactory : WebApplicationFactory<InventoryManagementSystem.Web.Program>
 {
+    private const string TestJwtSecret = "testing-only-jwt-secret-with-at-least-32-bytes";
     private readonly string _dbName = Guid.NewGuid().ToString();
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         builder.UseEnvironment("Testing");
+        builder.UseSetting("JwtSettings:Secret", TestJwtSecret);
 
         builder.ConfigureTestServices(services =>
         {
@@ -41,6 +46,26 @@ public class CustomWebApplicationFactory : WebApplicationFactory<InventoryManage
         {
             AllowAutoRedirect = false
         });
+
+        var tokenHandler = new JwtSecurityTokenHandler();
+        var token = tokenHandler.CreateToken(new SecurityTokenDescriptor
+        {
+            Subject = new ClaimsIdentity(new[]
+            {
+                new Claim(ClaimTypes.Name, "testuser@test.com"),
+                new Claim(ClaimTypes.NameIdentifier, "1"),
+                new Claim(ClaimTypes.Role, role)
+            }),
+            Expires = DateTime.UtcNow.AddMinutes(5),
+            Issuer = "InventoryManagementSystem",
+            Audience = "InventoryManagementSystem",
+            SigningCredentials = new SigningCredentials(
+                new SymmetricSecurityKey(Encoding.UTF8.GetBytes(TestJwtSecret)),
+                SecurityAlgorithms.HmacSha256Signature)
+        });
+
+        client.DefaultRequestHeaders.Authorization =
+            new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", tokenHandler.WriteToken(token));
         client.DefaultRequestHeaders.Add("X-Test-Auth", "true");
         client.DefaultRequestHeaders.Add("X-Test-Role", role);
         return client;
