@@ -19,6 +19,7 @@ public class DemandForecastService : IDemandForecastService
     private readonly IRepository<Item> _itemRepo;
     private readonly ILogger<DemandForecastService> _logger;
     private readonly IMemoryCache _cache;
+    private readonly ITenantContext _tenantContext;
 
     private const int MinDataPoints = 5;
     private const int DefaultWindowSize = 7;
@@ -29,18 +30,20 @@ public class DemandForecastService : IDemandForecastService
         IRepository<StockTransaction> txRepo,
         IRepository<Item> itemRepo,
         ILogger<DemandForecastService> logger,
-        IMemoryCache cache)
+        IMemoryCache cache,
+        ITenantContext tenantContext)
     {
         _txRepo = txRepo;
         _itemRepo = itemRepo;
         _logger = logger;
         _cache = cache;
+        _tenantContext = tenantContext;
     }
 
     /// <inheritdoc />
     public async Task<DemandForecastResult> ForecastDemandAsync(int itemId, int horizonDays = 30)
     {
-        var cacheKey = GetItemCacheKey(itemId, horizonDays);
+        var cacheKey = TenantCacheKeys.ForecastForItem(_tenantContext.TenantId, itemId, horizonDays);
         if (_cache.TryGetValue(cacheKey, out DemandForecastResult? cachedResult) && cachedResult != null)
         {
             _logger.LogDebug("Returning cached forecast for item {ItemId}", itemId);
@@ -55,7 +58,7 @@ public class DemandForecastService : IDemandForecastService
     /// <inheritdoc />
     public async Task<IReadOnlyList<DemandForecastResult>> ForecastAllItemsAsync(int horizonDays = 30)
     {
-        var cacheKey = GetAllItemsCacheKey(horizonDays);
+        var cacheKey = TenantCacheKeys.ForecastForAllItems(_tenantContext.TenantId, horizonDays);
         if (_cache.TryGetValue(cacheKey, out IReadOnlyList<DemandForecastResult>? cachedResult) && cachedResult != null)
         {
             _logger.LogDebug("Returning cached forecasts for all items");
@@ -66,12 +69,6 @@ public class DemandForecastService : IDemandForecastService
         _cache.Set(cacheKey, results, ForecastCacheDuration);
         return results;
     }
-
-    private static string GetItemCacheKey(int itemId, int horizonDays) =>
-        $"forecast:item:{itemId}:horizon:{horizonDays}";
-
-    private static string GetAllItemsCacheKey(int horizonDays) =>
-        $"forecast:all:horizon:{horizonDays}";
 
     private async Task<DemandForecastResult> GenerateForecastAsync(int itemId, int horizonDays = 30)
     {
