@@ -1,6 +1,6 @@
 # Migration Progress Summary
 
-_Last reviewed: 2026-06-12_
+_Last reviewed: 2026-09-15_
 
 The Inventory Management System has been migrated from a legacy Windows Forms / SQL Server
 application to a modern .NET 10 web stack. This document tracks the current state of the
@@ -15,7 +15,7 @@ migration. It is reviewed periodically and updated when major milestones change.
 - **Auth:** ASP.NET Core Identity (Admin / Manager / Staff roles)
 - **API:** Versioned REST endpoints under `/api/v1`
 - **AI / ML:** ML.NET — demand forecasting and anomaly detection
-- **Reports:** QuestPDF
+- **Reports:** QuestPDF (PDF) and ClosedXML (XLSX / CSV exports)
 - **Logging:** Serilog (console + rolling files)
 - **Containerization:** Docker + Docker Compose
 - **CI/CD:** GitHub Actions + GHCR
@@ -30,12 +30,12 @@ migration. It is reviewed periodically and updated when major milestones change.
 | Business logic | 100% | Service layer (`ItemService`, `StockService`, `PurchaseOrderService`, `SupplierService`, `LocationService`, ML services) |
 | Web layer | 100% | MVC controllers, Razor views, versioned API controllers, Swagger UI, MudBlazor layout |
 | AI / ML | 100% | ML.NET SSA forecasting + IID spike/drop anomaly detection |
-| Testing | ~80% | 184 xUnit tests covering services, handlers, controllers, and integration paths |
+| Testing | ~80% | 208 xUnit tests covering services, handlers, controllers, infrastructure, and integration paths |
 | Documentation | 100% | README, CONTRIBUTING, SECURITY, LICENSE, CHANGELOG, XML doc comments |
 
-**Overall: ~90% complete.** Remaining work is incremental: expanding test coverage toward 100%
-on edge cases, additional commercial features behind feature flags, and ongoing dependency
-updates.
+**Overall: 100% of the original migration is complete.** Remaining work is incremental product
+development: deeper coverage on edge cases, additional commercial features behind feature flags,
+and ongoing dependency updates.
 
 ## Completed Milestones
 
@@ -50,6 +50,11 @@ updates.
 - ML.NET SSA-based demand forecasting per item
 - ML.NET IID-based anomaly detection (spike / drop)
 - Webhook dispatcher for outbound event notifications
+- Admin user-management UI with role assignment
+- CSV and XLSX exports for items, stock, and purchase orders
+- English / Arabic UI localization with RTL support and persisted dark mode
+- Activity dashboard with movement trends, top movers, and low-stock alerts
+- Idempotency keys for retry-safe stock receive API requests
 - Audit log table populated automatically on every save
 - Global exception handler with structured JSON error responses
 - Health checks for liveness and database connectivity
