@@ -12,6 +12,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
+using InventoryManagementSystem.Web.Tenancy;
 
 namespace InventoryManagementSystem.Tests.Integration;
 
@@ -30,6 +31,15 @@ public class CustomWebApplicationFactory : WebApplicationFactory<InventoryManage
             // Add InMemory DB for testing (PostgreSQL is skipped in Testing environment)
             services.AddDbContext<InventoryDbContext>(options =>
                 options.UseInMemoryDatabase(_dbName));
+
+            // Service-provider-only test setup and hosted services do not pass through HTTP
+            // middleware, so give those explicit scopes the same tenant as test requests.
+            services.AddScoped<TenantContext>(_ =>
+            {
+                var context = new TenantContext();
+                context.SetTenant("test-tenant");
+                return context;
+            });
 
             // Add test authentication handler
             services.AddAuthentication(options =>

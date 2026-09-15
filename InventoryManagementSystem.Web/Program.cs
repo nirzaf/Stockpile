@@ -12,6 +12,7 @@ using InventoryManagementSystem.Infrastructure.Data;
 using InventoryManagementSystem.Infrastructure.Repositories;
 using InventoryManagementSystem.Web.Middleware;
 using InventoryManagementSystem.Web.Services;
+using InventoryManagementSystem.Web.Tenancy;
 using MediatR;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
@@ -65,6 +66,15 @@ public class Program
         }
 
         builder.Services.AddDatabaseDeveloperPageExceptionFilter();
+
+        // Tenant resolution must run before authentication so Identity and EF use the same
+        // trusted host binding. Tenant claims are supplemental and are handled separately.
+        builder.Services.Configure<TenantOptions>(
+            builder.Configuration.GetSection(TenantOptions.SectionName));
+        builder.Services.AddScoped<TenantContext>();
+        builder.Services.AddScoped<ITenantContext>(services =>
+            services.GetRequiredService<TenantContext>());
+        builder.Services.AddSingleton<HostTenantResolver>();
 
         // Identity
         builder.Services.AddIdentity<ApplicationUser, IdentityRole>(options =>
@@ -359,6 +369,7 @@ public class Program
         app.UseStaticFiles();
         app.UseSecurityHeaders();
         app.UseSerilogRequestLogging();
+        app.UseTenantContext();
 
         app.UseRouting();
         app.UseCors("Default");
@@ -463,7 +474,8 @@ public class Program
             ReceiveStockCommand cmd,
             HttpRequest request,
             IMediator mediator,
-            IIdempotencyKeyStore idempotencyKeyStore) =>
+            IIdempotencyKeyStore idempotencyKeyStore,
+            ITenantContext tenantContext) =>
         {
             var idempotencyKey = request.Headers["Idempotency-Key"].ToString();
             if (idempotencyKey.Length > 200)
@@ -478,8 +490,7 @@ public class Program
             }
             else
             {
-                var tenantId = request.HttpContext.User.FindFirst("tenant_id")?.Value ?? "default";
-                var scope = $"{tenantId}:{request.Method}:{request.Path}";
+                var scope = $"{tenantContext.TenantId}:{request.Method}:{request.Path}";
                 await idempotencyKeyStore.ExecuteAsync(scope, idempotencyKey, () => mediator.Send(cmd));
             }
 

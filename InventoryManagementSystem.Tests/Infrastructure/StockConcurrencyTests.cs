@@ -15,7 +15,7 @@ public class StockConcurrencyTests
             .UseInMemoryDatabase(Guid.NewGuid().ToString())
             .Options;
 
-        using var context = new InventoryDbContext(options);
+        using var context = new InventoryDbContext(options, new TestTenantContext("default"));
         var version = context.Model
             .FindEntityType(typeof(StockInHand))!
             .FindProperty("Version");
