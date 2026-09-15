@@ -36,6 +36,18 @@ A modern inventory management web application for tracking items, stock levels, 
 
 ## Features
 
+## Repository Layout
+
+The repository contains only the maintained web application and its supporting projects:
+
+- `InventoryManagementSystem.Core` — domain entities, services, validators, and CQRS handlers
+- `InventoryManagementSystem.Infrastructure` — EF Core persistence and integrations
+- `InventoryManagementSystem.Web` — ASP.NET Core API and Blazor UI
+- `InventoryManagementSystem.Tests` — unit and integration tests
+
+The former `InventoryManagementSystem/` WinForms source tree was removed from the repository;
+it is not part of the supported build or deployment path.
+
 **Inventory Management**
 - Full CRUD for items, suppliers, locations, and purchase orders
 - Stock operations: receive, transfer between locations, sell
