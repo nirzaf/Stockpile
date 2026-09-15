@@ -584,6 +584,33 @@ namespace InventoryManagementSystem.Infrastructure.Migrations
                     b.ToTable("WebhookDeliveries");
                 });
 
+            modelBuilder.Entity("InventoryManagementSystem.Core.Entities.IdempotencyRecord", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<int>("AttemptCount").HasColumnType("integer");
+                    b.Property<DateTimeOffset>("CreatedAt").HasColumnType("timestamp with time zone");
+                    b.Property<DateTimeOffset?>("CompletedAt").HasColumnType("timestamp with time zone");
+                    b.Property<DateTimeOffset>("ExpiresAt").HasColumnType("timestamp with time zone");
+                    b.Property<string>("Key").IsRequired().HasMaxLength(200).HasColumnType("character varying(200)");
+                    b.Property<string>("LastError").HasMaxLength(4096).HasColumnType("character varying(4096)");
+                    b.Property<DateTimeOffset?>("LeaseUntil").HasColumnType("timestamp with time zone");
+                    b.Property<string>("RequestHash").IsRequired().HasMaxLength(64).HasColumnType("character varying(64)");
+                    b.Property<string>("ResponseBody").HasMaxLength(16384).HasColumnType("character varying(16384)");
+                    b.Property<int?>("ResponseStatusCode").HasColumnType("integer");
+                    b.Property<string>("Scope").IsRequired().HasMaxLength(256).HasColumnType("character varying(256)");
+                    b.Property<string>("Status").IsRequired().HasMaxLength(32).HasColumnType("character varying(32)");
+                    b.Property<string>("TenantId").IsRequired().HasMaxLength(64).HasColumnType("character varying(64)");
+                    b.HasKey("Id");
+                    b.HasIndex("ExpiresAt");
+                    b.HasIndex("TenantId", "Scope", "Key").IsUnique();
+                    b.ToTable("IdempotencyRecords");
+                });
+
             modelBuilder.Entity("InventoryManagementSystem.Core.Entities.ApplicationUser", b =>
                 {
                     b.Property<string>("Id")
