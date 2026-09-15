@@ -34,7 +34,11 @@ public class ExportFileBuilderTests
         using var workbook = new XLWorkbook(
             new MemoryStream(ExportFileBuilder.CreateExcel("Export", ["Value"], [[value]])));
 
-        workbook.Worksheet("Export").Cell(2, 1).GetString().Should().Be($"'{value}");
+        var cell = workbook.Worksheet("Export").Cell(2, 1);
+
+        cell.Value.Type.Should().Be(XLDataType.Text);
+        cell.HasFormula.Should().BeFalse();
+        cell.GetString().Should().Be(value);
     }
 
     [Fact]
