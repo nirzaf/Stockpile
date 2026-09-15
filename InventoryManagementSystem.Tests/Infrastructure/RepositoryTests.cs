@@ -68,4 +68,25 @@ public class RepositoryTests
 
         barcodeIndex.IsUnique.Should().BeTrue();
     }
+
+    [Fact]
+    public async Task GetPagedAsync_returns_stable_membership_across_repeated_calls()
+    {
+        var options = new DbContextOptionsBuilder<InventoryDbContext>()
+            .UseInMemoryDatabase(Guid.NewGuid().ToString())
+            .Options;
+
+        await using var context = new InventoryDbContext(options, new TestTenantContext("default"));
+        context.Items.AddRange(
+            new Item { ItemCode = "PAGE-003", Description = "Third", Rate = 3m },
+            new Item { ItemCode = "PAGE-001", Description = "First", Rate = 1m },
+            new Item { ItemCode = "PAGE-002", Description = "Second", Rate = 2m });
+        await context.SaveChangesAsync();
+
+        var repository = new Repository<Item>(context);
+        var first = (await repository.GetPagedAsync(2, 2)).Select(item => item.Id).ToArray();
+        var second = (await repository.GetPagedAsync(2, 2)).Select(item => item.Id).ToArray();
+
+        second.Should().Equal(first);
+    }
 }
