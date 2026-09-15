@@ -14,11 +14,16 @@ public class PurchaseOrderServiceTests
     private readonly Fixture _fixture = InventoryFixtureFactory.Create();
     private readonly Mock<IRepository<PurchaseOrder>> _poRepoMock = new();
     private readonly Mock<IUnitOfWork> _uowMock = new();
+    private readonly Mock<IWebhookDispatcher> _webhookDispatcherMock = new();
     private readonly PurchaseOrderService _sut;
 
     public PurchaseOrderServiceTests()
     {
-        _sut = new PurchaseOrderService(_poRepoMock.Object, _uowMock.Object, NullLogger<PurchaseOrderService>.Instance);
+        _sut = new PurchaseOrderService(
+            _poRepoMock.Object,
+            _uowMock.Object,
+            _webhookDispatcherMock.Object,
+            NullLogger<PurchaseOrderService>.Instance);
     }
 
     [Fact]
@@ -147,6 +152,47 @@ public class PurchaseOrderServiceTests
         po.Status.Should().Be(PurchaseOrderStatus.Approved);
         _poRepoMock.Verify(r => r.UpdateAsync(po), Times.Once);
         _uowMock.Verify(u => u.SaveChangesAsync(default), Times.Once);
+    }
+
+    [Fact]
+    public async Task UpdateStatusAsync_WhenStatusChanges_DispatchesNotification()
+    {
+        // Arrange
+        var po = _fixture.Build<PurchaseOrder>()
+            .With(p => p.Status, PurchaseOrderStatus.Pending)
+            .With(p => p.PONumber, "PO-1001")
+            .Create();
+        _poRepoMock.Setup(r => r.GetByIdAsync(po.Id)).ReturnsAsync(po);
+
+        // Act
+        await _sut.UpdateStatusAsync(po.Id, "Approved");
+
+        // Assert
+        var invocation = _webhookDispatcherMock.Invocations
+            .Single(i => i.Method.Name == nameof(IWebhookDispatcher.DispatchAsync));
+        invocation.Arguments[0].Should().Be("PurchaseOrder.StatusChanged");
+        var payload = invocation.Arguments[1];
+        payload.Should().NotBeNull();
+        payload!.GetType().GetProperty("PurchaseOrderId")!.GetValue(payload).Should().Be(po.Id);
+        payload.GetType().GetProperty("PONumber")!.GetValue(payload).Should().Be("PO-1001");
+        payload.GetType().GetProperty("PreviousStatus")!.GetValue(payload).Should().Be("Pending");
+        payload.GetType().GetProperty("Status")!.GetValue(payload).Should().Be("Approved");
+    }
+
+    [Fact]
+    public async Task UpdateStatusAsync_WhenStatusDoesNotChange_DoesNotDispatchNotification()
+    {
+        // Arrange
+        var po = _fixture.Build<PurchaseOrder>()
+            .With(p => p.Status, PurchaseOrderStatus.Pending)
+            .Create();
+        _poRepoMock.Setup(r => r.GetByIdAsync(po.Id)).ReturnsAsync(po);
+
+        // Act
+        await _sut.UpdateStatusAsync(po.Id, "Pending");
+
+        // Assert
+        _webhookDispatcherMock.Invocations.Should().BeEmpty();
     }
 
     [Fact]
