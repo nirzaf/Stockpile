@@ -283,7 +283,11 @@ public class Program
             options.ApiVersionReader = ApiVersionReader.Combine(
                 new UrlSegmentApiVersionReader(),
                 new HeaderApiVersionReader("x-api-version"));
-        }).AddMvc();
+        }).AddMvc().AddApiExplorer(options =>
+        {
+            options.GroupNameFormat = "'v'VVV";
+            options.SubstituteApiVersionInUrl = true;
+        });
 
         // Swagger/OpenAPI
         builder.Services.AddEndpointsApiExplorer();
@@ -451,6 +455,8 @@ public class Program
             .AddInteractiveServerRenderMode();
         app.MapHealthChecks("/health");
 
+        // Minimal APIs are the single public resource style. The attribute-routed controller
+        // classes remain internal compatibility code and are intentionally not mapped here.
         var v1 = app.MapGroup("/api/v1")
             .WithTags("API v1")
             .RequireAuthorization("Api")
