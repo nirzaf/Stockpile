@@ -1,13 +1,12 @@
-FROM mcr.microsoft.com/dotnet/sdk:10.0.400 AS migrator
+FROM mcr.microsoft.com/dotnet/sdk:10.0.300 AS migrator
 WORKDIR /src
 
 COPY InventoryManagementSystem.sln .
 COPY InventoryManagementSystem.Web/InventoryManagementSystem.Web.csproj InventoryManagementSystem.Web/
 COPY InventoryManagementSystem.Core/InventoryManagementSystem.Core.csproj InventoryManagementSystem.Core/
 COPY InventoryManagementSystem.Infrastructure/InventoryManagementSystem.Infrastructure.csproj InventoryManagementSystem.Infrastructure/
-COPY InventoryManagementSystem.Tests/InventoryManagementSystem.Tests.csproj InventoryManagementSystem.Tests/
 
-RUN dotnet restore
+RUN dotnet restore InventoryManagementSystem.Web/InventoryManagementSystem.Web.csproj
 RUN dotnet tool install --global dotnet-ef --version 10.0.9
 ENV PATH="/root/.dotnet/tools:${PATH}"
 
