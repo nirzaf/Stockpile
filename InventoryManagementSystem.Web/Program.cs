@@ -88,10 +88,24 @@ public class Program
         .AddEntityFrameworkStores<InventoryDbContext>()
         .AddDefaultTokenProviders();
 
+        builder.Services.AddScoped<IUserClaimsPrincipalFactory<ApplicationUser>, TenantClaimsPrincipalFactory>();
+
         builder.Services.ConfigureApplicationCookie(options =>
         {
             options.LoginPath = "/Account/Login";
             options.AccessDeniedPath = "/Account/AccessDenied";
+            options.Events.OnValidatePrincipal = context =>
+            {
+                var tenantContext = context.HttpContext.RequestServices.GetRequiredService<ITenantContext>();
+                var principalTenant = context.Principal?.FindFirst("tenant_id")?.Value;
+                if (!tenantContext.IsResolved ||
+                    !string.Equals(principalTenant, tenantContext.TenantId, StringComparison.Ordinal))
+                {
+                    context.RejectPrincipal();
+                }
+
+                return Task.CompletedTask;
+            };
         });
 
         // Authentication Configuration (Cookies + JWT Bearer)
@@ -144,6 +158,21 @@ public class Program
                 ValidAudience = jwtSettings["Audience"] ?? "InventoryManagementSystem",
                 ValidateLifetime = true,
                 ClockSkew = TimeSpan.Zero
+            };
+            options.Events = new JwtBearerEvents
+            {
+                OnTokenValidated = context =>
+                {
+                    var tenantContext = context.HttpContext.RequestServices.GetRequiredService<ITenantContext>();
+                    var tokenTenant = context.Principal?.FindFirst("tenant_id")?.Value;
+                    if (!tenantContext.IsResolved ||
+                        !string.Equals(tokenTenant, tenantContext.TenantId, StringComparison.Ordinal))
+                    {
+                        context.Fail("The token tenant does not match the request tenant.");
+                    }
+
+                    return Task.CompletedTask;
+                }
             };
         });
 
@@ -413,10 +442,20 @@ public class Program
         const int defaultPageSize = 25;
         const int maxPageSize = 100;
 
-        v1.MapPost("/auth/token", async (TokenRequest req, UserManager<ApplicationUser> userManager, SignInManager<ApplicationUser> signInManager) =>
+        v1.MapPost("/auth/token", async (
+            TokenRequest req,
+            UserManager<ApplicationUser> userManager,
+            SignInManager<ApplicationUser> signInManager,
+            ITenantContext tenantContext) =>
         {
             var user = await userManager.FindByNameAsync(req.Username) ?? await userManager.FindByEmailAsync(req.Username);
             if (user == null) return Results.Unauthorized();
+
+            if (!tenantContext.IsResolved ||
+                !string.Equals(user.TenantId, tenantContext.TenantId, StringComparison.Ordinal))
+            {
+                return Results.Unauthorized();
+            }
 
             var result = await signInManager.CheckPasswordSignInAsync(user, req.Password, false);
             if (!result.Succeeded) return Results.Unauthorized();
@@ -428,6 +467,7 @@ public class Program
                 {
                     new System.Security.Claims.Claim(System.Security.Claims.ClaimTypes.Name, user.UserName ?? ""),
                     new System.Security.Claims.Claim(System.Security.Claims.ClaimTypes.NameIdentifier, user.Id),
+                    new System.Security.Claims.Claim("tenant_id", tenantContext.TenantId),
                     new System.Security.Claims.Claim(System.Security.Claims.ClaimTypes.Role, (await userManager.GetRolesAsync(user)).FirstOrDefault() ?? "Staff")
                 }),
                 Expires = DateTime.UtcNow.AddHours(2),

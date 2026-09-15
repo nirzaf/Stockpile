@@ -1,0 +1,62 @@
+using System.Net;
+using System.Security.Claims;
+using FluentAssertions;
+using InventoryManagementSystem.Core.Entities;
+using Microsoft.AspNetCore.Identity;
+using Microsoft.Extensions.DependencyInjection;
+
+namespace InventoryManagementSystem.Tests.Integration;
+
+public class TenantAuthenticationTests : IClassFixture<CustomWebApplicationFactory>
+{
+    private readonly CustomWebApplicationFactory _factory;
+
+    public TenantAuthenticationTests(CustomWebApplicationFactory factory)
+    {
+        _factory = factory;
+    }
+
+    [Fact]
+    public async Task Jwt_for_the_resolved_tenant_is_accepted()
+    {
+        using var client = _factory.CreateAuthenticatedClient();
+
+        var response = await client.GetAsync("/api/v1/items");
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    [Fact]
+    public async Task Jwt_for_a_different_tenant_is_rejected()
+    {
+        using var client = _factory.CreateAuthenticatedClient(tenantId: "tenant-b");
+
+        var response = await client.GetAsync("/api/v1/items");
+
+        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+    }
+
+    [Fact]
+    public async Task Cookie_principal_contains_the_resolved_tenant_claim()
+    {
+        using var scope = _factory.Services.CreateScope();
+        var userManager = scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
+        var principalFactory = scope.ServiceProvider
+            .GetRequiredService<IUserClaimsPrincipalFactory<ApplicationUser>>();
+        var email = $"cookie-{Guid.NewGuid():N}@example.com";
+        var user = new ApplicationUser
+        {
+            UserName = email,
+            Email = email,
+            TenantId = "test-tenant"
+        };
+
+        var createResult = await userManager.CreateAsync(user, "Password1");
+        createResult.Succeeded.Should().BeTrue();
+
+        var principal = await principalFactory.CreateAsync(user);
+
+        principal.FindFirstValue("tenant_id").Should().Be("test-tenant");
+        principal.Claims.Where(claim => claim.Type == "tenant_id").Should().ContainSingle();
+    }
+}
