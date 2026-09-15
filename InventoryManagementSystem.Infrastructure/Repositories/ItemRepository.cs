@@ -21,7 +21,7 @@ public sealed class ItemRepository : Repository<Item>, IItemRepository
             .Replace("_", "\\_", StringComparison.Ordinal);
         var pattern = $"%{escapedTerm}%";
 
-        if (_context.Database.IsInMemory())
+        if (_context.Database.ProviderName == "Microsoft.EntityFrameworkCore.InMemory")
         {
             // The in-memory provider cannot translate PostgreSQL's ILIKE function. This branch
             // keeps the test provider's semantics equivalent without affecting production SQL.
