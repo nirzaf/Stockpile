@@ -4,7 +4,6 @@ using Microsoft.EntityFrameworkCore.Migrations;
 
 namespace InventoryManagementSystem.Infrastructure.Migrations;
 
-[Migration("20260915073000_AddStockLotTracking")]
 public partial class AddStockLotTracking : Migration
 {
     protected override void Up(MigrationBuilder migrationBuilder)
