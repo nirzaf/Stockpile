@@ -11,7 +11,7 @@ namespace InventoryManagementSystem.Web.Controllers.Api.V1;
 [ApiVersion("1.0")]
 [Route("api/v{version:apiVersion}/items")]
 [Produces("application/json")]
-[Authorize]
+[Authorize(Policy = "Api")]
 public class ItemsController : ControllerBase
 {
     private readonly IMediator _mediator;
