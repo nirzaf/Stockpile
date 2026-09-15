@@ -14,6 +14,7 @@ using InventoryManagementSystem.Web.Middleware;
 using MediatR;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.OpenApi;
 using MudBlazor.Services;
 using Serilog;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
@@ -189,36 +190,25 @@ public class Program
         builder.Services.AddEndpointsApiExplorer();
         builder.Services.AddSwaggerGen(c =>
         {
-            c.SwaggerDoc("v1", new Microsoft.OpenApi.Models.OpenApiInfo
+            c.SwaggerDoc("v1", new OpenApiInfo
             {
                 Title = "Inventory Management System API",
                 Version = "v1",
                 Description = "Commercial-grade API endpoints for Inventory Management System"
             });
 
-            c.AddSecurityDefinition("Bearer", new Microsoft.OpenApi.Models.OpenApiSecurityScheme
+            c.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
             {
                 Name = "Authorization",
-                Type = Microsoft.OpenApi.Models.SecuritySchemeType.ApiKey,
-                Scheme = "Bearer",
+                Type = SecuritySchemeType.Http,
+                Scheme = "bearer",
                 BearerFormat = "JWT",
-                In = Microsoft.OpenApi.Models.ParameterLocation.Header,
                 Description = "JWT Authorization header using the Bearer scheme. Example: \"Bearer {token}\""
             });
 
-            c.AddSecurityRequirement(new Microsoft.OpenApi.Models.OpenApiSecurityRequirement
+            c.AddSecurityRequirement(document => new OpenApiSecurityRequirement
             {
-                {
-                    new Microsoft.OpenApi.Models.OpenApiSecurityScheme
-                    {
-                        Reference = new Microsoft.OpenApi.Models.OpenApiReference
-                        {
-                            Type = Microsoft.OpenApi.Models.ReferenceType.SecurityScheme,
-                            Id = "Bearer"
-                        }
-                    },
-                    Array.Empty<string>()
-                }
+                [new OpenApiSecuritySchemeReference("Bearer", document)] = []
             });
 
             // Include XML doc comments from all project assemblies so Swagger UI surfaces
