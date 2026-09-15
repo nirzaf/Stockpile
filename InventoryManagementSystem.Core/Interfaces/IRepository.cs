@@ -61,9 +61,4 @@ public interface IRepository<T> where T : class
     /// <param name="entity">The entity to delete.</param>
     Task DeleteAsync(T entity);
 
-    /// <summary>
-    /// Commit all pending changes without the Unit of Work.
-    /// Prefer IUnitOfWork.SaveChangesAsync for multi-operation scenarios.
-    /// </summary>
-    Task SaveChangesAsync();
 }
