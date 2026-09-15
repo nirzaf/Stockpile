@@ -21,6 +21,7 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
 using System.Text;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Localization;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.Extensions.Caching.Memory;
 using InventoryManagementSystem.Web.BackgroundServices;
@@ -146,6 +147,10 @@ public class Program
 
         // MudBlazor
         builder.Services.AddMudServices();
+
+        // UI localization. Query-string and cookie providers allow the interactive UI
+        // to switch cultures without changing the authenticated session.
+        builder.Services.AddLocalization(options => options.ResourcesPath = "Resources");
 
         // Caching
         builder.Services.AddMemoryCache();
@@ -307,6 +312,13 @@ public class Program
 
         var app = builder.Build();
 
+        var supportedCultures = new[] { "en-US", "ar-SA" };
+        var localizationOptions = new RequestLocalizationOptions()
+            .SetDefaultCulture(supportedCultures[0])
+            .AddSupportedCultures(supportedCultures)
+            .AddSupportedUICultures(supportedCultures);
+        app.UseRequestLocalization(localizationOptions);
+
         app.UseResponseCompression();
 
         if (app.Environment.IsDevelopment())
@@ -349,6 +361,25 @@ public class Program
         app.UseAuthentication();
         app.UseAuthorization();
         app.UseAntiforgery();
+
+        app.MapGet("/culture/set", (HttpContext httpContext, string culture, string? returnUrl) =>
+        {
+            var selectedCulture = supportedCultures.FirstOrDefault(
+                supported => string.Equals(supported, culture, StringComparison.OrdinalIgnoreCase));
+            if (selectedCulture == null)
+            {
+                return Results.BadRequest("Unsupported culture.");
+            }
+
+            httpContext.Response.Cookies.Append(
+                CookieRequestCultureProvider.DefaultCookieName,
+                CookieRequestCultureProvider.MakeCookieValue(new RequestCulture(selectedCulture)));
+
+            var destination = !string.IsNullOrWhiteSpace(returnUrl) && returnUrl.StartsWith('/')
+                ? returnUrl
+                : "/";
+            return Results.LocalRedirect(destination);
+        });
 
         app.MapControllerRoute(
             name: "default",

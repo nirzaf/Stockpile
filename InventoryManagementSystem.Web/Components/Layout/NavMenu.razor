@@ -1,14 +1,36 @@
+@inject IStringLocalizer<SharedResource> L
+@inject NavigationManager Nav
+
 <MudNavMenu>
-    <MudNavLink Href="/" Icon="@Icons.Material.Filled.Dashboard" Match="NavLinkMatch.All">Dashboard</MudNavLink>
-    <MudNavLink Href="/Items" Icon="@Icons.Material.Filled.Inventory">Items</MudNavLink>
-    <MudNavGroup Title="Stock" Icon="@Icons.Material.Filled.Warehouse" Expanded="false">
-        <MudNavLink Href="/Stock/Index" Icon="@Icons.Material.Filled.Visibility">View Stock</MudNavLink>
-        <MudNavLink Href="/Stock/Receive" Icon="@Icons.Material.Filled.AddCircle">Receive Stock</MudNavLink>
-        <MudNavLink Href="/Stock/Transfer" Icon="@Icons.Material.Filled.SwapHoriz">Transfer Stock</MudNavLink>
-        <MudNavLink Href="/Stock/Sell" Icon="@Icons.Material.Filled.ShoppingCart">Sell Stock</MudNavLink>
-        <MudNavLink Href="/Stock/Transactions" Icon="@Icons.Material.Filled.History">Transactions</MudNavLink>
+    <MudNavLink Href="/" Icon="@Icons.Material.Filled.Dashboard" Match="NavLinkMatch.All">@L["Dashboard"]</MudNavLink>
+    <MudNavLink Href="/Items" Icon="@Icons.Material.Filled.Inventory">@L["Items"]</MudNavLink>
+    <MudNavGroup Title='@L["Stock"]' Icon="@Icons.Material.Filled.Warehouse" Expanded="false">
+        <MudNavLink Href="/Stock/Index" Icon="@Icons.Material.Filled.Visibility">@L["View Stock"]</MudNavLink>
+        <MudNavLink Href="/Stock/Receive" Icon="@Icons.Material.Filled.AddCircle">@L["Receive Stock"]</MudNavLink>
+        <MudNavLink Href="/Stock/Transfer" Icon="@Icons.Material.Filled.SwapHoriz">@L["Transfer Stock"]</MudNavLink>
+        <MudNavLink Href="/Stock/Sell" Icon="@Icons.Material.Filled.ShoppingCart">@L["Sell Stock"]</MudNavLink>
+        <MudNavLink Href="/Stock/Transactions" Icon="@Icons.Material.Filled.History">@L["Transactions"]</MudNavLink>
     </MudNavGroup>
-    <MudNavLink Href="/PurchaseOrders" Icon="@Icons.Material.Filled.Receipt">Purchase Orders</MudNavLink>
-    <MudNavLink Href="/Suppliers" Icon="@Icons.Material.Filled.Business">Suppliers</MudNavLink>
-    <MudNavLink Href="/Locations" Icon="@Icons.Material.Filled.LocationOn">Locations</MudNavLink>
+    <MudNavLink Href="/PurchaseOrders" Icon="@Icons.Material.Filled.Receipt">@L["Purchase Orders"]</MudNavLink>
+    <MudNavLink Href="/Suppliers" Icon="@Icons.Material.Filled.Business">@L["Suppliers"]</MudNavLink>
+    <MudNavLink Href="/Locations" Icon="@Icons.Material.Filled.LocationOn">@L["Locations"]</MudNavLink>
+
+    <MudDivider Class="my-2" />
+    <MudSelect T="string" Label='@L["Language"]' Value="@SelectedCulture" ValueChanged="ChangeCulture" Dense="true" Class="mx-3">
+        <MudSelectItem T="string" Value="en-US">@L["English"]</MudSelectItem>
+        <MudSelectItem T="string" Value="ar-SA">@L["Arabic"]</MudSelectItem>
+    </MudSelect>
 </MudNavMenu>
+
+@code {
+    private string SelectedCulture => CultureInfo.CurrentUICulture.Name.StartsWith("ar", StringComparison.OrdinalIgnoreCase)
+        ? "ar-SA"
+        : "en-US";
+
+    private void ChangeCulture(string culture)
+    {
+        var currentUri = new Uri(Nav.Uri);
+        var returnUrl = Uri.EscapeDataString(currentUri.PathAndQuery);
+        Nav.NavigateTo($"/culture/set?culture={Uri.EscapeDataString(culture)}&returnUrl={returnUrl}", forceLoad: true);
+    }
+}
