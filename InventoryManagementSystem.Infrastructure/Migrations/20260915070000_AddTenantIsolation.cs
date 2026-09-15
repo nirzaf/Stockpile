@@ -5,6 +5,7 @@ using Microsoft.EntityFrameworkCore.Migrations;
 namespace InventoryManagementSystem.Infrastructure.Migrations;
 
 /// <summary>Adds tenant ownership and database isolation support to application data.</summary>
+[Migration("20260915070000_AddTenantIsolation")]
 public partial class AddTenantIsolation : Migration
 {
     protected override void Up(MigrationBuilder migrationBuilder)
