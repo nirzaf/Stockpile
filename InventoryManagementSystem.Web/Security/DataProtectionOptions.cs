@@ -1,7 +1,7 @@
 namespace InventoryManagementSystem.Web.Security;
 
 /// <summary>Configuration for durable ASP.NET Core Data Protection key storage.</summary>
-public sealed class DataProtectionOptions
+public sealed class KeyStorageOptions
 {
     public const string SectionName = "DataProtection";
 

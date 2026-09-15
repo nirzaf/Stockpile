@@ -59,15 +59,15 @@ public class Program
         // Production cookie and token protection keys must survive container replacement and
         // be shared by replicas. Development and Testing retain the framework's self-contained
         // key repositories so local runs do not require external storage.
-        builder.Services.AddOptions<DataProtectionOptions>()
-            .Bind(builder.Configuration.GetSection(DataProtectionOptions.SectionName));
+        builder.Services.AddOptions<KeyStorageOptions>()
+            .Bind(builder.Configuration.GetSection(KeyStorageOptions.SectionName));
         var dataProtection = builder.Services.AddDataProtection()
             .SetApplicationName("Stockpile");
         if (builder.Environment.IsProduction())
         {
             var keyPath = builder.Configuration
-                .GetSection(DataProtectionOptions.SectionName)
-                .GetValue<string>(nameof(DataProtectionOptions.KeyStoragePath))
+                .GetSection(KeyStorageOptions.SectionName)
+                .GetValue<string>(nameof(KeyStorageOptions.KeyStoragePath))
                 ?? "/app/data/keys";
             Directory.CreateDirectory(keyPath);
             dataProtection.PersistKeysToFileSystem(new DirectoryInfo(keyPath));
