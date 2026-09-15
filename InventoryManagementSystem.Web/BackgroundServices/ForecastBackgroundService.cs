@@ -1,23 +1,26 @@
 using System;
 using System.Threading;
 using System.Threading.Tasks;
-using InventoryManagementSystem.Core.Interfaces;
-using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
+using InventoryManagementSystem.Web.Tenancy;
 
 namespace InventoryManagementSystem.Web.BackgroundServices;
 
 public class ForecastBackgroundService : BackgroundService
 {
-    private readonly IServiceProvider _serviceProvider;
+    private readonly ITenantForecastRunner _tenantForecastRunner;
+    private readonly IOptions<TenantOptions> _tenantOptions;
     private readonly ILogger<ForecastBackgroundService> _logger;
 
     public ForecastBackgroundService(
-        IServiceProvider serviceProvider,
+        ITenantForecastRunner tenantForecastRunner,
+        IOptions<TenantOptions> tenantOptions,
         ILogger<ForecastBackgroundService> logger)
     {
-        _serviceProvider = serviceProvider;
+        _tenantForecastRunner = tenantForecastRunner;
+        _tenantOptions = tenantOptions;
         _logger = logger;
     }
 
@@ -31,10 +34,10 @@ public class ForecastBackgroundService : BackgroundService
             {
                 _logger.LogInformation("Starting background ML model pre-training...");
 
-                using (var scope = _serviceProvider.CreateScope())
+                var tenantIds = _tenantOptions.Value.GetTenantIds();
+                foreach (var tenantId in tenantIds)
                 {
-                    var forecastService = scope.ServiceProvider.GetRequiredService<IDemandForecastService>();
-                    await forecastService.ForecastAllItemsAsync(30);
+                    await _tenantForecastRunner.RunAsync(tenantId, stoppingToken);
                 }
 
                 _logger.LogInformation("Background ML model pre-training completed successfully. Cached forecasts.");

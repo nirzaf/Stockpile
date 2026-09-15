@@ -313,6 +313,7 @@ public class Program
         builder.Services.AddProblemDetails();
 
         // Background services
+        builder.Services.AddSingleton<ITenantForecastRunner, TenantForecastRunner>();
         builder.Services.AddHostedService<ForecastBackgroundService>();
 
         // Response Compression
