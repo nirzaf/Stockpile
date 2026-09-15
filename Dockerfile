@@ -1,5 +1,5 @@
 # === Build Stage ===
-FROM mcr.microsoft.com/dotnet/sdk:10.0.400 AS build
+FROM mcr.microsoft.com/dotnet/sdk:10.0.300 AS build
 WORKDIR /src
 
 # Copy solution and project files for layer caching
@@ -7,10 +7,9 @@ COPY InventoryManagementSystem.sln .
 COPY InventoryManagementSystem.Web/InventoryManagementSystem.Web.csproj InventoryManagementSystem.Web/
 COPY InventoryManagementSystem.Core/InventoryManagementSystem.Core.csproj InventoryManagementSystem.Core/
 COPY InventoryManagementSystem.Infrastructure/InventoryManagementSystem.Infrastructure.csproj InventoryManagementSystem.Infrastructure/
-COPY InventoryManagementSystem.Tests/InventoryManagementSystem.Tests.csproj InventoryManagementSystem.Tests/
 
-# Restore dependencies (cached unless csproj changes)
-RUN dotnet restore
+# Restore only the production web graph; test sources are excluded from the build context.
+RUN dotnet restore InventoryManagementSystem.Web/InventoryManagementSystem.Web.csproj
 
 # Copy remaining source
 COPY . .
