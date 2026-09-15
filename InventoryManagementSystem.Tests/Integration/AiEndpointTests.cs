@@ -4,6 +4,8 @@ using InventoryManagementSystem.Core.Entities;
 using InventoryManagementSystem.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Diagnostics.HealthChecks;
+using Microsoft.Extensions.Options;
 
 namespace InventoryManagementSystem.Tests.Integration;
 
@@ -134,5 +136,17 @@ public class HealthCheckTests : IClassFixture<CustomWebApplicationFactory>
 
         // InMemory DB may not pass CanConnect health check, so 503 is acceptable
         response.StatusCode.Should().BeOneOf(HttpStatusCode.OK, HttpStatusCode.ServiceUnavailable);
+    }
+
+    [Fact]
+    public void HealthChecks_IncludeDatabaseConnectivityCheck()
+    {
+        using var scope = _factory.Services.CreateScope();
+        var options = scope.ServiceProvider
+            .GetRequiredService<IOptions<HealthCheckServiceOptions>>();
+
+        options.Value.Registrations
+            .Should()
+            .Contain(registration => registration.Name == nameof(InventoryDbContext));
     }
 }
