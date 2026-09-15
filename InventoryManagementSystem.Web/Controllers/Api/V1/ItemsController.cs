@@ -1,6 +1,7 @@
 using Asp.Versioning;
 using InventoryManagementSystem.Core.Features.Items.Commands;
 using InventoryManagementSystem.Core.Features.Items.Queries;
+using InventoryManagementSystem.Core.Models;
 using MediatR;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -23,11 +24,15 @@ public class ItemsController : ControllerBase
 
     /// <summary>Get all items</summary>
     [HttpGet]
-    [ProducesResponseType(typeof(IEnumerable<Core.Entities.Item>), StatusCodes.Status200OK)]
-    public async Task<IActionResult> GetAll()
+    [ProducesResponseType(typeof(ApiResponse<ItemsPagedResult>), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> GetAll([FromQuery] int page = 1, [FromQuery] int pageSize = 25)
     {
-        var items = await _mediator.Send(new GetAllItemsQuery());
-        return Ok(items);
+        if (page < 1 || pageSize < 1 || pageSize > 100)
+            return BadRequest("page must be positive and pageSize must be between 1 and 100");
+
+        var items = await _mediator.Send(new GetItemsPagedQuery(page, pageSize));
+        return Ok(ApiResponse<ItemsPagedResult>.CreateSuccess(items));
     }
 
     /// <summary>Get item by ID</summary>

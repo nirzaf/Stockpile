@@ -361,6 +361,9 @@ public class Program
             .RequireAuthorization("Api")
             .RequireRateLimiting("Api");
 
+        const int defaultPageSize = 25;
+        const int maxPageSize = 100;
+
         v1.MapPost("/auth/token", async (TokenRequest req, UserManager<ApplicationUser> userManager, SignInManager<ApplicationUser> signInManager) =>
         {
             var user = await userManager.FindByNameAsync(req.Username) ?? await userManager.FindByEmailAsync(req.Username);
@@ -392,13 +395,10 @@ public class Program
 
         v1.MapGet("/items", async (int? page, int? pageSize, IMediator mediator) =>
         {
-            if (page.HasValue && pageSize.HasValue)
-            {
-                var pagedItems = await mediator.Send(new GetItemsPagedQuery(page.Value, pageSize.Value));
-                return Results.Ok(ApiResponse<ItemsPagedResult>.CreateSuccess(pagedItems));
-            }
-            var allItems = await mediator.Send(new GetAllItemsQuery());
-            return Results.Ok(ApiResponse<IEnumerable<Item>>.CreateSuccess(allItems));
+            var requestedPage = Math.Max(page ?? 1, 1);
+            var requestedPageSize = Math.Clamp(pageSize ?? defaultPageSize, 1, maxPageSize);
+            var pagedItems = await mediator.Send(new GetItemsPagedQuery(requestedPage, requestedPageSize));
+            return Results.Ok(ApiResponse<ItemsPagedResult>.CreateSuccess(pagedItems));
         })
             .WithName("GetAllItems")
             .WithTags("Items");
