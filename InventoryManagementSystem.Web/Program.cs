@@ -178,7 +178,10 @@ public class Program
         builder.Services.AddScoped<IAnomalyDetectionService, AnomalyDetectionService>();
 
         // HttpClient Factory & Webhooks
-        builder.Services.AddHttpClient();
+        builder.Services.AddHttpClient("Webhooks", client =>
+        {
+            client.Timeout = TimeSpan.FromSeconds(10);
+        });
         builder.Services.AddSingleton<IWebhookDispatcher, InventoryManagementSystem.Infrastructure.Services.WebhookDispatcher>();
         builder.Services.AddSingleton<IIdempotencyKeyStore, IdempotencyKeyStore>();
 
@@ -487,6 +490,115 @@ public class Program
             .WithDescription("Receives stock. Supply Idempotency-Key to safely retry a request.")
             .RequireAuthorization(policy => policy.RequireRole("Admin", "Manager", "Staff"));
 
+        static string? ValidateWebhookRequest(WebhookSubscriptionRequest request)
+        {
+            if (string.IsNullOrWhiteSpace(request.Url) || request.Url.Length > 2048 ||
+                !Uri.TryCreate(request.Url, UriKind.Absolute, out var uri) || uri.Scheme != Uri.UriSchemeHttps)
+            {
+                return "Url must be an absolute HTTPS URL no longer than 2048 characters.";
+            }
+
+            if (string.IsNullOrWhiteSpace(request.EventType) || request.EventType.Length > 100)
+            {
+                return "EventType is required and must be 100 characters or fewer.";
+            }
+
+            if (request.Secret?.Length > 512)
+            {
+                return "Secret must be 512 characters or fewer.";
+            }
+
+            return null;
+        }
+
+        static WebhookSubscriptionResponse ToWebhookResponse(WebhookSubscription subscription) =>
+            new(subscription.Id, subscription.Url, subscription.EventType, subscription.IsActive);
+
+        v1.MapGet("/webhooks", async (IRepository<WebhookSubscription> repository) =>
+        {
+            var subscriptions = (await repository.GetAllAsync())
+                .Select(ToWebhookResponse)
+                .ToList();
+            return Results.Ok(ApiResponse<IReadOnlyList<WebhookSubscriptionResponse>>.CreateSuccess(subscriptions));
+        })
+            .WithName("GetWebhooks")
+            .WithTags("Webhooks")
+            .RequireAuthorization(policy => policy.RequireRole("Admin", "Manager"));
+
+        v1.MapPost("/webhooks", async (
+            WebhookSubscriptionRequest request,
+            IRepository<WebhookSubscription> repository,
+            IUnitOfWork unitOfWork) =>
+        {
+            var validationError = ValidateWebhookRequest(request);
+            if (validationError != null)
+            {
+                return Results.BadRequest(ApiResponse<object>.CreateFailure(validationError));
+            }
+
+            var subscription = await repository.AddAsync(new WebhookSubscription
+            {
+                Url = request.Url.Trim(),
+                EventType = request.EventType.Trim(),
+                Secret = request.Secret,
+                IsActive = request.IsActive
+            });
+            await unitOfWork.SaveChangesAsync();
+            return Results.Ok(ApiResponse<WebhookSubscriptionResponse>.CreateSuccess(ToWebhookResponse(subscription)));
+        })
+            .WithName("CreateWebhook")
+            .WithTags("Webhooks")
+            .RequireAuthorization(policy => policy.RequireRole("Admin", "Manager"));
+
+        v1.MapPut("/webhooks/{id:int}", async (
+            int id,
+            WebhookSubscriptionRequest request,
+            IRepository<WebhookSubscription> repository,
+            IUnitOfWork unitOfWork) =>
+        {
+            var validationError = ValidateWebhookRequest(request);
+            if (validationError != null)
+            {
+                return Results.BadRequest(ApiResponse<object>.CreateFailure(validationError));
+            }
+
+            var subscription = await repository.GetByIdAsync(id);
+            if (subscription == null)
+            {
+                return Results.NotFound(ApiResponse<object>.CreateFailure("Webhook subscription not found."));
+            }
+
+            subscription.Url = request.Url.Trim();
+            subscription.EventType = request.EventType.Trim();
+            subscription.Secret = request.Secret;
+            subscription.IsActive = request.IsActive;
+            await repository.UpdateAsync(subscription);
+            await unitOfWork.SaveChangesAsync();
+            return Results.Ok(ApiResponse<WebhookSubscriptionResponse>.CreateSuccess(ToWebhookResponse(subscription)));
+        })
+            .WithName("UpdateWebhook")
+            .WithTags("Webhooks")
+            .RequireAuthorization(policy => policy.RequireRole("Admin", "Manager"));
+
+        v1.MapDelete("/webhooks/{id:int}", async (
+            int id,
+            IRepository<WebhookSubscription> repository,
+            IUnitOfWork unitOfWork) =>
+        {
+            var subscription = await repository.GetByIdAsync(id);
+            if (subscription == null)
+            {
+                return Results.NotFound(ApiResponse<object>.CreateFailure("Webhook subscription not found."));
+            }
+
+            await repository.DeleteAsync(subscription);
+            await unitOfWork.SaveChangesAsync();
+            return Results.NoContent();
+        })
+            .WithName("DeleteWebhook")
+            .WithTags("Webhooks")
+            .RequireAuthorization(policy => policy.RequireRole("Admin", "Manager"));
+
         // === AI / ML endpoints ===
 
         v1.MapGet("/forecast/{itemId:int}", async (int itemId, int? horizon, IMediator mediator, IMemoryCache cache) =>
@@ -545,3 +657,7 @@ public class Program
 }
 
 public record TokenRequest(string Username, string Password);
+
+public record WebhookSubscriptionRequest(string Url, string EventType, string? Secret, bool IsActive = true);
+
+public record WebhookSubscriptionResponse(int Id, string Url, string EventType, bool IsActive);
