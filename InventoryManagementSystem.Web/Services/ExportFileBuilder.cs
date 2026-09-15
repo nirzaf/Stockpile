@@ -30,7 +30,7 @@ public static class ExportFileBuilder
 
         for (var column = 0; column < headerValues.Length; column++)
         {
-            worksheet.Cell(1, column + 1).Value = headerValues[column];
+            worksheet.Cell(1, column + 1).Value = SpreadsheetFormulaSanitizer.SanitizeText(headerValues[column]);
         }
 
         var rowNumber = 2;
@@ -38,8 +38,7 @@ public static class ExportFileBuilder
         {
             for (var column = 0; column < row.Length; column++)
             {
-                worksheet.Cell(rowNumber, column + 1).Value =
-                    Convert.ToString(row[column], CultureInfo.InvariantCulture) ?? string.Empty;
+                SetExcelValue(worksheet.Cell(rowNumber, column + 1), row[column]);
             }
 
             rowNumber++;
@@ -65,7 +64,59 @@ public static class ExportFileBuilder
 
     private static string EscapeCsvValue(object? value)
     {
-        var text = Convert.ToString(value, CultureInfo.InvariantCulture) ?? string.Empty;
+        var text = ConvertToSafeText(value);
         return $"\"{text.Replace("\"", "\"\"")}\"";
+    }
+
+    private static string ConvertToSafeText(object? value)
+    {
+        var text = Convert.ToString(value, CultureInfo.InvariantCulture) ?? string.Empty;
+        return value is string ? SpreadsheetFormulaSanitizer.SanitizeText(text) : text;
+    }
+
+    private static void SetExcelValue(IXLCell cell, object? value)
+    {
+        switch (value)
+        {
+            case null:
+                cell.Value = string.Empty;
+                break;
+            case string text:
+                cell.Value = SpreadsheetFormulaSanitizer.SanitizeText(text);
+                break;
+            case bool boolean:
+                cell.Value = boolean;
+                break;
+            case byte number:
+                cell.Value = number;
+                break;
+            case short number:
+                cell.Value = number;
+                break;
+            case int number:
+                cell.Value = number;
+                break;
+            case long number:
+                cell.Value = number;
+                break;
+            case float number:
+                cell.Value = number;
+                break;
+            case double number:
+                cell.Value = number;
+                break;
+            case decimal number:
+                cell.Value = number;
+                break;
+            case DateTime date:
+                cell.Value = date;
+                break;
+            case DateTimeOffset date:
+                cell.Value = date.DateTime;
+                break;
+            default:
+                cell.Value = ConvertToSafeText(value);
+                break;
+        }
     }
 }
