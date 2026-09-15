@@ -107,31 +107,59 @@ public class AnomalyDetectionService : IAnomalyDetectionService
 
         for (int i = 0; i < predictions.Count; i++)
         {
-            var pred = predictions[i];
-            // ML.NET IID spike output convention: Alert[0] is the spike flag, Alert[1] is
-            // the drop flag, Alert[2] is the raw p-value (used as a confidence proxy).
-            // We surface them in domain terms (Spike / Drop) for the API consumer.
-            bool isSpike = pred.Prediction.Length > 0 && pred.Prediction[0] == 1;
-            bool isDrop = pred.Prediction.Length > 1 && pred.Prediction[1] == 1;
+            var expectedValue = i == 0
+                ? dailyData[i].Quantity
+                : dailyData.Take(i).Average(dataPoint => dataPoint.Quantity);
+            var anomaly = MapIidPrediction(
+                itemId,
+                itemName,
+                dailyData[i].Date,
+                dailyData[i].Quantity,
+                expectedValue,
+                predictions[i].Prediction);
 
-            if (isSpike || isDrop)
+            if (anomaly is not null)
             {
-                anomalies.Add(new StockAnomaly
-                {
-                    ItemId = itemId,
-                    ItemName = itemName,
-                    Date = dailyData[i].Date,
-                    ActualValue = dailyData[i].Quantity,
-                    ExpectedValue = predictions.Take(i).Any()
-                        ? predictions.Take(i).Average(p => (float)(p.Prediction.Length > 2 ? p.Prediction[2] : dailyData[i].Quantity))
-                        : dailyData[i].Quantity,
-                    ConfidenceScore = pred.Prediction.Length > 2 ? pred.Prediction[2] : 1.0,
-                    AnomalyType = isSpike ? "Spike" : "Drop"
-                });
+                anomalies.Add(anomaly);
             }
         }
 
         return anomalies;
+    }
+
+    /// <summary>
+    /// Maps ML.NET IID output, whose shape is <c>[alert, raw score, p-value]</c>, to the
+    /// domain model. Direction is intentionally derived from the observed and expected values.
+    /// </summary>
+    public static StockAnomaly? MapIidPrediction(
+        int itemId,
+        string itemName,
+        DateTime date,
+        float actualValue,
+        float expectedValue,
+        IReadOnlyList<double> prediction)
+    {
+        if (prediction.Count == 0 || prediction[0] != 1)
+        {
+            return null;
+        }
+
+        var rawScore = prediction.Count > 1 ? prediction[1] : 0d;
+        var pValue = prediction.Count > 2 ? prediction[2] : 1d;
+        var confidence = Math.Clamp(1d - pValue, 0d, 1d);
+
+        return new StockAnomaly
+        {
+            ItemId = itemId,
+            ItemName = itemName,
+            Date = date,
+            ActualValue = actualValue,
+            ExpectedValue = expectedValue,
+            RawScore = rawScore,
+            PValue = pValue,
+            ConfidenceScore = confidence,
+            AnomalyType = actualValue >= expectedValue ? "Spike" : "Drop"
+        };
     }
 
     // —— ML.NET data contracts ——

@@ -21,9 +21,15 @@ public class StockAnomaly
     /// <summary>The model-predicted expected quantity for the day.</summary>
     public float ExpectedValue { get; set; }
 
+    /// <summary>The raw IID detector score returned by ML.NET.</summary>
+    public double RawScore { get; set; }
+
+    /// <summary>The p-value returned by ML.NET; lower values indicate stronger evidence.</summary>
+    public double PValue { get; set; }
+
     /// <summary>Confidence score of the detection in the range 0-1.</summary>
     public double ConfidenceScore { get; set; }
 
-    /// <summary>Either <c>Spike</c> or <c>Drop</c>.</summary>
+    /// <summary>Direction derived from actual versus expected quantity: <c>Spike</c> or <c>Drop</c>.</summary>
     public string AnomalyType { get; set; } = string.Empty;
 }

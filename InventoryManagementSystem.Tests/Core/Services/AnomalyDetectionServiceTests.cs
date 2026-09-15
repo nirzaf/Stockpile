@@ -144,4 +144,38 @@ public class AnomalyDetectionServiceTests
         // At minimum verify it runs without crashing
         result.Should().NotBeNull();
     }
+
+    [Fact]
+    public void MapIidPrediction_maps_spike_using_alert_raw_score_and_p_value()
+    {
+        var result = AnomalyDetectionService.MapIidPrediction(
+            1, "ITEM-001", new DateTime(2026, 1, 1), 100, 20, [1, 80, 0.01]);
+
+        result.Should().NotBeNull();
+        result!.AnomalyType.Should().Be("Spike");
+        result.RawScore.Should().Be(80);
+        result.PValue.Should().Be(0.01);
+        result.ConfidenceScore.Should().BeApproximately(0.99, 0.0001);
+    }
+
+    [Fact]
+    public void MapIidPrediction_maps_drop_from_actual_below_expected()
+    {
+        var result = AnomalyDetectionService.MapIidPrediction(
+            1, "ITEM-001", new DateTime(2026, 1, 1), 5, 20, [1, -15, 0.05]);
+
+        result.Should().NotBeNull();
+        result!.AnomalyType.Should().Be("Drop");
+        result.RawScore.Should().Be(-15);
+        result.PValue.Should().Be(0.05);
+    }
+
+    [Fact]
+    public void MapIidPrediction_ignores_non_anomaly_output()
+    {
+        var result = AnomalyDetectionService.MapIidPrediction(
+            1, "ITEM-001", new DateTime(2026, 1, 1), 20, 20, [0, 0, 0.9]);
+
+        result.Should().BeNull();
+    }
 }
