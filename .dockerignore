@@ -8,6 +8,8 @@
 **/logs
 **/*.user
 **/packages
+**/Tests/
+**/*.Tests/
 **/TestResults
 **/*.md
 **/*.log
