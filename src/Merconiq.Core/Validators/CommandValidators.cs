@@ -12,6 +12,9 @@ public sealed class CreateItemCommandValidator : AbstractValidator<CreateItemCom
         RuleFor(command => command.Description).MaximumLength(500);
         RuleFor(command => command.Rate).GreaterThan(0);
         RuleFor(command => command.SupplierId).GreaterThan(0).When(command => command.SupplierId.HasValue);
+        RuleFor(command => command.PurchaseToBaseFactor).GreaterThan(0);
+        RuleFor(command => command.SalesToBaseFactor).GreaterThan(0);
+        RuleFor(command => command.QuantityPrecision).InclusiveBetween(0, 6);
     }
 }
 
@@ -23,6 +26,9 @@ public sealed class UpdateItemCommandValidator : AbstractValidator<UpdateItemCom
         RuleFor(command => command.Description).MaximumLength(500);
         RuleFor(command => command.Rate).GreaterThan(0);
         RuleFor(command => command.SupplierId).GreaterThan(0).When(command => command.SupplierId.HasValue);
+        RuleFor(command => command.PurchaseToBaseFactor).GreaterThan(0);
+        RuleFor(command => command.SalesToBaseFactor).GreaterThan(0);
+        RuleFor(command => command.QuantityPrecision).InclusiveBetween(0, 6);
     }
 }
 
