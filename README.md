@@ -11,8 +11,8 @@ A modern inventory management web application for tracking items, stock levels, 
 
 ## Documentation
 
-- **🌐 [Live docs site](https://nirzaf.github.io/Stockpile/)** — published via GitHub Pages from the `docs/` folder. The recommended place for end users.
-- **[User Guide](USER_GUIDE.md)** — for the people who will *use* the application day-to-day (login, items, stock operations, purchase orders, troubleshooting).
+- **🌐 [Live docs site](https://nirzaf.github.io/stockpile/)** — published via GitHub Pages from the `docs/` folder. The recommended place for end users.
+- **[User Guide](docs/USER_GUIDE.md)** — for the people who will *use* the application day-to-day (login, items, stock operations, purchase orders, troubleshooting).
 - **README.md** (this file) — for developers and operators: installation, architecture, API, deployment.
 
 > To enable the GitHub Pages site on your fork: **Settings → Pages → Source: `master` (or `main`) branch, `/docs` folder → Save**. The site is built automatically with Jekyll.
@@ -21,7 +21,7 @@ A modern inventory management web application for tracking items, stock levels, 
 
 | Layer | Technology |
 |-------|-----------|
-| Runtime | .NET 10, ASP.NET Core MVC |
+| Runtime | .NET SDK 10.0.300, ASP.NET Core MVC |
 | Database | PostgreSQL 16 + Entity Framework Core 10 |
 | UI | MudBlazor 9 (responsive, no Bootstrap) |
 | CQRS | MediatR 12 |
@@ -59,7 +59,7 @@ it is not part of the supported build or deployment path.
 - URL segment and header-based versioning
 
 **AI-Powered Insights**
-- Demand forecasting per item using ML.NET SSA time-series analysis
+- Demand forecasting per item using the configured implementation (managed moving average by default; ML.NET SSA is an explicit opt-in)
 - Anomaly detection for unusual stock movements (spike/drop detection)
 - Runs locally — zero cloud dependencies
 
@@ -79,8 +79,8 @@ it is not part of the supported build or deployment path.
 ### Docker (recommended)
 
 ```bash
-git clone https://github.com/nirzaf/Stockpile.git
-cd InventoryManagementSystem
+git clone https://github.com/nirzaf/stockpile.git
+cd stockpile
 cp .env.example .env        # edit credentials if desired
 docker compose up -d        # starts app + PostgreSQL after required secrets are set
 ```
@@ -93,7 +93,7 @@ Set `DB_PASSWORD`, `ADMIN_EMAIL`, `ADMIN_PASSWORD`, and `JWT_SECRET` in `.env` b
 
 ### Manual Setup
 
-**Prerequisites:** .NET 10 SDK, PostgreSQL 16+
+**Prerequisites:** .NET SDK 10.0.300 exactly (the repository pins this in `global.json`), PostgreSQL 16+, and Docker Desktop in Linux-container mode when running the PostgreSQL integration phase.
 
 ```bash
 # 1. Create the database
@@ -103,12 +103,13 @@ createdb InventoryDB
 export ConnectionStrings__DefaultConnection="Host=localhost;Database=InventoryDB;Username=postgres;Password=$DB_PASSWORD"
 export JwtSettings__Secret="$JWT_SECRET"
 
-# 3. Run migrations and start
+# 3. Apply migrations and start the development application
+dotnet ef database update --project InventoryManagementSystem.Infrastructure --startup-project InventoryManagementSystem.Web
 cd InventoryManagementSystem.Web
 dotnet run
 ```
 
-Open **https://localhost:5001** in your browser.
+Open the HTTP URL printed by `dotnet run` (this repository's launch profile uses `http://localhost:5069`; HTTPS is available only when the local development certificate is configured).
 
 For local Development runs, configure the database connection, JWT secret, and optional seed administrator with ASP.NET User Secrets instead of committing them:
 
@@ -194,6 +195,23 @@ catch
 The normal `SaveChangesAsync` path remains available for single-operation service methods.
 
 ## Deployment
+
+The Docker Compose path is the supported production-shaped path. It is deliberately
+separate from the development path above and requires explicit non-empty secrets:
+
+```bash
+cp .env.example .env
+# Edit .env: DB_PASSWORD, JWT_SECRET, ADMIN_EMAIL, and ADMIN_PASSWORD.
+docker compose config
+docker compose --profile migrations run --rm migrator
+docker compose up -d --wait
+```
+
+The migrator applies the committed schema to the disposable/target database before
+the application starts. The development-only seed path is not a production
+provisioning mechanism; never commit the administrator password or data-protection
+keys. Keep the `dataprotection` volume across restarts so existing sessions and
+protected values retain their documented behavior.
 
 ```bash
 # Publish
