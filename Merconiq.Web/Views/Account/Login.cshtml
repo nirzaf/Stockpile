@@ -1,0 +1,37 @@
+@{
+    ViewData["Title"] = "Login";
+    Layout = "_SimpleLayout";
+}
+
+<div style="display:flex; justify-content:center; align-items:center; min-height:80vh;">
+    <MudPaper Elevation="3" Class="pa-8" Style="max-width:400px; width:100%;">
+        <MudText Typo="Typo.h4" Align="Align.Center" Class="mb-2">Merconiq</MudText>
+        <MudText Typo="Typo.h6" Align="Align.Center" Color="Color.Secondary" Class="mb-6">Sign In</MudText>
+
+        @if (!ViewContext.ModelState.IsValid)
+        {
+            <MudAlert Severity="Severity.Error" Class="mb-4" Dense="true">
+                @foreach (var error in ViewData.ModelState.Values.SelectMany(v => v.Errors))
+                {
+                    <div>@error.ErrorMessage</div>
+                }
+            </MudAlert>
+        }
+
+        <form method="post" asp-action="Login" asp-route-returnUrl="@ViewData["ReturnUrl"]">
+            <div class="mb-3">
+                <label class="mud-input-label mud-input-label-text">Email</label>
+                <input type="email" name="email" class="mud-input mud-input-outlined mud-input-text"
+                       required placeholder="you@example.com" style="width:100%; padding:12px;" />
+            </div>
+            <div class="mb-4">
+                <label class="mud-input-label mud-input-label-text">Password</label>
+                <input type="password" name="password" class="mud-input mud-input-outlined mud-input-text"
+                       required placeholder="Enter your password" style="width:100%; padding:12px;" />
+            </div>
+            <MudButton ButtonType="ButtonType.Submit" Variant="Variant.Filled" Color="Color.Primary" FullWidth="true">
+                Sign In
+            </MudButton>
+        </form>
+    </MudPaper>
+</div>

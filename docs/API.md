@@ -1,11 +1,208 @@
-# Public API conventions
+# Public API contract
 
-Stockpile exposes its public resource HTTP API through versioned MVC controllers at
+Merconiq exposes its public resource HTTP API through versioned MVC controllers at
 `/api/v1`. Resource routes, authentication, validation, response envelopes, rate
 limits, and OpenAPI metadata are defined on the controllers. Auth, webhook, and AI
 operations remain minimal endpoints because they are not duplicate resource routes.
 
-The versioning package is configured with API Explorer support so generated OpenAPI
-documents can describe versioned endpoints and substitute the URL version segment.
-New resource endpoints should be added to the appropriate versioned controller instead
-of introducing a second route implementation for the same resource.
+This document describes the HTTP contract implemented by Merconiq's current
+`/api/v1` endpoints. It is intentionally limited to behavior present in the
+application source; it does not describe a separate gateway, tenant header, or
+external identity service.
+
+## Versioning and transport
+
+Resource endpoints are versioned MVC controllers under `/api/v1`. The API
+versioning configuration also accepts `x-api-version`; the URL form is the
+canonical form used by the routes and examples below. Responses use JSON.
+
+The request host is part of the security boundary. The application resolves a
+tenant before authentication by looking up `Request.Host.Host` in
+`Tenancy:HostTenants`. Host matching is case-insensitive and ignores a trailing
+dot. The mapped tenant identifier must be 64 characters or fewer and contain
+only letters, digits, `-`, `_`, or `.`. A host that is not in the configured
+allow-list is rejected with `400` before an endpoint runs.
+
+There is no supported `Tenant-Id`, `X-Tenant-Id`, or similar request header.
+Forwarded host information is not treated as a tenant selector by the resolver;
+the trusted edge must route the request to a configured host. The default
+configuration maps `localhost`, `127.0.0.1`, and `::1` to a tenant; deployments
+must replace or extend those bindings for their own hosts.
+
+## Authentication
+
+### Obtain a bearer token
+
+`POST /api/v1/auth/token` is the only anonymous API endpoint. Send the user name
+or email and password in the host-bound tenant:
+
+```http
+POST /api/v1/auth/token
+Host: tenant.example
+Content-Type: application/json
+
+{"username":"user@example.com","password":"Password1"}
+```
+
+A successful response is an unwrapped object containing a JWT and its expiry:
+
+```json
+{"token":"<jwt>","expires":"<utc timestamp>"}
+```
+
+The token is valid for two hours. Its issuer, audience, and signing key come
+from `JwtSettings`; the secret must be at least 32 bytes. The token contains the
+user name, user identifier, `tenant_id`, and distinct role claims. A user with
+no stored roles receives the `Staff` role fallback.
+
+Use the token on all other API calls:
+
+```http
+Authorization: Bearer <jwt>
+```
+
+API authorization explicitly uses the JWT bearer scheme. The `tenant_id` claim
+must equal the tenant resolved from the request host. A missing, invalid,
+expired, or wrong-tenant token receives `401 Unauthorized`. An authenticated
+token that lacks an endpoint's required role receives `403 Forbidden`.
+
+The application also has cookie authentication for the MVC UI. API callers
+should use bearer tokens; cookie login paths and redirects are not part of the
+API contract.
+
+## Roles and routes
+
+All routes below except token issuance require the `Api` policy (an authenticated
+JWT). Resource reads do not add a role restriction, so any valid API role can
+read them. `Admin`, `Manager`, and `Staff` are the roles accepted by stock
+mutations. Webhook administration is restricted to `Admin` and `Manager`.
+
+| Method | Route | Authorization | Success |
+| --- | --- | --- | --- |
+| POST | `/api/v1/auth/token` | Anonymous; host still selects the tenant | `200` |
+| GET | `/api/v1/items?page=1&pageSize=25` | Any API JWT | `200` |
+| GET | `/api/v1/items/{id}` | Any API JWT | `200` or `404` |
+| GET | `/api/v1/items/search?q=...` | Any API JWT | `200` |
+| POST | `/api/v1/items` | Any API JWT | `201` |
+| PUT | `/api/v1/items/{id}` | Any API JWT | `204` |
+| DELETE | `/api/v1/items/{id}` | Any API JWT | `204` |
+| GET | `/api/v1/stock/in-hand` | Any API JWT | `200` |
+| GET | `/api/v1/stock/in-hand/{itemId}/{locationId}` | Any API JWT | `200` or `404` |
+| GET | `/api/v1/stock/transactions` | Any API JWT | `200` |
+| POST | `/api/v1/stock/receive` | `Admin`, `Manager`, or `Staff` | `204` |
+| POST | `/api/v1/stock/transfer` | `Admin`, `Manager`, or `Staff` | `204` |
+| POST | `/api/v1/stock/sell` | `Admin`, `Manager`, or `Staff` | `204` |
+| GET | `/api/v1/webhooks` | `Admin` or `Manager` | `200` |
+| POST | `/api/v1/webhooks` | `Admin` or `Manager` | `200` |
+| PUT | `/api/v1/webhooks/{id}` | `Admin` or `Manager` | `200` or `404` |
+| DELETE | `/api/v1/webhooks/{id}` | `Admin` or `Manager` | `204` or `404` |
+| GET | `/api/v1/forecast/{itemId}` | Any API JWT; AI limit | `200` |
+| GET | `/api/v1/forecast` | Any API JWT; AI limit | `200` |
+| GET | `/api/v1/anomalies` | Any API JWT; AI limit | `200` |
+
+The item list validates `page >= 1` and `1 <= pageSize <= 100`. Item update
+also requires the route ID and body ID to match. Request validation failures
+are `400` responses.
+
+## Response envelopes
+
+Successful resource responses normally use `ApiResponse<T>`:
+
+```json
+{"success":true,"data":{},"errorMessage":null,"errors":null}
+```
+
+Application-level failures that use the same type have this shape:
+
+```json
+{"success":false,"data":null,"errorMessage":"...","errors":["..."]}
+```
+
+The following endpoints intentionally do not use that envelope:
+
+- token issuance returns `{token, expires}`;
+- `204 No Content` operations have an empty body;
+- unmapped hosts return the tenant middleware's `{title, detail, status}` body;
+- API exceptions and validation failures use RFC 7807 `ProblemDetails` or
+  `ValidationProblemDetails` (`application/problem+json`), with `title`,
+  `detail`, `status`, and `instance` as applicable;
+- authentication challenges and rate-limit rejections are framework responses
+  and should be handled by status code rather than by assuming an application
+  envelope.
+
+## Status codes
+
+| Status | Meaning in this API |
+| --- | --- |
+| `200` | Successful read, token issuance, webhook mutation, forecast, or anomaly response |
+| `201` | Item created; the `Location` header identifies the item resource |
+| `204` | Successful stock mutation, item update/delete, or webhook delete; no body |
+| `400` | Unmapped host, invalid query/body, validation failure, route/body ID mismatch, or an `Idempotency-Key` longer than 200 characters |
+| `401` | Missing/invalid/expired bearer token, failed credentials, or token tenant mismatch |
+| `403` | Authenticated caller lacks the required role |
+| `404` | Requested item, stock balance, or webhook subscription does not exist |
+| `409` | Business conflict or reuse of an idempotency key with a different request |
+| `429` | Fixed-window rate limit rejected the request after the configured queue is full |
+| `500` | Unexpected API exception; the server logs the exception and returns a stable problem response |
+
+## Rate limits
+
+The normal `Api` policy is a fixed window of 100 permits per minute with a
+queue of 10. Its partition is `tenant-id:sha256(client-discriminator)`, so the
+same client is isolated between tenants. The client discriminator is selected
+from the authenticated name identifier, `client_id`, the existing
+`X-Client-Id` header, the remote IP address, or `anonymous`, in that order.
+`X-Client-Id` identifies a client for partitioning; it never selects a tenant.
+
+AI routes use the explicit `Ai` policy: 10 permits per minute with a queue of
+2. A rejected request receives `429 Too Many Requests`; the application does
+not configure a `Retry-After` header.
+
+## Idempotent stock mutations
+
+`POST /api/v1/stock/receive`, `/transfer`, and `/sell` accept the existing
+`Idempotency-Key` request header. It is optional and must be 200 characters or
+fewer. Without it, the command follows the normal one-shot path.
+
+With a key, the durable coordinator stores a claim for the current tenant,
+HTTP method/path scope, key, and SHA-256 hash of the serialized command. The
+claim is retained for one hour and has a two-minute lease.
+
+```http
+POST /api/v1/stock/receive
+Host: tenant.example
+Authorization: Bearer <jwt>
+Idempotency-Key: receive-2026-09-16-001
+Content-Type: application/json
+
+{"itemId":42,"locationId":7,"quantity":10,"notes":"delivery"}
+```
+
+The state transitions are:
+
+- The first request claims the key, executes the stock operation and completion
+  record in the same transaction, and returns `204`.
+- A later request with the same tenant, route, key, and request body is a
+  replay. The stored operation is not executed again and the endpoint returns
+  `204` with no body.
+- Reusing a key with a different command hash is a conflict and returns `409`
+  as an API `ProblemDetails` response. Use a new key for a different command.
+- A failed operation is recorded as failed and may be retried with the same
+  key and hash. Business changes and the successful completion record are not
+  committed from the failed attempt.
+- While another request owns a live lease, the caller waits for the claim and
+  its cancellation token is honored. The wait is bounded by 30 seconds; a
+  cancellation aborts the wait before the operation runs.
+- Once the operation has been claimed, transaction finalization uses an
+  independent non-cancelable token so an already-started operation can finish
+  and record completion. The transfer and sell command delegates still receive
+  the request cancellation token; if their operation observes cancellation and
+  fails, the failed claim can be retried.
+
+Existing executable coverage for this contract is kept in
+`Merconiq.Tests/Web/Services/IdempotencyKeyStoreTests.cs`,
+`Merconiq.Tests/Integration/TenantAuthenticationTests.cs`,
+and `Merconiq.Tests/Web/Services/RateLimitPartitionKeyTests.cs`.
+The integration test factory uses an in-memory database and synthetic signed
+JWTs; it does not represent an external identity provider or a production rate
+limit measurement.
