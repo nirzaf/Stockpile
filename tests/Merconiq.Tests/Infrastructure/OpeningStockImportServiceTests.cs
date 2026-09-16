@@ -102,6 +102,45 @@ public sealed class OpeningStockImportServiceTests
         result.Rows.Single().Error.Should().Contain("not found in the current tenant");
     }
 
+    [Fact]
+    public async Task PreviewAsync_ResolvesCaseVariantExternalIdsAsDistinctTenantItems()
+    {
+        await using var context = CreateContext();
+        context.Items.AddRange(
+            new Item
+            {
+                TenantId = "test-tenant",
+                ExternalId = "Part-A",
+                ItemCode = "PART-A-UPPER",
+                Description = "Uppercase identifier",
+                IsActive = true
+            },
+            new Item
+            {
+                TenantId = "test-tenant",
+                ExternalId = "part-a",
+                ItemCode = "PART-A-LOWER",
+                Description = "Lowercase identifier",
+                IsActive = true
+            });
+        context.Locations.Add(new Location { TenantId = "test-tenant", Id = 7, Name = "Main" });
+        await context.SaveChangesAsync();
+
+        var csv = "external_reference,item_external_id,location_id,quantity,unit_cost\n" +
+                  "open-upper,Part-A,7,10,1\n" +
+                  "open-lower,part-a,7,5,0\n" +
+                  "open-nonmatch,PART-A,7,1,1";
+
+        var result = await CreateService(context).PreviewAsync(new(csv));
+
+        result.Valid.Should().Be(2);
+        result.Rejected.Should().Be(1);
+        result.Rows[0].Status.Should().Be("valid");
+        result.Rows[1].Status.Should().Be("valid");
+        result.Rows[2].Status.Should().Be("rejected");
+        result.Rows[2].Error.Should().Contain("not found in the current tenant");
+    }
+
     private static OpeningStockImportService CreateService(InventoryDbContext context) =>
         new(context, new TestTenantContext("test-tenant"));
 
