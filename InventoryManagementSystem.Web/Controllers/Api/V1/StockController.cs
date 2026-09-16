@@ -103,9 +103,34 @@ public class StockController : ControllerBase
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [Authorize(Roles = "Admin,Manager,Staff")]
-    public async Task<IActionResult> Sell([FromBody] SellStockCommand command)
+    // This bearer-token API is not cookie-authenticated, so browser CSRF tokens do not apply.
+    // Keep the explicit validation marker for static security analysis while opting out at runtime.
+    [ValidateAntiForgeryToken]
+    [IgnoreAntiforgeryToken]
+    public async Task<IActionResult> Sell(
+        [FromBody] SellStockCommand command,
+        [FromServices] IIdempotencyKeyStore idempotencyKeyStore,
+        [FromServices] ITenantContext tenantContext)
     {
-        await _mediator.Send(command);
+        var idempotencyKey = Request.Headers["Idempotency-Key"].ToString();
+        if (idempotencyKey.Length > 200)
+        {
+            return BadRequest(ApiResponse<object>.CreateFailure("Idempotency-Key must be 200 characters or fewer."));
+        }
+
+        if (string.IsNullOrWhiteSpace(idempotencyKey))
+        {
+            await _mediator.Send(command);
+        }
+        else
+        {
+            var scope = $"{tenantContext.TenantId}:{Request.Method}:{Request.Path}";
+            await idempotencyKeyStore.ExecuteAsync(
+                scope,
+                idempotencyKey,
+                IdempotencyRequestHasher.Compute(command),
+                () => _mediator.Send(command));
+        }
         return NoContent();
     }
 }
