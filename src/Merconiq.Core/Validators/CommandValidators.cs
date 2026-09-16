@@ -58,6 +58,10 @@ public sealed class ReceiveStockCommandValidator : AbstractValidator<ReceiveStoc
         RuleFor(command => command.Quantity).GreaterThan(0);
         RuleFor(command => command.Notes).MaximumLength(500);
         RuleFor(command => command.BatchNumber).MaximumLength(100);
+        RuleFor(command => command.UnitCost)
+            .GreaterThanOrEqualTo(0)
+            .PrecisionScale(18, 6, true)
+            .When(command => command.UnitCost.HasValue);
     }
 }
 

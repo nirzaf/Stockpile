@@ -22,6 +22,8 @@ public class StockService : IStockService
     private readonly IWebhookDispatcher _webhookDispatcher;
     private readonly ITenantContext _tenantContext;
     private readonly ILogger<StockService> _logger;
+    private readonly IRepository<StockValuationBucket>? _valuationBucketRepo;
+    private readonly IRepository<StockValuationEntry>? _valuationEntryRepo;
 
     public StockService(
         IRepository<StockInHand> stockRepo,
@@ -32,7 +34,9 @@ public class StockService : IStockService
         IUnitOfWork unitOfWork,
         IWebhookDispatcher webhookDispatcher,
         ITenantContext tenantContext,
-        ILogger<StockService> logger)
+        ILogger<StockService> logger,
+        IRepository<StockValuationBucket>? valuationBucketRepo = null,
+        IRepository<StockValuationEntry>? valuationEntryRepo = null)
     {
         _stockRepo = stockRepo;
         _txRepo = txRepo;
@@ -43,6 +47,8 @@ public class StockService : IStockService
         _webhookDispatcher = webhookDispatcher;
         _tenantContext = tenantContext;
         _logger = logger;
+        _valuationBucketRepo = valuationBucketRepo;
+        _valuationEntryRepo = valuationEntryRepo;
     }
 
     /// <inheritdoc />
@@ -174,9 +180,19 @@ public class StockService : IStockService
     }
 
     /// <inheritdoc />
-    public async Task ReceiveStockAsync(int itemId, int locationId, int quantity, string? notes, string? batchNumber = null, DateTime? expiryDate = null)
+    public async Task ReceiveStockAsync(
+        int itemId,
+        int locationId,
+        int quantity,
+        string? notes,
+        string? batchNumber = null,
+        DateTime? expiryDate = null,
+        decimal? unitCost = null)
     {
         if (quantity <= 0) throw new ArgumentException("Quantity must be positive");
+        if (unitCost is < 0) throw new ArgumentException("Unit cost must be non-negative");
+        if (unitCost.HasValue && (batchNumber is not null || expiryDate.HasValue))
+            throw new InvalidOperationException("Valuation is scoped to unbatched stock.");
 
         StockTransaction? transaction = null;
         await ExecuteWithRetryAsync(itemId, async () =>
@@ -213,6 +229,11 @@ public class StockService : IStockService
                 Notes = notes
             };
             await _txRepo.AddAsync(transaction);
+
+            if (unitCost is decimal incomingCost)
+            {
+                await ApplyReceiptValuationAsync(itemId, locationId, quantity, incomingCost, transaction);
+            }
 
             await _webhookDispatcher.EnqueueAsync(WebhookEventFactory.Create(_tenantContext, "Stock.Received",
                 new { ItemId = itemId, LocationId = locationId, Quantity = quantity, Notes = notes, BatchNumber = batchNumber, ExpiryDate = expiryDate }));
@@ -310,6 +331,11 @@ public class StockService : IStockService
             };
             await _txRepo.AddAsync(transaction);
 
+            if (batchNumber is null && expiryDate is null)
+            {
+                await ApplySaleValuationAsync(itemId, locationId, quantity, transaction);
+            }
+
             await _webhookDispatcher.EnqueueAsync(WebhookEventFactory.Create(_tenantContext, "Stock.Sold",
                 new { ItemId = itemId, LocationId = locationId, Quantity = quantity, Notes = notes, BatchNumber = batchNumber, ExpiryDate = expiryDate }));
             await _unitOfWork.SaveChangesAsync();
@@ -317,6 +343,105 @@ public class StockService : IStockService
 
         _logger.LogInformation("Sold {Qty} of item {ItemId} from location {LocId}", quantity, itemId, locationId);
     }
+
+    private async Task ApplyReceiptValuationAsync(
+        int itemId,
+        int locationId,
+        int quantity,
+        decimal unitCost,
+        StockTransaction source)
+    {
+        EnsureValuationRepositories();
+        var existing = (await _valuationBucketRepo!.FindAsync(bucket =>
+            bucket.ItemId == itemId && bucket.LocationId == locationId)).FirstOrDefault();
+        var totalValue = Round(quantity * unitCost);
+
+        if (existing is null)
+        {
+            await _valuationBucketRepo.AddAsync(new StockValuationBucket
+            {
+                ItemId = itemId,
+                LocationId = locationId,
+                Quantity = quantity,
+                Value = totalValue
+            });
+        }
+        else
+        {
+            var bucket = await _valuationBucketRepo.GetByIdAsync(existing.Id)
+                ?? throw new InvalidOperationException("Valuation bucket disappeared during posting.");
+            bucket.Quantity = checked(bucket.Quantity + quantity);
+            bucket.Value = Round(bucket.Value + totalValue);
+            await _valuationBucketRepo.UpdateAsync(bucket);
+        }
+
+        await _valuationEntryRepo!.AddAsync(new StockValuationEntry
+        {
+            StockTransaction = source,
+            ItemId = itemId,
+            LocationId = locationId,
+            EntryType = StockValuationEntryType.Receipt,
+            Quantity = quantity,
+            UnitCost = Round(unitCost),
+            TotalValue = totalValue
+        });
+    }
+
+    private async Task ApplySaleValuationAsync(
+        int itemId,
+        int locationId,
+        int quantity,
+        StockTransaction source)
+    {
+        // Keep legacy quantity-only callers working when the service is used without
+        // valuation persistence (for example, isolated unit tests and old hosts).
+        if (_valuationBucketRepo is null || _valuationEntryRepo is null)
+        {
+            return;
+        }
+
+        var existing = (await _valuationBucketRepo!.FindAsync(bucket =>
+            bucket.ItemId == itemId && bucket.LocationId == locationId)).FirstOrDefault();
+        if (existing is null || existing.Quantity == 0)
+        {
+            return;
+        }
+
+        if (existing.Quantity < quantity)
+        {
+            throw new InvalidOperationException("Valued stock is insufficient for sale.");
+        }
+
+        var bucket = await _valuationBucketRepo.GetByIdAsync(existing.Id)
+            ?? throw new InvalidOperationException("Valuation bucket disappeared during posting.");
+        var totalValue = bucket.Quantity == quantity
+            ? bucket.Value
+            : Round(bucket.Value * quantity / bucket.Quantity);
+        bucket.Quantity -= quantity;
+        bucket.Value = bucket.Quantity == 0 ? 0m : Round(bucket.Value - totalValue);
+        await _valuationBucketRepo.UpdateAsync(bucket);
+
+        await _valuationEntryRepo!.AddAsync(new StockValuationEntry
+        {
+            StockTransaction = source,
+            ItemId = itemId,
+            LocationId = locationId,
+            EntryType = StockValuationEntryType.Sale,
+            Quantity = quantity,
+            UnitCost = Round(totalValue / quantity),
+            TotalValue = totalValue
+        });
+    }
+
+    private void EnsureValuationRepositories()
+    {
+        if (_valuationBucketRepo is null || _valuationEntryRepo is null)
+        {
+            throw new InvalidOperationException("Stock valuation persistence is not configured.");
+        }
+    }
+
+    private static decimal Round(decimal value) => decimal.Round(value, 6, MidpointRounding.AwayFromZero);
 
     private async Task CheckLowStockAsync(Item item)
     {

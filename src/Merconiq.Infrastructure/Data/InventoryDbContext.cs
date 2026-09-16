@@ -36,6 +36,12 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
     /// <summary>Current stock-in-hand per item per location.</summary>
     public DbSet<StockInHand> StockInHand { get; set; } = null!;
 
+    /// <summary>Current weighted-average stock valuation per item and location.</summary>
+    public DbSet<StockValuationBucket> StockValuationBuckets { get; set; } = null!;
+
+    /// <summary>Append-only valuation postings linked to stock movements.</summary>
+    public DbSet<StockValuationEntry> StockValuationEntries { get; set; } = null!;
+
     /// <summary>Storage locations.</summary>
     public DbSet<Location> Locations { get; set; } = null!;
 
@@ -391,6 +397,52 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
                   .HasColumnType("xid")
                   .ValueGeneratedOnAddOrUpdate()
                   .IsConcurrencyToken();
+        });
+
+        modelBuilder.Entity<StockValuationBucket>(entity =>
+        {
+            entity.HasQueryFilter(e => e.TenantId == CurrentTenantId);
+            entity.Property(e => e.TenantId).HasMaxLength(64).IsRequired();
+            entity.Property(e => e.Value).HasColumnType("decimal(18,6)");
+            entity.HasIndex(e => new { e.TenantId, e.ItemId, e.LocationId }).IsUnique();
+            entity.HasOne(e => e.Item)
+                .WithMany()
+                .HasForeignKey(e => e.ItemId)
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(e => e.Location)
+                .WithMany()
+                .HasForeignKey(e => new { e.LocationId, e.TenantId })
+                .HasPrincipalKey(e => new { e.Id, e.TenantId })
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.Property(e => e.Version)
+                .HasColumnName("xmin")
+                .HasColumnType("xid")
+                .ValueGeneratedOnAddOrUpdate()
+                .IsConcurrencyToken();
+        });
+
+        modelBuilder.Entity<StockValuationEntry>(entity =>
+        {
+            entity.HasQueryFilter(e => e.TenantId == CurrentTenantId);
+            entity.Property(e => e.TenantId).HasMaxLength(64).IsRequired();
+            entity.Property(e => e.EntryType).HasConversion<string>().HasMaxLength(32).IsRequired();
+            entity.Property(e => e.UnitCost).HasColumnType("decimal(18,6)");
+            entity.Property(e => e.TotalValue).HasColumnType("decimal(18,6)");
+            entity.HasIndex(e => new { e.TenantId, e.ItemId, e.LocationId });
+            entity.HasIndex(e => new { e.TenantId, e.StockTransactionId }).IsUnique();
+            entity.HasOne(e => e.StockTransaction)
+                .WithMany()
+                .HasForeignKey(e => e.StockTransactionId)
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(e => e.Item)
+                .WithMany()
+                .HasForeignKey(e => e.ItemId)
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(e => e.Location)
+                .WithMany()
+                .HasForeignKey(e => new { e.LocationId, e.TenantId })
+                .HasPrincipalKey(e => new { e.Id, e.TenantId })
+                .OnDelete(DeleteBehavior.Restrict);
         });
 
         modelBuilder.Entity<PurchaseOrder>(entity =>

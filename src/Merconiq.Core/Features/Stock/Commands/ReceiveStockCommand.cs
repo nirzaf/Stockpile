@@ -8,4 +8,5 @@ public record ReceiveStockCommand(
     int Quantity,
     string? Notes,
     string? BatchNumber = null,
-    DateTime? ExpiryDate = null) : IRequest;
+    DateTime? ExpiryDate = null,
+    decimal? UnitCost = null) : IRequest;

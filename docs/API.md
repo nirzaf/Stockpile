@@ -175,8 +175,13 @@ Authorization: Bearer <jwt>
 Idempotency-Key: receive-2026-09-16-001
 Content-Type: application/json
 
-{"itemId":42,"locationId":7,"quantity":10,"notes":"delivery"}
+{"itemId":42,"locationId":7,"quantity":10,"unitCost":12.50,"notes":"delivery"}
 ```
+
+`unitCost` is optional and is the acquisition cost per base unit. When present,
+the receipt contributes to the tenant/item/location moving-average valuation and
+must be non-negative with at most six decimal places. Costed receipts are
+unbatched in this release; omitted `unitCost` preserves quantity-only behavior.
 
 The state transitions are:
 
