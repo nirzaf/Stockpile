@@ -41,7 +41,10 @@ command -v gh >/dev/null 2>&1 || die 'gh CLI is required'
 
 for ((attempt = 1; attempt <= MAX_ATTEMPTS; attempt++)); do
   all_successful=true
-  for workflow in CI Security; do
+  # Use workflow filenames rather than display names. GitHub may expose a
+  # workflow's configured name as its path (for example, security.yml) when
+  # the workflow was registered or updated, so display-name lookup is brittle.
+  for workflow in ci.yml security.yml; do
     runs="$(gh run list --repo "$REPOSITORY" --workflow "$workflow" --commit "$SHA" \
       --limit 20 --json status,conclusion 2>/dev/null)" \
       || die "could not inspect $workflow runs for the candidate"
