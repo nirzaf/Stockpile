@@ -3,12 +3,15 @@
 @using Microsoft.AspNetCore.Components.Authorization
 @using Microsoft.AspNetCore.Identity
 @using Microsoft.EntityFrameworkCore
+@using Merconiq.Infrastructure.Data
 @attribute [Authorize(Roles = "Admin")]
 @inject UserManager<ApplicationUser> UserManager
 @inject RoleManager<IdentityRole> RoleManager
 @inject AuthenticationStateProvider AuthenticationStateProvider
+@inject InventoryDbContext DbContext
 @inject ISnackbar Snackbar
 @inject IDialogService DialogService
+@inject ILogger<UserIndex> Logger
 
 <PageTitle>User Management</PageTitle>
 
@@ -144,25 +147,51 @@
             return;
         }
 
-        var stampResult = await UserManager.UpdateSecurityStampAsync(row.User);
-        if (!stampResult.Succeeded)
+        await using var transaction = DbContext.Database.IsRelational()
+            ? await DbContext.Database.BeginTransactionAsync()
+            : null;
+        try
         {
-            Snackbar.Add(string.Join(" ", stampResult.Errors.Select(error => error.Description)), Severity.Error);
-            return;
+            var currentRoles = await UserManager.GetRolesAsync(row.User);
+            var removeResult = await UserManager.RemoveFromRolesAsync(row.User, currentRoles);
+            if (!removeResult.Succeeded)
+            {
+                if (transaction is not null)
+                    await transaction.RollbackAsync();
+                Snackbar.Add(string.Join(" ", removeResult.Errors.Select(error => error.Description)), Severity.Error);
+                return;
+            }
+
+            var addResult = await UserManager.AddToRoleAsync(row.User, row.Role);
+            if (!addResult.Succeeded)
+            {
+                if (transaction is not null)
+                    await transaction.RollbackAsync();
+                Snackbar.Add(string.Join(" ", addResult.Errors.Select(error => error.Description)), Severity.Error);
+                return;
+            }
+
+            var stampResult = await UserManager.UpdateSecurityStampAsync(row.User);
+            if (!stampResult.Succeeded)
+            {
+                if (transaction is not null)
+                    await transaction.RollbackAsync();
+                Snackbar.Add(string.Join(" ", stampResult.Errors.Select(error => error.Description)), Severity.Error);
+                return;
+            }
+
+            if (transaction is not null)
+                await transaction.CommitAsync();
+            Snackbar.Add("Role updated successfully.", Severity.Success);
+        }
+        catch (Exception exception)
+        {
+            if (transaction is not null)
+                await transaction.RollbackAsync();
+            Snackbar.Add("Unable to update the role. Please retry.", Severity.Error);
+            Logger.LogError(exception, "Unable to update role {Role} for user {UserId}.", row.Role, row.User.Id);
         }
 
-        var currentRoles = await UserManager.GetRolesAsync(row.User);
-        var removeResult = await UserManager.RemoveFromRolesAsync(row.User, currentRoles);
-        if (!removeResult.Succeeded)
-        {
-            Snackbar.Add(string.Join(" ", removeResult.Errors.Select(error => error.Description)), Severity.Error);
-            return;
-        }
-
-        var addResult = await UserManager.AddToRoleAsync(row.User, row.Role);
-        Snackbar.Add(addResult.Succeeded ? "Role updated successfully." :
-            string.Join(" ", addResult.Errors.Select(error => error.Description)),
-            addResult.Succeeded ? Severity.Success : Severity.Error);
         await LoadUsers();
     }
 

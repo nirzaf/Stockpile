@@ -4,9 +4,11 @@ using FluentAssertions;
 using Merconiq.Core.Entities;
 using Merconiq.Core.Interfaces;
 using Merconiq.Web.Security;
+using Merconiq.Web.Tenancy;
 using Microsoft.AspNetCore.Components.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 
 namespace Merconiq.Tests.Integration;
 
@@ -133,11 +135,37 @@ public class TenantAuthenticationTests : IClassFixture<CookieAuthenticationWebAp
         (await authorization.IsSessionCurrentAsync(principal)).Should().BeTrue();
         (await authorization.CanEditOrganizationAsync(principal)).Should().BeTrue();
 
-        (await userManager.RemoveFromRoleAsync(storedUser!, "Manager")).Succeeded.Should().BeTrue();
+        var differentTenantContext = new TenantContext();
+        differentTenantContext.SetTenant("tenant-b");
+        var differentTenantAuthorization = new CurrentUserAuthorization(
+            differentTenantContext,
+            services.GetRequiredService<IServiceScopeFactory>(),
+            services.GetRequiredService<IOptions<IdentityOptions>>());
+        (await differentTenantAuthorization.IsSessionCurrentAsync(principal)).Should().BeFalse();
+
+        using (var roleChangeScope = _factory.Services.CreateScope())
+        {
+            var roleChangeServices = roleChangeScope.ServiceProvider;
+            roleChangeServices.GetRequiredService<ITenantContext>().SetTenant("test-tenant");
+            var roleChangeUserManager = roleChangeServices.GetRequiredService<UserManager<ApplicationUser>>();
+            var roleChangeUser = await roleChangeUserManager.FindByIdAsync(user.Id);
+            roleChangeUser.Should().NotBeNull();
+            (await roleChangeUserManager.RemoveFromRoleAsync(roleChangeUser!, "Manager")).Succeeded.Should().BeTrue();
+        }
+
         (await authorization.IsSessionCurrentAsync(principal)).Should().BeTrue();
         (await authorization.CanEditOrganizationAsync(principal)).Should().BeFalse();
 
-        (await userManager.UpdateSecurityStampAsync(storedUser!)).Succeeded.Should().BeTrue();
+        using (var stampChangeScope = _factory.Services.CreateScope())
+        {
+            var stampChangeServices = stampChangeScope.ServiceProvider;
+            stampChangeServices.GetRequiredService<ITenantContext>().SetTenant("test-tenant");
+            var stampChangeUserManager = stampChangeServices.GetRequiredService<UserManager<ApplicationUser>>();
+            var stampChangeUser = await stampChangeUserManager.FindByIdAsync(user.Id);
+            stampChangeUser.Should().NotBeNull();
+            (await stampChangeUserManager.UpdateSecurityStampAsync(stampChangeUser!)).Succeeded.Should().BeTrue();
+        }
+
         (await authorization.IsSessionCurrentAsync(principal)).Should().BeFalse();
 
         services.GetRequiredService<AuthenticationStateProvider>()

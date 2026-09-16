@@ -208,18 +208,18 @@ else
             return;
         }
 
-        var authenticationState = await AuthenticationStateProvider.GetAuthenticationStateAsync();
-        if (!await CurrentUserAuthorization.CanEditOrganizationAsync(authenticationState.User))
-        {
-            _errorMessage = "Your session or organization-management permissions changed. Sign in again or contact an administrator.";
-            Snackbar.Add(_errorMessage, Severity.Error);
-            return;
-        }
-
         _saving = true;
         _errorMessage = null;
         try
         {
+            var authenticationState = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+            if (!await CurrentUserAuthorization.CanEditOrganizationAsync(authenticationState.User))
+            {
+                _errorMessage = "Your session or organization-management permissions changed. Sign in again or contact an administrator.";
+                Snackbar.Add(_errorMessage, Severity.Error);
+                return;
+            }
+
             if (Id is int id)
             {
                 await OrganizationService.UpdateBranchAsync(id, new UpdateBranchRequest(
