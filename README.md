@@ -76,16 +76,23 @@ it is not part of the supported build or deployment path.
 
 ## Quick Start
 
-### Docker (recommended)
+### Docker local development
 
 ```bash
 git clone https://github.com/nirzaf/stockpile.git
 cd stockpile
 cp .env.example .env        # edit credentials if desired
-docker compose up -d        # starts app + PostgreSQL after required secrets are set
+./scripts/validate-compose.sh development
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --wait
 ```
 
 The app will be available at **http://localhost:8080**.
+The development file is explicit: it enables Development mode, publishes the
+local PostgreSQL port, mounts source directories, and enables the optional
+watch configuration. Set `DB_PASSWORD`, `JWT_SECRET`, `ADMIN_EMAIL`, and
+`ADMIN_PASSWORD` in `.env` when using the Development seed administrator;
+`validate-compose.sh` validates required database/JWT values without printing
+the resolved secrets.
 
 Swagger UI is available at **http://localhost:8080/swagger** in the Development environment for interactive API exploration.
 
@@ -204,16 +211,18 @@ The normal `SaveChangesAsync` path remains available for single-operation servic
 
 ## Deployment
 
-The Docker Compose path is the supported production-shaped path. It is deliberately
-separate from the development path above and requires explicit non-empty secrets:
+The Docker Compose production path is deliberately explicit and does not load a
+development override. It keeps PostgreSQL on the private Compose network (no
+host port is published), preserves the `pgdata` and `dataprotection` volumes,
+and requires non-empty database and JWT secrets:
 
 ```bash
 cp .env.example .env
 # Edit .env: DB_PASSWORD and JWT_SECRET.
-docker compose config
-docker compose --profile migrations run --rm migrator
-docker compose --profile bootstrap run --rm bootstrap-admin
-docker compose up -d --wait
+./scripts/validate-compose.sh production
+docker compose -f docker-compose.yml --profile migrations run --rm migrator
+docker compose -f docker-compose.yml --profile bootstrap run --rm bootstrap-admin
+docker compose -f docker-compose.yml up -d --wait
 ```
 
 Before the bootstrap command, set `BOOTSTRAP_ADMIN_TENANT`, `BOOTSTRAP_ADMIN_EMAIL`,
@@ -229,8 +238,8 @@ values retain their documented behavior.
 # Publish
 dotnet publish -c Release -o ./publish
 
-# Docker Compose (production)
-cp .env.example .env    # set DB_PASSWORD and JWT_SECRET; bootstrap settings are one-shot
+# Docker Compose (production; the script selects docker-compose.yml explicitly)
+cp .env.example .env    # set DB_PASSWORD, JWT_SECRET, and one-shot bootstrap settings
 ./scripts/deploy.sh --migrate
 
 # Automated deployment script
@@ -248,9 +257,9 @@ Every push and pull request to `master` runs an automated pipeline, and tagged r
 | Workflow | File | Trigger | Purpose |
 |----------|------|---------|---------|
 | **CI** | [`.github/workflows/ci.yml`](.github/workflows/ci.yml) | PR + push to `master` | Restore → build → run xUnit tests with coverage → upload `coverage-report` artifact. |
-| **Docker** | [`.github/workflows/docker.yml`](.github/workflows/docker.yml) | Push to `master` & `v*.*.*` tags | Multi-arch build (`linux/amd64`, `linux/arm64`) → push to `ghcr.io/nirzaf/inventorymanagementsystem` with `latest`, `sha-…`, and semver tags. |
+| **Docker** | [`.github/workflows/docker.yml`](.github/workflows/docker.yml) | Push to `master` & `v*.*.*` tags; manual candidate validation | Resolves and revalidates one exact commit, then builds the multi-arch image (`linux/amd64`, `linux/arm64`) → `ghcr.io/nirzaf/inventorymanagementsystem` with an immutable `sha-<full-commit>` tag plus branch/semver aliases. Manual dry runs do not log in or push. |
 | **GitHub Pages** | [`.github/workflows/pages.yml`](.github/workflows/pages.yml) | Push to `master` (when `docs/**` changes) | Deploys the `/docs` folder to `https://nirzaf.github.io/Stockpile/`. |
-| **Release** | [`.github/workflows/release.yml`](.github/workflows/release.yml) | Push of `v*.*.*` tag | Cuts a GitHub Release with auto-generated changelog and Docker pull instructions. |
+| **Release** | [`.github/workflows/release.yml`](.github/workflows/release.yml) | Push of `v*.*.*` tag; manual existing-tag validation | Revalidates the exact tag commit, waits for both the immutable SHA image and semver image to exist, then cuts a GitHub Release. Manual dry runs do not create a release. |
 | **Dependabot** | [`.github/dependabot.yml`](.github/dependabot.yml) | Weekly (Mon) | Opens grouped PRs for NuGet, GitHub Actions, and Docker base-image updates. |
 
 ### Release flow
@@ -261,7 +270,9 @@ Every push and pull request to `master` runs an automated pipeline, and tagged r
    git tag v1.2.3
    git push origin v1.2.3
    ```
-3. The **Release** workflow creates a GitHub Release with a changelog derived from commits since the last tag, and the **Docker** workflow publishes the multi-arch image with tags `v1.2.3`, `1.2`, `1`, and `latest`.
+3. The **Release** workflow revalidates the tag’s exact commit and verifies the Docker workflow’s immutable `sha-<full-commit>` and `v1.2.3` image tags before creating a GitHub Release. The Docker workflow publishes the multi-arch image with `sha-<full-commit>`, `v1.2.3`, `1.2`, and `1`; `latest` is reserved for `master`.
+
+To exercise either workflow without publication, use its manual `dry_run` input. A manual Docker candidate may be a branch or existing tag; a manual Release candidate must be an existing `vMAJOR.MINOR.PATCH` tag. Both reject malformed refs and stale remote candidates.
 
 ### GitHub Pages
 
