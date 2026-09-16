@@ -63,6 +63,10 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
     /// <summary>Durable API idempotency claims and results.</summary>
     public DbSet<IdempotencyRecord> IdempotencyRecords { get; set; } = null!;
 
+    /// <summary>Approved opening-stock replay records.</summary>
+    public DbSet<OpeningStockImport> OpeningStockImports { get; set; } = null!;
+    public DbSet<OpeningStockImportLine> OpeningStockImportLines { get; set; } = null!;
+
     /// <summary>Tenant-owned legal and trading companies.</summary>
     public DbSet<Company> Companies { get; set; } = null!;
 
@@ -498,6 +502,42 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
             entity.Property(e => e.LastError).HasMaxLength(4096);
             entity.HasIndex(e => new { e.TenantId, e.Scope, e.Key }).IsUnique();
             entity.HasIndex(e => e.ExpiresAt);
+        });
+
+        modelBuilder.Entity<OpeningStockImport>(entity =>
+        {
+            entity.HasQueryFilter(e => e.TenantId == CurrentTenantId);
+            entity.Property(e => e.TenantId).HasMaxLength(64).IsRequired();
+            entity.Property(e => e.ImportReference).HasMaxLength(128).IsRequired();
+            entity.Property(e => e.ApprovalReference).HasMaxLength(128).IsRequired();
+            entity.Property(e => e.RequestHash).HasMaxLength(64).IsRequired();
+            entity.Property(e => e.ApprovedBy).HasMaxLength(256).IsRequired();
+            entity.HasIndex(e => new { e.TenantId, e.ImportReference }).IsUnique();
+            entity.HasIndex(e => new { e.TenantId, e.ApprovalReference }).IsUnique();
+        });
+
+        modelBuilder.Entity<OpeningStockImportLine>(entity =>
+        {
+            entity.HasQueryFilter(e => e.TenantId == CurrentTenantId);
+            entity.Property(e => e.TenantId).HasMaxLength(64).IsRequired();
+            entity.Property(e => e.ExternalReference).HasMaxLength(128).IsRequired();
+            entity.Property(e => e.UnitCost).HasColumnType("decimal(18,6)");
+            entity.HasIndex(e => new { e.OpeningStockImportId, e.ExternalReference }).IsUnique();
+            entity.HasIndex(e => new { e.TenantId, e.ItemId, e.LocationId });
+            entity.HasOne(e => e.OpeningStockImport)
+                .WithMany(e => e.Lines)
+                .HasForeignKey(e => new { e.OpeningStockImportId, e.TenantId })
+                .HasPrincipalKey(e => new { e.Id, e.TenantId })
+                .OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(e => e.Item)
+                .WithMany()
+                .HasForeignKey(e => e.ItemId)
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(e => e.Location)
+                .WithMany()
+                .HasForeignKey(e => new { e.LocationId, e.TenantId })
+                .HasPrincipalKey(e => new { e.Id, e.TenantId })
+                .OnDelete(DeleteBehavior.Restrict);
         });
 
         modelBuilder.Entity<DocumentNumberSequence>(entity =>
