@@ -3,6 +3,7 @@ using System.Text.Json;
 using FluentAssertions;
 using FluentValidation;
 using FluentValidation.Results;
+using Merconiq.Core.Exceptions;
 using Merconiq.Web;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
@@ -82,6 +83,21 @@ public class GlobalExceptionHandlerTests
 
         handled.Should().BeTrue();
         context.Response.StatusCode.Should().Be(400);
+    }
+
+    [Fact]
+    public async Task TryHandleAsync_ForecastResourceLimitExceeded_ApiPath_ReturnsActionable400()
+    {
+        var (context, _) = CreateHttpContext("/api/v1/forecast");
+        var exception = new ForecastResourceLimitExceededException("MaxItemsPerAllItemsForecast", 250, 251);
+
+        var handled = await _sut.TryHandleAsync(context, exception, CancellationToken.None);
+
+        handled.Should().BeTrue();
+        context.Response.StatusCode.Should().Be(StatusCodes.Status400BadRequest);
+        var problem = await ReadProblemDetails(context);
+        problem!.Title.Should().Be("Forecast resource limit exceeded");
+        problem.Detail.Should().Contain("251 records match");
     }
 
     [Fact]

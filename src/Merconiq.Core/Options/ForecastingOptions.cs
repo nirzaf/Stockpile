@@ -26,8 +26,12 @@ public sealed class ForecastingOptions
     public const int MinimumHistoricalDays = 5;
     public const int DefaultMaxForecastHorizonDays = 90;
     public const int DefaultMaxHistoricalDays = 365;
+    public const int DefaultMaxHistoricalTransactionsPerForecast = 50_000;
+    public const int DefaultMaxItemsPerAllItemsForecast = 250;
     public const int AbsoluteMaxForecastHorizonDays = 365;
     public const int AbsoluteMaxHistoricalDays = 3650;
+    public const int AbsoluteMaxHistoricalTransactionsPerForecast = 250_000;
+    public const int AbsoluteMaxItemsPerAllItemsForecast = 2_500;
 
     /// <summary>
     /// The model used by the application. Production defaults to the managed
@@ -41,8 +45,22 @@ public sealed class ForecastingOptions
     /// <summary>Maximum inclusive UTC calendar-day window considered for historical sales.</summary>
     public int MaxHistoricalDays { get; set; } = DefaultMaxHistoricalDays;
 
+    /// <summary>
+    /// Maximum number of matching historical sell movements loaded for one item forecast.
+    /// The query reads at most one extra row to detect and reject an over-limit request.
+    /// </summary>
+    public int MaxHistoricalTransactionsPerForecast { get; set; } = DefaultMaxHistoricalTransactionsPerForecast;
+
+    /// <summary>
+    /// Maximum catalog items processed by one all-items forecast. The query reads at most
+    /// one extra item to detect and reject an over-limit request.
+    /// </summary>
+    public int MaxItemsPerAllItemsForecast { get; set; } = DefaultMaxItemsPerAllItemsForecast;
+
     /// <summary>Returns whether configured forecast limits are within the supported hard bounds.</summary>
     public static bool HasValidResourceLimits(ForecastingOptions options) =>
         options.MaxForecastHorizonDays is >= 1 and <= AbsoluteMaxForecastHorizonDays &&
-        options.MaxHistoricalDays is >= MinimumHistoricalDays and <= AbsoluteMaxHistoricalDays;
+        options.MaxHistoricalDays is >= MinimumHistoricalDays and <= AbsoluteMaxHistoricalDays &&
+        options.MaxHistoricalTransactionsPerForecast is >= 1 and <= AbsoluteMaxHistoricalTransactionsPerForecast &&
+        options.MaxItemsPerAllItemsForecast is >= 1 and <= AbsoluteMaxItemsPerAllItemsForecast;
 }

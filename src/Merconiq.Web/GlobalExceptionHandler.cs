@@ -74,6 +74,7 @@ public class GlobalExceptionHandler : IExceptionHandler
 
         var (statusCode, title) = exception switch
         {
+            ForecastResourceLimitExceededException => (HttpStatusCode.BadRequest, "Forecast resource limit exceeded"),
             ArgumentException => (HttpStatusCode.BadRequest, "Invalid argument"),
             StockAvailabilityConflictException => (HttpStatusCode.Conflict, "Stock availability conflict"),
             InvalidOperationException => (HttpStatusCode.Conflict, "Operation failed"),
@@ -94,9 +95,11 @@ public class GlobalExceptionHandler : IExceptionHandler
             {
                 Status = (int)statusCode,
                 Title = title,
-                // The reservation conflict is a safe, actionable business message. Other
-                // exceptions keep the stable generic response while the full error is logged.
-                Detail = exception is StockAvailabilityConflictException ? exception.Message : title,
+                // These domain errors contain safe, actionable details; other exceptions
+                // keep a stable generic response while the full error is logged above.
+                Detail = exception is ForecastResourceLimitExceededException or StockAvailabilityConflictException
+                    ? exception.Message
+                    : title,
                 Instance = httpContext.Request.Path
             };
 

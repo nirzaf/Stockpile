@@ -57,17 +57,25 @@ public sealed class PostgreSqlIntegrationFixture : IAsyncLifetime
         }
     }
 
-    public InventoryDbContext CreateContext(string tenantId, string? applicationName = null)
+    public InventoryDbContext CreateContext(
+        string tenantId,
+        string? applicationName = null,
+        params IInterceptor[] interceptors)
     {
         EnsureEnabled();
 
         var connectionString = applicationName is null
             ? ConnectionString
             : new NpgsqlConnectionStringBuilder(ConnectionString) { ApplicationName = applicationName }.ConnectionString;
-        var options = new DbContextOptionsBuilder<InventoryDbContext>()
+        var optionsBuilder = new DbContextOptionsBuilder<InventoryDbContext>()
             .UseNpgsql(connectionString)
-            .ConfigureWarnings(warnings => warnings.Ignore(RelationalEventId.PendingModelChangesWarning))
-            .Options;
+            .ConfigureWarnings(warnings => warnings.Ignore(RelationalEventId.PendingModelChangesWarning));
+        if (interceptors.Length > 0)
+        {
+            optionsBuilder.AddInterceptors(interceptors);
+        }
+
+        var options = optionsBuilder.Options;
 
         return new InventoryDbContext(options, new TestTenantContext(tenantId));
     }
