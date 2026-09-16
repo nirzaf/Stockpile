@@ -35,12 +35,34 @@ public class RateLimitPartitionKeyTests
         RateLimitPartitionKey.ForApi(context).Should().Contain("tenant-a:");
     }
 
+    [Fact]
+    public void Login_partition_is_tenant_scoped_and_uses_remote_ip()
+    {
+        var tenantA = CreateLoginContext("tenant-a", "203.0.113.10");
+        var tenantB = CreateLoginContext("tenant-b", "203.0.113.10");
+
+        RateLimitPartitionKey.ForLogin(tenantA).Should().NotBe(RateLimitPartitionKey.ForLogin(tenantB));
+        RateLimitPartitionKey.ForLogin(tenantA).Should().Contain("tenant-a:");
+    }
+
     private static DefaultHttpContext CreateContext(string tenant, string client)
     {
         var context = new DefaultHttpContext();
         context.User = new ClaimsPrincipal(new ClaimsIdentity([
             new Claim(ClaimTypes.NameIdentifier, client)
         ], "test"));
+        context.RequestServices = new ServiceCollection()
+            .AddScoped<ITenantContext>(_ => new StubTenantContext(tenant))
+            .BuildServiceProvider();
+        return context;
+    }
+
+    private static DefaultHttpContext CreateLoginContext(string tenant, string remoteIp)
+    {
+        var context = new DefaultHttpContext
+        {
+            Connection = { RemoteIpAddress = IPAddress.Parse(remoteIp) }
+        };
         context.RequestServices = new ServiceCollection()
             .AddScoped<ITenantContext>(_ => new StubTenantContext(tenant))
             .BuildServiceProvider();

@@ -22,6 +22,22 @@ Please include:
 - We aim to provide a fix or mitigation within **7 days** for critical issues
 - We'll coordinate disclosure with you
 
+## Authentication abuse controls
+
+The browser login and anonymous token endpoint use two complementary controls:
+
+- Each Identity user is locked for five minutes after five failed password
+  attempts. The token endpoint uses the same failed-attempt accounting as the
+  browser login, so a locked account cannot obtain a token through that path.
+- Anonymous login requests use a fixed window of 20 requests per minute,
+  partitioned by the resolved tenant and remote IP address. This limits unknown
+  account attempts without creating one global budget for all tenants. The
+  limiter is an abuse boundary, not a guarantee against distributed attacks.
+
+Failure responses remain generic for unknown users, wrong passwords and
+wrong-tenant credentials. Operators should provide an account recovery path
+before enabling a policy that can temporarily lock a legitimate user.
+
 ## Security Best Practices for Deployments
 
 When deploying this application:
