@@ -19,14 +19,14 @@ window.downloadFile = (filename, contentType, content) => {
     URL.revokeObjectURL(exportUrl);
 }
 
-window.stockpileTheme = {
+window.merconiqTheme = {
     getDarkMode: () => {
-        const stored = window.localStorage.getItem("stockpile-dark-mode");
+        const stored = window.localStorage.getItem("merconiq-dark-mode");
         return stored === null
             ? window.matchMedia("(prefers-color-scheme: dark)").matches
             : stored === "true";
     },
     setDarkMode: enabled => {
-        window.localStorage.setItem("stockpile-dark-mode", enabled ? "true" : "false");
+        window.localStorage.setItem("merconiq-dark-mode", enabled ? "true" : "false");
     }
 };
