@@ -75,7 +75,6 @@ public static class PipelineExtensions
             using var scope = app.Services.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<InventoryDbContext>();
             await db.Database.MigrateAsync();
-            await SeedData.Initialize(app.Services);
         }
     }
 }

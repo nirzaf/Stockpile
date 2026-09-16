@@ -33,14 +33,19 @@ The fastest way to try IMS is with Docker:
 
 ```bash
 git clone https://github.com/nirzaf/Stockpile.git
-cd InventoryManagementSystem
-cp .env.example .env        # edit credentials if desired
-docker compose up -d        # starts app + PostgreSQL
+cd stockpile
+cp .env.example .env        # set database, JWT, and bootstrap credentials
+docker compose --profile migrations run --rm migrator
+docker compose --profile bootstrap run --rm bootstrap-admin
+docker compose up -d --wait
 ```
 
 The app will be available at **http://localhost:8080**.
 
-Configure the administrator credentials and JWT signing key in `.env` before starting. No default credentials are committed.
+Configure the database password, JWT signing key, and explicit bootstrap administrator
+credentials in the untracked `.env` before running the migration and bootstrap commands.
+Normal production web startup does not seed users or sample data. No default credentials
+are committed.
 
 > For full installation, configuration, and deployment instructions, see the [README on GitHub](https://github.com/nirzaf/Stockpile/blob/master/README.md).
 
