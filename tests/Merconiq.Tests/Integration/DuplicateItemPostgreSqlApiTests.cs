@@ -1,14 +1,14 @@
-using System.IdentityModel.Tokens.Jwt;
 using System.Net;
 using System.Net.Http.Json;
 using System.Security.Claims;
-using System.Text;
+using System.Text.Encodings.Web;
 using FluentAssertions;
 using Merconiq.Core.Entities;
 using Merconiq.Infrastructure.Data;
 using Merconiq.Web.Tenancy;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.EntityFrameworkCore;
@@ -17,7 +17,6 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using Microsoft.IdentityModel.Tokens;
 
 namespace Merconiq.Tests.Integration;
 
@@ -62,12 +61,13 @@ public sealed class DuplicateItemPostgreSqlApiTests : IDisposable
 
 internal sealed class PostgreSqlItemApiFactory(PostgreSqlIntegrationFixture fixture) : WebApplicationFactory<Merconiq.Web.Program>
 {
-    private const string TestJwtSecret = "testing-only-jwt-secret-with-at-least-32-bytes";
+    private const string TestUserId = "postgres-duplicate-item-admin";
+    private const string TestTenantId = "test-tenant";
+    private const string TestSecurityStamp = "postgres-duplicate-item-security-stamp";
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         builder.UseEnvironment("Testing");
-        builder.UseSetting("JwtSettings:Secret", TestJwtSecret);
         builder.ConfigureTestServices(services =>
         {
             // This factory exercises the item API only. Do not let unrelated hosted workers
@@ -85,31 +85,89 @@ internal sealed class PostgreSqlItemApiFactory(PostgreSqlIntegrationFixture fixt
             {
                 options.DefaultAuthenticateScheme = "Test";
                 options.DefaultChallengeScheme = "Test";
-            }).AddScheme<AuthenticationSchemeOptions, TestAuthHandler>("Test", _ => { });
+            }).AddScheme<AuthenticationSchemeOptions, PostgreSqlItemApiAuthHandler>("Test", _ => { });
         });
     }
 
     public HttpClient CreateAuthenticatedClient()
     {
+        EnsureAdminUser();
         var client = CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
-        var tokenHandler = new JwtSecurityTokenHandler();
-        var token = tokenHandler.CreateToken(new SecurityTokenDescriptor
-        {
-            Subject = new ClaimsIdentity([
-                new Claim("tenant_id", "test-tenant"),
-                new Claim(ClaimTypes.Role, "Admin")
-            ]),
-            Expires = DateTime.UtcNow.AddMinutes(5),
-            Issuer = "Merconiq",
-            Audience = "Merconiq",
-            SigningCredentials = new SigningCredentials(
-                new SymmetricSecurityKey(Encoding.UTF8.GetBytes(TestJwtSecret)),
-                SecurityAlgorithms.HmacSha256Signature)
-        });
-        client.DefaultRequestHeaders.Authorization =
-            new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", tokenHandler.WriteToken(token));
         client.DefaultRequestHeaders.Add("X-Test-Auth", "true");
         client.DefaultRequestHeaders.Add("X-Test-Role", "Admin");
+        client.DefaultRequestHeaders.Add("X-Test-UserId", TestUserId);
+        client.DefaultRequestHeaders.Add("X-Test-Tenant", TestTenantId);
+        client.DefaultRequestHeaders.Add("X-Test-SecurityStamp", TestSecurityStamp);
         return client;
+    }
+
+    private void EnsureAdminUser()
+    {
+        using var scope = Services.CreateScope();
+        var userManager = scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
+        var roleManager = scope.ServiceProvider.GetRequiredService<RoleManager<IdentityRole>>();
+        var user = userManager.FindByIdAsync(TestUserId).GetAwaiter().GetResult();
+        if (user is null)
+        {
+            user = new ApplicationUser
+            {
+                Id = TestUserId,
+                UserName = "postgres-duplicate-item-admin@test-tenant.test",
+                Email = "postgres-duplicate-item-admin@test-tenant.test",
+                EmailConfirmed = true,
+                TenantId = TestTenantId,
+                SecurityStamp = TestSecurityStamp
+            };
+            var create = userManager.CreateAsync(user).GetAwaiter().GetResult();
+            if (!create.Succeeded)
+            {
+                throw new InvalidOperationException(string.Join("; ", create.Errors.Select(error => error.Code)));
+            }
+        }
+
+        if (!roleManager.RoleExistsAsync("Admin").GetAwaiter().GetResult())
+        {
+            var createRole = roleManager.CreateAsync(new IdentityRole("Admin")).GetAwaiter().GetResult();
+            if (!createRole.Succeeded)
+            {
+                throw new InvalidOperationException(string.Join("; ", createRole.Errors.Select(error => error.Code)));
+            }
+        }
+
+        if (!userManager.IsInRoleAsync(user, "Admin").GetAwaiter().GetResult())
+        {
+            var addRole = userManager.AddToRoleAsync(user, "Admin").GetAwaiter().GetResult();
+            if (!addRole.Succeeded)
+            {
+                throw new InvalidOperationException(string.Join("; ", addRole.Errors.Select(error => error.Code)));
+            }
+        }
+    }
+}
+
+internal sealed class PostgreSqlItemApiAuthHandler(
+    IOptionsMonitor<AuthenticationSchemeOptions> options,
+    ILoggerFactory logger,
+    UrlEncoder encoder)
+    : AuthenticationHandler<AuthenticationSchemeOptions>(options, logger, encoder)
+{
+    protected override Task<AuthenticateResult> HandleAuthenticateAsync()
+    {
+        if (!Request.Headers.ContainsKey("X-Test-Auth"))
+        {
+            return Task.FromResult(AuthenticateResult.NoResult());
+        }
+
+        var claims = new[]
+        {
+            new Claim(ClaimTypes.Name, "postgres-duplicate-item-admin@test-tenant.test"),
+            new Claim(ClaimTypes.Email, "postgres-duplicate-item-admin@test-tenant.test"),
+            new Claim(ClaimTypes.Role, Request.Headers["X-Test-Role"].FirstOrDefault() ?? "Admin"),
+            new Claim(ClaimTypes.NameIdentifier, Request.Headers["X-Test-UserId"].FirstOrDefault() ?? string.Empty),
+            new Claim("tenant_id", Request.Headers["X-Test-Tenant"].FirstOrDefault() ?? string.Empty),
+            new Claim("AspNet.Identity.SecurityStamp", Request.Headers["X-Test-SecurityStamp"].FirstOrDefault() ?? string.Empty)
+        };
+        var principal = new ClaimsPrincipal(new ClaimsIdentity(claims, "Test"));
+        return Task.FromResult(AuthenticateResult.Success(new AuthenticationTicket(principal, "Test")));
     }
 }
