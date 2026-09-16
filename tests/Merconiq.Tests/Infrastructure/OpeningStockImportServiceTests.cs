@@ -1,8 +1,10 @@
 using FluentAssertions;
 using Merconiq.Core.Entities;
+using Merconiq.Core.Models;
 using Merconiq.Infrastructure.Data;
 using Merconiq.Infrastructure.Services;
 using Merconiq.Tests.Infrastructure;
+using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 
 namespace Merconiq.Tests.Infrastructure;
@@ -141,8 +143,77 @@ public sealed class OpeningStockImportServiceTests
         result.Rows[2].Error.Should().Contain("not found in the current tenant");
     }
 
+    [Fact]
+    public async Task ReplayAsync_AppliesOnceAndPersistsApprovedLineage()
+    {
+        await using var context = CreateContext();
+        var item = new Item
+        {
+            ExternalId = "item-1",
+            ItemCode = "SKU-1",
+            Description = "Widget",
+            IsActive = true
+        };
+        var location = new Location { Id = 7, Name = "Main" };
+        context.Items.Add(item);
+        context.Locations.Add(location);
+        await context.SaveChangesAsync();
+
+        var request = new OpeningStockReplayRequest(
+            "external_reference,item_external_id,location_id,quantity,unit_cost\nopen-1,item-1,7,10,0",
+            "import-1",
+            "approval-1");
+
+        var service = CreateService(context);
+        var first = await service.ReplayAsync(request);
+
+        first.AppliedRows.Should().Be(1);
+        first.AlreadyApplied.Should().BeFalse();
+        (await context.StockInHand.SingleAsync()).Quantity.Should().Be(10);
+        var import = await context.OpeningStockImports.Include(value => value.Lines).SingleAsync();
+        import.ApprovalReference.Should().Be("approval-1");
+        import.Lines.Single().UnitCost.Should().Be(0);
+
+        var second = await service.ReplayAsync(request);
+
+        second.AlreadyApplied.Should().BeTrue();
+        second.AppliedRows.Should().Be(0);
+        (await context.StockInHand.SingleAsync()).Quantity.Should().Be(10);
+        (await context.OpeningStockImports.CountAsync()).Should().Be(1);
+
+        await FluentActions.Invoking(() => service.ReplayAsync(request with
+        {
+            Csv = request.Csv.Replace(",10,0", ",11,0", StringComparison.Ordinal)
+        })).Should().ThrowAsync<InvalidOperationException>();
+    }
+
+    [Fact]
+    public async Task ReplayAsync_RejectsInvalidRowsWithoutMutation()
+    {
+        await using var context = CreateContext();
+        context.Items.Add(new Item
+        {
+            ExternalId = "item-1",
+            ItemCode = "SKU-1",
+            Description = "Widget",
+            IsActive = true
+        });
+        context.Locations.Add(new Location { Id = 7, Name = "Main" });
+        await context.SaveChangesAsync();
+
+        var result = await CreateService(context).ReplayAsync(new(
+            "external_reference,item_external_id,location_id,quantity,unit_cost\nopen-1,item-1,7,10,",
+            "import-invalid",
+            "approval-invalid"));
+
+        result.Valid.Should().Be(0);
+        result.Rejected.Should().Be(1);
+        (await context.StockInHand.CountAsync()).Should().Be(0);
+        (await context.OpeningStockImports.CountAsync()).Should().Be(0);
+    }
+
     private static OpeningStockImportService CreateService(InventoryDbContext context) =>
-        new(context, new TestTenantContext("test-tenant"));
+        new(context, new TestTenantContext("test-tenant"), new UnitOfWork(context), new HttpContextAccessor());
 
     private static InventoryDbContext CreateContext(string? databaseName = null, string tenantId = "test-tenant") => new(
         new DbContextOptionsBuilder<InventoryDbContext>()
