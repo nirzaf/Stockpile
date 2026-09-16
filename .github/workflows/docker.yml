@@ -123,6 +123,7 @@ jobs:
           done
 
       - name: Build candidate image
+        id: build
         uses: docker/build-push-action@v7
         with:
           context: .
@@ -147,6 +148,8 @@ jobs:
             fi
             echo "Candidate: ${{ steps.candidate.outputs.candidate_sha }}"
             echo "Immutable image tag: ${{ env.IMAGE }}:sha-${{ steps.candidate.outputs.candidate_sha }}"
+            echo "Source commit: `${GITHUB_SHA}`"
+            echo "Published manifest digest: `${{ steps.build.outputs.digest }}`"
             echo "Tags:"
             printf '%s\n' '${{ steps.meta.outputs.json }}' | jq -r '.tags[] | "- " + .'
           } >> "$GITHUB_STEP_SUMMARY"
