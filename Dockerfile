@@ -24,7 +24,7 @@ RUN dotnet test tests/Merconiq.Tests/Merconiq.Tests.csproj \
     --filter "FullyQualifiedName~DemandForecastServiceTests"
 
 # Publish the web app
-WORKDIR /src/Merconiq.Web
+WORKDIR /src/src/Merconiq.Web
 RUN dotnet publish -c Release -o /app --no-restore
 RUN mkdir -p /app/logs
 RUN mkdir -p /app/data/keys
