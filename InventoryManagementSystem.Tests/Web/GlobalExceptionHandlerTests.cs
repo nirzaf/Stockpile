@@ -115,6 +115,20 @@ public class GlobalExceptionHandlerTests
     }
 
     [Fact]
+    public async Task TryHandleAsync_NonUniqueDatabaseFailure_ApiPath_Returns500()
+    {
+        var (context, _) = CreateHttpContext("/api/v1/items");
+        var exception = new DbUpdateException(
+            "Could not save item",
+            new InvalidOperationException("database unavailable"));
+
+        var handled = await _sut.TryHandleAsync(context, exception, CancellationToken.None);
+
+        handled.Should().BeTrue();
+        context.Response.StatusCode.Should().Be(500);
+    }
+
+    [Fact]
     public async Task TryHandleAsync_UnauthorizedAccessException_ApiPath_Returns403()
     {
         var (context, _) = CreateHttpContext("/api/v1/items");
