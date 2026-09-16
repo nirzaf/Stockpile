@@ -84,7 +84,10 @@ Before merging, verify the current head and base, acceptance criteria, complete 
 ```bash
 REVIEWED_HEAD="<FULL_REVIEWED_HEAD_SHA>"
 CURRENT_HEAD="$(gh pr view <PR_NUMBER> --repo nirzaf/stockpile --json headRefOid --jq '.headRefOid')"
-test "$CURRENT_HEAD" = "$REVIEWED_HEAD" || exit 1
+if test "$CURRENT_HEAD" != "$REVIEWED_HEAD"; then
+  printf 'PR head changed: expected %s, found %s. Re-review before merging.\n' "$REVIEWED_HEAD" "$CURRENT_HEAD"
+  exit 1
+fi
 gh pr merge <PR_NUMBER> --repo nirzaf/stockpile --squash --match-head-commit "$REVIEWED_HEAD"
 ```
 
