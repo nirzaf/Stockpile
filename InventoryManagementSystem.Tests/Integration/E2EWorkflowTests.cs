@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using FluentAssertions;
 using InventoryManagementSystem.Core.Entities;
+using InventoryManagementSystem.Core.Models;
 using InventoryManagementSystem.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -49,8 +50,9 @@ public class StockWorkflowTests : IClassFixture<CustomWebApplicationFactory>
         receiveResponse.StatusCode.Should().Be(HttpStatusCode.NoContent);
 
         // Verify stock
-        var stockResponse = await client.GetAsync($"/api/v1/stock/in-hand/{item.Id}/{loc.Id}");
-        stockResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+        var stock = await GetStockAsync(client, item.Id, loc.Id);
+        stock.Quantity.Should().Be(50);
+        (await LoadPersistedStockAsync(item.Id, loc.Id)).Quantity.Should().Be(50);
     }
 
     [Fact]
@@ -60,7 +62,7 @@ public class StockWorkflowTests : IClassFixture<CustomWebApplicationFactory>
 
         // Setup
         var (item, loc) = await SeedItemAndLocationAsync();
-        await SeedAndReceiveStockAsync(item.Id, loc.Id, 100);
+        await ReceiveStockAsync(client, item.Id, loc.Id, 100);
 
         // Sell 30
         var sellCmd = new { ItemId = item.Id, LocationId = loc.Id, Quantity = 30, Notes = "sale" };
@@ -68,8 +70,9 @@ public class StockWorkflowTests : IClassFixture<CustomWebApplicationFactory>
         sellResponse.StatusCode.Should().Be(HttpStatusCode.NoContent);
 
         // Verify stock is now 70
-        var stockResponse = await client.GetAsync($"/api/v1/stock/in-hand/{item.Id}/{loc.Id}");
-        stockResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+        var stock = await GetStockAsync(client, item.Id, loc.Id);
+        stock.Quantity.Should().Be(70);
+        (await LoadPersistedStockAsync(item.Id, loc.Id)).Quantity.Should().Be(70);
     }
 
     [Fact]
@@ -78,7 +81,7 @@ public class StockWorkflowTests : IClassFixture<CustomWebApplicationFactory>
         var client = AuthClient;
 
         var (item, loc1) = await SeedItemAndLocationAsync();
-        await SeedAndReceiveStockAsync(item.Id, loc1.Id, 100);
+        await ReceiveStockAsync(client, item.Id, loc1.Id, 100);
 
         // Create second location
         Location loc2;
@@ -96,11 +99,10 @@ public class StockWorkflowTests : IClassFixture<CustomWebApplicationFactory>
         transferResponse.StatusCode.Should().Be(HttpStatusCode.NoContent);
 
         // Verify both locations
-        var srcResponse = await client.GetAsync($"/api/v1/stock/in-hand/{item.Id}/{loc1.Id}");
-        srcResponse.StatusCode.Should().Be(HttpStatusCode.OK);
-
-        var dstResponse = await client.GetAsync($"/api/v1/stock/in-hand/{item.Id}/{loc2.Id}");
-        dstResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+        (await GetStockAsync(client, item.Id, loc1.Id)).Quantity.Should().Be(60);
+        (await GetStockAsync(client, item.Id, loc2.Id)).Quantity.Should().Be(40);
+        (await LoadPersistedStockAsync(item.Id, loc1.Id)).Quantity.Should().Be(60);
+        (await LoadPersistedStockAsync(item.Id, loc2.Id)).Quantity.Should().Be(40);
     }
 
     [Fact]
@@ -109,12 +111,15 @@ public class StockWorkflowTests : IClassFixture<CustomWebApplicationFactory>
         var client = AuthClient;
 
         var (item, loc) = await SeedItemAndLocationAsync();
-        await SeedAndReceiveStockAsync(item.Id, loc.Id, 10);
+        await ReceiveStockAsync(client, item.Id, loc.Id, 10);
 
         // Try to sell 50 (only 10 available)
         var sellCmd = new { ItemId = item.Id, LocationId = loc.Id, Quantity = 50, Notes = "oversell" };
         var response = await client.PostAsJsonAsync("/api/v1/stock/sell", sellCmd);
         response.StatusCode.Should().Be(HttpStatusCode.Conflict);
+        (await LoadPersistedStockAsync(item.Id, loc.Id)).Quantity.Should().Be(10);
+        await AssertTransactionAsync(item.Id, TransactionType.Receive, 10, loc.Id, loc.Id);
+        (await CountTransactionsAsync(item.Id, TransactionType.Sell)).Should().Be(0);
     }
 
     [Fact]
@@ -123,7 +128,7 @@ public class StockWorkflowTests : IClassFixture<CustomWebApplicationFactory>
         var client = AuthClient;
 
         var (item, loc) = await SeedItemAndLocationAsync();
-        await SeedAndReceiveStockAsync(item.Id, loc.Id, 50);
+        await ReceiveStockAsync(client, item.Id, loc.Id, 50);
 
         // Sell some
         var sellCmd = new { ItemId = item.Id, LocationId = loc.Id, Quantity = 10, Notes = "audit test" };
@@ -132,6 +137,16 @@ public class StockWorkflowTests : IClassFixture<CustomWebApplicationFactory>
         // Check transactions
         var txResponse = await client.GetAsync("/api/v1/stock/transactions");
         txResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+        var transactions = await txResponse.Content.ReadFromJsonAsync<ApiResponse<List<StockTransaction>>>();
+        transactions.Should().NotBeNull();
+        transactions!.Success.Should().BeTrue();
+        transactions.Data.Should().Contain(transaction =>
+            transaction.ItemId == item.Id && transaction.TransactionType == TransactionType.Receive && transaction.Quantity == 50);
+        transactions.Data.Should().Contain(transaction =>
+            transaction.ItemId == item.Id && transaction.TransactionType == TransactionType.Sell &&
+            transaction.Quantity == 10 && transaction.FromLocationId == loc.Id);
+        (await CountTransactionsAsync(item.Id, TransactionType.Receive)).Should().Be(1);
+        (await CountTransactionsAsync(item.Id, TransactionType.Sell)).Should().Be(1);
     }
 
     [Fact]
@@ -151,7 +166,7 @@ public class StockWorkflowTests : IClassFixture<CustomWebApplicationFactory>
         }
 
         // Receive 100 at loc1
-        await SeedAndReceiveStockAsync(item.Id, loc1.Id, 100);
+        await ReceiveStockAsync(client, item.Id, loc1.Id, 100);
 
         // Transfer 30 to loc2
         var transferCmd = new { ItemId = item.Id, FromLocationId = loc1.Id, ToLocationId = loc2.Id, Quantity = 30, Notes = "ml" };
@@ -164,11 +179,10 @@ public class StockWorkflowTests : IClassFixture<CustomWebApplicationFactory>
         sellResponse.StatusCode.Should().Be(HttpStatusCode.NoContent);
 
         // loc1 should have 50, loc2 should have 30
-        var loc1Stock = await client.GetAsync($"/api/v1/stock/in-hand/{item.Id}/{loc1.Id}");
-        loc1Stock.StatusCode.Should().Be(HttpStatusCode.OK);
-
-        var loc2Stock = await client.GetAsync($"/api/v1/stock/in-hand/{item.Id}/{loc2.Id}");
-        loc2Stock.StatusCode.Should().Be(HttpStatusCode.OK);
+        (await GetStockAsync(client, item.Id, loc1.Id)).Quantity.Should().Be(50);
+        (await GetStockAsync(client, item.Id, loc2.Id)).Quantity.Should().Be(30);
+        (await LoadPersistedStockAsync(item.Id, loc1.Id)).Quantity.Should().Be(50);
+        (await LoadPersistedStockAsync(item.Id, loc2.Id)).Quantity.Should().Be(30);
     }
 
     // === Helpers ===
@@ -185,17 +199,54 @@ public class StockWorkflowTests : IClassFixture<CustomWebApplicationFactory>
         return (item, loc);
     }
 
-    private async Task SeedAndReceiveStockAsync(int itemId, int locationId, int qty)
+    private async Task ReceiveStockAsync(HttpClient client, int itemId, int locationId, int qty)
+    {
+        var response = await client.PostAsJsonAsync("/api/v1/stock/receive",
+            new { ItemId = itemId, LocationId = locationId, Quantity = qty, Notes = "workflow receive" });
+        response.StatusCode.Should().Be(HttpStatusCode.NoContent);
+    }
+
+    private async Task<StockInHand> GetStockAsync(HttpClient client, int itemId, int locationId)
+    {
+        var response = await client.GetAsync($"/api/v1/stock/in-hand/{itemId}/{locationId}");
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await response.Content.ReadFromJsonAsync<ApiResponse<StockInHand>>();
+        body.Should().NotBeNull();
+        body!.Success.Should().BeTrue();
+        body.Data.Should().NotBeNull();
+        return body.Data!;
+    }
+
+    private async Task<StockInHand> LoadPersistedStockAsync(int itemId, int locationId)
     {
         using var scope = _factory.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<InventoryDbContext>();
-        db.StockInHand.Add(new StockInHand { ItemId = itemId, LocationId = locationId, Quantity = qty });
-        db.StockTransactions.Add(new StockTransaction
-        {
-            ItemId = itemId, FromLocationId = locationId, ToLocationId = locationId,
-            Quantity = qty, TransactionType = TransactionType.Receive, TransactionDate = DateTime.UtcNow
-        });
-        await db.SaveChangesAsync();
+        return await db.StockInHand.AsNoTracking()
+            .SingleAsync(stock => stock.ItemId == itemId && stock.LocationId == locationId);
+    }
+
+    private async Task<int> CountTransactionsAsync(int itemId, TransactionType type)
+    {
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<InventoryDbContext>();
+        return await db.StockTransactions.CountAsync(transaction =>
+            transaction.ItemId == itemId && transaction.TransactionType == type);
+    }
+
+    private async Task AssertTransactionAsync(
+        int itemId,
+        TransactionType type,
+        int quantity,
+        int fromLocationId,
+        int toLocationId)
+    {
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<InventoryDbContext>();
+        var transaction = await db.StockTransactions.SingleAsync(candidate =>
+            candidate.ItemId == itemId && candidate.TransactionType == type);
+        transaction.Quantity.Should().Be(quantity);
+        transaction.FromLocationId.Should().Be(fromLocationId);
+        transaction.ToLocationId.Should().Be(toLocationId);
     }
 
     private async Task<Item> GetItemByCodeAsync(string code)
