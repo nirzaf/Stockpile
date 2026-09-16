@@ -1,12 +1,21 @@
+using System.IdentityModel.Tokens.Jwt;
 using System.Net;
 using System.Net.Http.Json;
+using System.Security.Claims;
+using System.Text;
 using FluentAssertions;
 using InventoryManagementSystem.Core.Entities;
 using InventoryManagementSystem.Infrastructure.Data;
-using Microsoft.EntityFrameworkCore;
+using InventoryManagementSystem.Web.Tenancy;
+using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
+using Microsoft.IdentityModel.Tokens;
 
 namespace InventoryManagementSystem.Tests.Integration;
 
@@ -49,15 +58,49 @@ public sealed class DuplicateItemPostgreSqlApiTests : IDisposable
     public void Dispose() => _factory.Dispose();
 }
 
-internal sealed class PostgreSqlItemApiFactory(PostgreSqlIntegrationFixture fixture) : CustomWebApplicationFactory
+internal sealed class PostgreSqlItemApiFactory(PostgreSqlIntegrationFixture fixture) : WebApplicationFactory<InventoryManagementSystem.Web.Program>
 {
-    protected override void ConfigureWebHost(Microsoft.AspNetCore.Hosting.IWebHostBuilder builder)
+    private const string TestJwtSecret = "testing-only-jwt-secret-with-at-least-32-bytes";
+
+    protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
-        base.ConfigureWebHost(builder);
+        builder.UseEnvironment("Testing");
+        builder.UseSetting("JwtSettings:Secret", TestJwtSecret);
         builder.ConfigureTestServices(services =>
         {
-            services.RemoveAll<InventoryDbContext>();
             services.AddDbContext<InventoryDbContext>(options => options.UseNpgsql(fixture.ConnectionString));
+            services.AddScoped<TenantContext>(_ =>
+            {
+                var context = new TenantContext();
+                context.SetTenant("test-tenant");
+                return context;
+            });
+            services.AddAuthentication(options =>
+            {
+                options.DefaultAuthenticateScheme = "Test";
+                options.DefaultChallengeScheme = "Test";
+            }).AddScheme<AuthenticationSchemeOptions, TestAuthHandler>("Test", _ => { });
         });
+    }
+
+    public HttpClient CreateAuthenticatedClient()
+    {
+        var client = CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+        var tokenHandler = new JwtSecurityTokenHandler();
+        var token = tokenHandler.CreateToken(new SecurityTokenDescriptor
+        {
+            Subject = new ClaimsIdentity([new Claim("tenant_id", "test-tenant")]),
+            Expires = DateTime.UtcNow.AddMinutes(5),
+            Issuer = "InventoryManagementSystem",
+            Audience = "InventoryManagementSystem",
+            SigningCredentials = new SigningCredentials(
+                new SymmetricSecurityKey(Encoding.UTF8.GetBytes(TestJwtSecret)),
+                SecurityAlgorithms.HmacSha256Signature)
+        });
+        client.DefaultRequestHeaders.Authorization =
+            new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", tokenHandler.WriteToken(token));
+        client.DefaultRequestHeaders.Add("X-Test-Auth", "true");
+        client.DefaultRequestHeaders.Add("X-Test-Role", "Admin");
+        return client;
     }
 }
