@@ -168,6 +168,7 @@ public class IdempotencyKeyStoreTests
             {
                 if (++attempts == 1)
                 {
+                    await operation();
                     throw new ConcurrencyException("simulated conflict");
                 }
 
@@ -187,7 +188,7 @@ public class IdempotencyKeyStoreTests
             return Task.CompletedTask;
         });
 
-        executions.Should().Be(1);
+        executions.Should().Be(2);
         attempts.Should().Be(2);
         unitOfWork.Verify(item => item.ClearTracker(), Times.Once);
     }
