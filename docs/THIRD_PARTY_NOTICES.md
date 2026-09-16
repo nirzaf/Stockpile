@@ -1,11 +1,11 @@
 # Third-party dependency and redistribution notices
 
 This inventory records the dependency and copied-asset evidence visible at
-Stockpile baseline `b1646978f51ac7493d70e1b701685d0e8fd7b7f2` (16 September
+Merconiq baseline `f86c1656a2ab5dbf1eed935a169118a7efe4badc` (16 September
 2026). It is an engineering notice and provenance record, not legal advice or
 a conclusion about which license applies to a particular owner, operator, or
 distribution model. The repository's [MIT License](../LICENSE) covers
-Stockpile-authored material only; it does not relicense third-party material.
+Merconiq-authored material only; it does not relicense third-party material.
 
 Before distributing a build, the owner should confirm the applicable terms for
 the intended use and preserve the relevant package and asset notices. In
@@ -55,10 +55,10 @@ The table preserves package identities and pinned versions while grouping
 packages that share the same terms. The authoritative direct-reference
 locations are the `PackageReference` entries in:
 
-- `InventoryManagementSystem.Core/InventoryManagementSystem.Core.csproj`
-- `InventoryManagementSystem.Infrastructure/InventoryManagementSystem.Infrastructure.csproj`
-- `InventoryManagementSystem.Tests/InventoryManagementSystem.Tests.csproj`
-- `InventoryManagementSystem.Web/InventoryManagementSystem.Web.csproj`
+- `Merconiq.Core/Merconiq.Core.csproj`
+- `Merconiq.Infrastructure/Merconiq.Infrastructure.csproj`
+- `Merconiq.Tests/Merconiq.Tests.csproj`
+- `Merconiq.Web/Merconiq.Web.csproj`
 
 ## Transitive NuGet dependencies
 
@@ -69,12 +69,14 @@ restoring with the pinned SDK (`global.json`):
 
 ```text
 dotnet restore
-dotnet list InventoryManagementSystem.sln package --include-transitive --format json > dependency-inventory.json
+dotnet list Merconiq.sln package --include-transitive --format json > dependency-inventory.json
 ```
 
-The resulting `dependency-inventory.json` is the evidence for the resolved
-transitive package IDs, versions, and dependency paths for that build. Each
-transitive package retains its own license and notice obligations; the
+The resulting `dependency-inventory.json` is a package inventory of resolved
+transitive package IDs and versions for that build; it is not, by itself, a
+complete dependency-path graph. Preserve each project's `obj/project.assets.json`
+or an equivalent lock-file graph alongside this inventory when a redistribution
+decision depends on dependency paths. Each transitive package retains its own license and notice obligations; the
 top-level MIT license is not a substitute. CI should retain this output with
 the build evidence when a redistribution decision depends on the resolved
 graph. The local audit for this change could not execute that command because
@@ -108,7 +110,7 @@ images or the PostgreSQL distribution.
 ## Copied browser assets
 
 These files are committed under
-`InventoryManagementSystem.Web/wwwroot/lib/` and are separate from NuGet
+`Merconiq.Web/wwwroot/lib/` and are separate from NuGet
 restore:
 
 | Asset | Version evidence | License / notice |
@@ -116,9 +118,9 @@ restore:
 | Bootstrap | 5.3.3 in the distributed CSS headers | MIT; notice at `wwwroot/lib/bootstrap/LICENSE` |
 | jQuery | 3.7.1 in the distributed JS headers | MIT; notice at `wwwroot/lib/jquery/LICENSE.txt` |
 | jQuery Validation | 1.21.0 in the distributed JS headers | MIT; notice at `wwwroot/lib/jquery-validation/LICENSE.md` |
-| jQuery Validation Unobtrusive | Version is not embedded in the copied files | MIT notice at `wwwroot/lib/jquery-validation-unobtrusive/LICENSE.txt`; the source version should be confirmed before replacing or repackaging it |
+| jQuery Validation Unobtrusive | 4.0.0 in the distributed JS header | Apache-2.0 header in the distributed JS; adjacent `LICENSE.txt` says MIT. Provenance discrepancy remains owner-review pending before replacing or repackaging it |
 
-The copied JavaScript, CSS, source maps, and fonts are covered by the notices
+The copied JavaScript, CSS, source maps, and license files are covered by the notices
 shipped beside each asset. Do not remove those files when preparing a
 redistribution bundle.
 
@@ -126,7 +128,7 @@ redistribution bundle.
 
 The owner should record the outcome separately from this engineering change:
 
-1. Confirm the intended Stockpile distribution and whether the project qualifies
+1. Confirm the intended Merconiq distribution and whether the project qualifies
    for the applicable QuestPDF terms; retain the QuestPDF package license and
    native dependency notices.
 2. Confirm whether AutoMapper and MediatR use the RPL 1.5 terms or a Lucky Penny
