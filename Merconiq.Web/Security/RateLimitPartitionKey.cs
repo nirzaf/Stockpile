@@ -20,4 +20,12 @@ public static class RateLimitPartitionKey
         var digest = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(client.Trim())));
         return $"{tenant}:{digest}";
     }
+
+    public static string ForLogin(HttpContext context)
+    {
+        var tenant = context.RequestServices.GetService<ITenantContext>()?.TenantId ?? "unresolved";
+        var client = context.Connection.RemoteIpAddress?.ToString() ?? "anonymous";
+        var digest = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(client.Trim())));
+        return $"{tenant}:{digest}";
+    }
 }

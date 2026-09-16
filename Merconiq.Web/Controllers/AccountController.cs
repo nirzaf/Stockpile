@@ -2,6 +2,7 @@ using Merconiq.Core.Entities;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 
 namespace Merconiq.Web.Controllers;
 
@@ -25,6 +26,7 @@ public class AccountController : Controller
 
     [HttpPost]
     [ValidateAntiForgeryToken]
+    [EnableRateLimiting("Login")]
     public async Task<IActionResult> Login(string email, string password, string? returnUrl = null)
     {
         ViewData["ReturnUrl"] = returnUrl;

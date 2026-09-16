@@ -75,7 +75,7 @@ public static class EndpointExtensions
                 return Results.Unauthorized();
             }
 
-            var result = await signInManager.CheckPasswordSignInAsync(user, request.Password, false);
+            var result = await signInManager.CheckPasswordSignInAsync(user, request.Password, lockoutOnFailure: true);
             if (!result.Succeeded)
             {
                 return Results.Unauthorized();
@@ -102,6 +102,7 @@ public static class EndpointExtensions
             });
         })
         .AllowAnonymous()
+        .RequireRateLimiting("Login")
         .WithName("GenerateToken")
         .WithTags("Auth");
 

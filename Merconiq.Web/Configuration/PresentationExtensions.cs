@@ -99,6 +99,15 @@ public static class PresentationExtensions
                         Window = TimeSpan.FromMinutes(1),
                         QueueLimit = 10
                     }));
+            options.AddPolicy("Login", httpContext =>
+                RateLimitPartition.GetFixedWindowLimiter(
+                    RateLimitPartitionKey.ForLogin(httpContext),
+                    _ => new FixedWindowRateLimiterOptions
+                    {
+                        PermitLimit = 20,
+                        Window = TimeSpan.FromMinutes(1),
+                        QueueLimit = 0
+                    }));
             options.AddFixedWindowLimiter("Ai", limiter =>
             {
                 limiter.PermitLimit = 10;
