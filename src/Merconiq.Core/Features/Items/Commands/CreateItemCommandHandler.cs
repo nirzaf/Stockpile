@@ -24,7 +24,14 @@ public class CreateItemCommandHandler : IRequestHandler<CreateItemCommand, Item>
             ItemCode = request.ItemCode,
             Description = request.Description,
             Rate = request.Rate,
-            SupplierId = request.SupplierId
+            SupplierId = request.SupplierId,
+            BaseUnitId = request.BaseUnitId,
+            PurchaseUnitId = request.PurchaseUnitId,
+            SalesUnitId = request.SalesUnitId,
+            PurchaseToBaseFactor = request.PurchaseToBaseFactor,
+            SalesToBaseFactor = request.SalesToBaseFactor,
+            QuantityPrecision = request.QuantityPrecision,
+            WholeUnitOnly = request.WholeUnitOnly
         };
         return await _itemService.CreateAsync(item);
     }
