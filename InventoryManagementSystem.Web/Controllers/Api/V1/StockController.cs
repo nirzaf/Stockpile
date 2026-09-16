@@ -103,7 +103,7 @@ public class StockController : ControllerBase
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [Authorize(Roles = "Admin,Manager,Staff")]
-    [ValidateAntiForgeryToken]
+    [IgnoreAntiforgeryToken]
     public async Task<IActionResult> Sell(
         [FromBody] SellStockCommand command,
         [FromServices] IIdempotencyKeyStore idempotencyKeyStore,
