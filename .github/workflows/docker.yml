@@ -3,67 +3,112 @@ name: Docker
 on:
   push:
     branches: [master]
-    tags: ["v[0-9]+.[0-9]+.[0-9]+*"]
+    tags: ["v*"]
   workflow_dispatch:
     inputs:
       ref:
-        description: "Ref to build (branch or tag)"
+        description: "Branch or existing tag to validate and build"
         required: false
         default: master
+      dry_run:
+        description: "Validate and build without logging in or pushing"
+        required: false
+        type: boolean
+        default: false
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_OWNER: nirzaf
-  IMAGE_NAME: inventorymanagementsystem
+  IMAGE: ghcr.io/nirzaf/inventorymanagementsystem
 
 permissions:
   contents: read
+  actions: read
   packages: write
 
 concurrency:
-  group: docker-${{ github.ref }}
+  group: docker-${{ inputs.ref || github.ref }}
   cancel-in-progress: false
 
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
+      - name: Checkout workflow revision
         uses: actions/checkout@v7
         with:
-          ref: ${{ github.event.inputs.ref || github.ref }}
+          ref: ${{ github.sha }}
           fetch-depth: 0
+
+      - name: Resolve exact candidate SHA
+        id: candidate
+        env:
+          CANDIDATE_REF: ${{ inputs.ref || github.ref }}
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_SHA: ${{ github.sha }}
+        run: |
+          git fetch --force --prune origin \
+            '+refs/heads/*:refs/remotes/origin/*' \
+            '+refs/tags/*:refs/tags/*'
+          scripts/resolve-release-candidate.sh \
+            --remote origin \
+            --ref "$CANDIDATE_REF" \
+            --mode docker \
+            --event-name "$EVENT_NAME" \
+            --event-sha "$EVENT_SHA" \
+            --github-output "$GITHUB_OUTPUT"
+
+      - name: Checkout exact candidate
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ steps.candidate.outputs.candidate_sha }}
+          fetch-depth: 0
+
+      - name: Revalidate candidate before build
+        env:
+          CANDIDATE_REF: ${{ steps.candidate.outputs.candidate_ref }}
+          CANDIDATE_SHA: ${{ steps.candidate.outputs.candidate_sha }}
+        run: |
+          remote_sha="$(git ls-remote origin "$CANDIDATE_REF" "$CANDIDATE_REF^{}" \
+            | awk -v ref="$CANDIDATE_REF" '$2 == ref { direct = $1 } $2 == ref "^{}" { peeled = $1 } END { print peeled ? peeled : direct }')"
+          [[ "$remote_sha" == "$CANDIDATE_SHA" ]] || {
+            echo "candidate ref moved during validation: expected $CANDIDATE_SHA, found $remote_sha" >&2
+            exit 1
+          }
+          git cat-file -e "$CANDIDATE_SHA^{commit}"
+
+      - name: Require successful validation for exact candidate
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CANDIDATE_SHA: ${{ steps.candidate.outputs.candidate_sha }}
+        run: scripts/wait-for-validated-sha.sh --repository "$GITHUB_REPOSITORY" --sha "$CANDIDATE_SHA"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 
       - name: Log in to GitHub Container Registry
+        if: inputs.dry_run != true
         uses: docker/login-action@v4
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Lowercase image name
-        id: lc
-        run: echo "image=${{ env.REGISTRY }}/${{ env.IMAGE_OWNER }}/${IMAGE_NAME,,}" >> "$GITHUB_OUTPUT"
-
       - name: Extract Docker metadata
         id: meta
         uses: docker/metadata-action@v6
         with:
-          images: ${{ steps.lc.outputs.image }}
+          images: ${{ env.IMAGE }}
           tags: |
-            type=ref,event=branch
-            type=ref,event=pr
-            type=sha,format=short
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=semver,pattern={{major}}
-            type=raw,value=latest,enable={{is_default_branch}}
+            type=ref,event=branch,enable=${{ github.event_name != 'workflow_dispatch' }}
+            type=sha,format=long,prefix=sha-
+            type=semver,pattern={{version}},value=${{ steps.candidate.outputs.candidate_tag }},enable=${{ steps.candidate.outputs.candidate_kind == 'tag' }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ steps.candidate.outputs.candidate_tag }},enable=${{ steps.candidate.outputs.candidate_kind == 'tag' }}
+            type=semver,pattern={{major}},value=${{ steps.candidate.outputs.candidate_tag }},enable=${{ steps.candidate.outputs.candidate_kind == 'tag' }}
+            type=raw,value=latest,enable=${{ github.event_name != 'workflow_dispatch' && github.ref == 'refs/heads/master' }}
           labels: |
             org.opencontainers.image.title=Inventory Management System
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ steps.candidate.outputs.candidate_sha }}
             org.opencontainers.image.licenses=MIT
 
       - name: Pre-pull base images (with retry for MCR rate limits)
@@ -77,12 +122,12 @@ jobs:
             sleep 10
           done
 
-      - name: Build and push
+      - name: Build candidate image
         uses: docker/build-push-action@v7
         with:
           context: .
           file: ./Dockerfile
-          push: ${{ github.event_name != 'pull_request' }}
+          push: ${{ inputs.dry_run != true }}
           platforms: linux/amd64,linux/arm64
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
@@ -91,12 +136,17 @@ jobs:
           provenance: true
           sbom: true
 
-      - name: Expose image tags
-        if: github.event_name != 'pull_request'
+      - name: Expose result
         run: |
           {
-            echo "## Docker image published"
+            if [[ "${{ inputs.dry_run }}" == "true" ]]; then
+              echo "## Docker image dry run"
+              echo "No registry login or push was performed."
+            else
+              echo "## Docker image published"
+            fi
+            echo "Candidate: ${{ steps.candidate.outputs.candidate_sha }}"
+            echo "Immutable image tag: ${{ env.IMAGE }}:sha-${{ steps.candidate.outputs.candidate_sha }}"
             echo "Tags:"
-            printf '%s\n' '${{ steps.meta.outputs.json }}' \
-              | jq -r '.tags[] | "- " + .'
+            printf '%s\n' '${{ steps.meta.outputs.json }}' | jq -r '.tags[] | "- " + .'
           } >> "$GITHUB_STEP_SUMMARY"
