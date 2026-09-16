@@ -24,6 +24,8 @@ public class StockServiceTests
 
     public StockServiceTests()
     {
+        _itemRepoMock.Setup(r => r.GetByIdAsync(It.IsAny<int>()))
+            .ReturnsAsync((Item?)null);
         _uowMock
             .Setup(u => u.ExecuteInTransactionAsync(
                 It.IsAny<Func<Task>>(),
@@ -291,6 +293,7 @@ public class StockServiceTests
             .With(i => i.Id, 1)
             .With(i => i.ItemCode, "LOW-001")
             .With(i => i.ReorderLevel, 10)
+            .With(i => i.IsActive, true)
             .Create();
         var stock = _fixture.Build<StockInHand>()
             .With(s => s.ItemId, 1)
@@ -317,5 +320,17 @@ public class StockServiceTests
         payload.GetType().GetProperty("ReorderLevel")!.GetValue(payload).Should().Be(10);
         _uowMock.Verify(u => u.ExecuteInTransactionAsync(
             It.IsAny<Func<Task>>(), CancellationToken.None, It.IsAny<Func<Task<bool>>?>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task StockOperation_rejects_inactive_items()
+    {
+        _itemRepoMock.Setup(r => r.GetByIdAsync(1))
+            .ReturnsAsync(new Item { Id = 1, IsActive = false });
+
+        var act = () => _sut.SellStockAsync(1, 2, 1, null);
+
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("Inactive items cannot be used in stock operations.");
     }
 }

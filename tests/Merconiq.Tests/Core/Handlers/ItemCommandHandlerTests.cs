@@ -60,6 +60,28 @@ public class ItemCommandHandlerTests
             It.Is<Item>(i => i.SupplierId == 5)), Times.Once);
     }
 
+    [Fact]
+    public async Task UpdateItemCommandHandler_preserves_quantity_conventions_when_omitted()
+    {
+        var item = _fixture.Build<Item>().With(i => i.Id, 1)
+            .With(i => i.PurchaseToBaseFactor, 12m)
+            .With(i => i.SalesToBaseFactor, 0.5m)
+            .With(i => i.QuantityPrecision, 3)
+            .With(i => i.WholeUnitOnly, true)
+            .Create();
+        var serviceMock = new Mock<IItemService>();
+        serviceMock.Setup(s => s.GetByIdAsync(1)).ReturnsAsync(item);
+        var handler = new UpdateItemCommandHandler(serviceMock.Object, NullLogger<UpdateItemCommandHandler>.Instance);
+
+        await handler.Handle(new UpdateItemCommand(1, "Updated", 25m, null), CancellationToken.None);
+
+        serviceMock.Verify(s => s.UpdateAsync(It.Is<Item>(updated =>
+            updated.PurchaseToBaseFactor == 12m &&
+            updated.SalesToBaseFactor == 0.5m &&
+            updated.QuantityPrecision == 3 &&
+            updated.WholeUnitOnly)), Times.Once);
+    }
+
     // === DeleteItemCommandHandler ===
 
     [Fact]

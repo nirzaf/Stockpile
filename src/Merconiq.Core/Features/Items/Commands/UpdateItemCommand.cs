@@ -5,5 +5,5 @@ namespace Merconiq.Core.Features.Items.Commands;
 
 public record UpdateItemCommand(int Id, string Description, decimal Rate, int? SupplierId,
     int? BaseUnitId = null, int? PurchaseUnitId = null, int? SalesUnitId = null,
-    decimal PurchaseToBaseFactor = 1m, decimal SalesToBaseFactor = 1m,
-    int QuantityPrecision = 0, bool WholeUnitOnly = false) : IRequest;
+    decimal? PurchaseToBaseFactor = null, decimal? SalesToBaseFactor = null,
+    int? QuantityPrecision = null, bool? WholeUnitOnly = null, bool? IsActive = null) : IRequest;
