@@ -92,6 +92,18 @@ public sealed class OpeningStockApiTests : IClassFixture<CustomWebApplicationFac
         (await db.StockInHand.SingleAsync(stock => stock.ItemId == item.Id)).Quantity.Should().Be(10);
         (await db.OpeningStockImports.CountAsync(import => import.ImportReference == request.ImportReference)).Should().Be(1);
         (await db.OpeningStockImportLines.CountAsync(line => line.ItemId == item.Id)).Should().Be(1);
+
+        var reversal = await client.PostAsJsonAsync("/api/v1/stock/opening/reverse", new
+        {
+            ImportReference = request.ImportReference,
+            CorrectionReference = $"correction-{Guid.NewGuid():N}",
+            ApprovalReference = $"approval-reversal-{Guid.NewGuid():N}",
+            Reason = "Opening count correction"
+        });
+
+        reversal.StatusCode.Should().Be(HttpStatusCode.OK);
+        (await db.StockInHand.AsNoTracking().SingleAsync(stock => stock.ItemId == item.Id)).Quantity.Should().Be(0);
+        (await db.OpeningStockCorrections.CountAsync()).Should().Be(1);
     }
 
     [Fact]

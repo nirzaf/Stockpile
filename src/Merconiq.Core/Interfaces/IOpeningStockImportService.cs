@@ -11,4 +11,8 @@ public interface IOpeningStockImportService
     Task<OpeningStockReplayResult> ReplayAsync(
         OpeningStockReplayRequest request,
         CancellationToken cancellationToken = default);
+
+    Task<OpeningStockReversalResult> ReverseAsync(
+        OpeningStockReversalRequest request,
+        CancellationToken cancellationToken = default);
 }

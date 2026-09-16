@@ -92,6 +92,9 @@ mutations. Webhook administration is restricted to `Admin` and `Manager`.
 | POST | `/api/v1/stock/receive` | `Admin`, `Manager`, or `Staff` | `204` |
 | POST | `/api/v1/stock/transfer` | `Admin`, `Manager`, or `Staff` | `204` |
 | POST | `/api/v1/stock/sell` | `Admin`, `Manager`, or `Staff` | `204` |
+| POST | `/api/v1/stock/opening/preview` | Tenant `Admin` with `Approve` | `200` or `422` |
+| POST | `/api/v1/stock/opening/replay` | Tenant `Admin` with `Approve` | `200` or `422` |
+| POST | `/api/v1/stock/opening/reverse` | Tenant `Admin` with `Approve` and `Reverse` | `200` |
 | GET | `/api/v1/webhooks` | `Admin` or `Manager` | `200` |
 | POST | `/api/v1/webhooks` | `Admin` or `Manager` | `200` |
 | PUT | `/api/v1/webhooks/{id}` | `Admin` or `Manager` | `200` or `404` |
@@ -105,6 +108,17 @@ historical sell-row count, or all-item catalog size exceeds its configured limit
 Over-limit forecasts are rejected, never silently truncated; see
 [`FORECASTING_RUNTIME.md`](FORECASTING_RUNTIME.md) for defaults and supported
 configuration ceilings.
+
+Opening baseline endpoints accept an explicit-cost CSV with the header
+`external_reference,item_external_id,location_id,quantity,unit_cost`. Preview is
+read-only and reports current-versus-approved unbatched quantities. Replay uses a
+stable import reference and approval reference, defaults the cutover to the
+server's current UTC instant when omitted, and creates one immutable opening
+movement and valuation entry per valid source row. A tenant can have one approved
+baseline. Reversal requires a distinct correction and approval reference plus a
+reason; it posts forward stock effects and never edits the original baseline.
+Missing cost is rejected, while explicit zero cost is accepted. The M06 opening
+journal and financial activation gate are outside this API slice.
 
 ## Outbound webhooks
 

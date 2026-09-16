@@ -16,7 +16,8 @@ public sealed class OpeningStockImportService(
     InventoryDbContext context,
     ITenantContext tenantContext,
     IUnitOfWork unitOfWork,
-    IHttpContextAccessor httpContextAccessor) : IOpeningStockImportService
+    IHttpContextAccessor httpContextAccessor,
+    IStockService? stockService = null) : IOpeningStockImportService
 {
     private static readonly string[] ExpectedHeader =
         ["external_reference", "item_external_id", "location_id", "quantity", "unit_cost"];
@@ -35,13 +36,18 @@ public sealed class OpeningStockImportService(
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(request);
+        var requestedCutoverAt = request.CutoverAt;
+        var cutoverAt = (requestedCutoverAt ?? DateTime.UtcNow).ToUniversalTime();
+        if (cutoverAt > DateTime.UtcNow)
+            throw new ArgumentException("Cutover instant cannot be in the future.", nameof(request));
+        request = request with { CutoverAt = cutoverAt };
         ValidateReference(request.ImportReference, nameof(request.ImportReference));
         ValidateReference(request.ApprovalReference, nameof(request.ApprovalReference));
         if (!tenantContext.IsResolved)
             throw new InvalidOperationException("A tenant context is required for opening stock replay.");
 
-        var requestHash = Convert.ToHexString(
-            SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(request)));
+        var requestHash = Convert.ToHexString(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(
+            request with { CutoverAt = requestedCutoverAt.HasValue ? cutoverAt : null })));
         OpeningStockReplayResult? replayResult = null;
 
         try
@@ -60,6 +66,9 @@ public sealed class OpeningStockImportService(
                     replayResult = AlreadyApplied(existing);
                     return;
                 }
+
+                if (await context.OpeningStockImports.AnyAsync(cancellationToken))
+                    throw new InvalidOperationException("The tenant already has an approved opening baseline.");
 
                 var validation = await ValidateCsvAsync(request.Csv, cancellationToken);
                 if (validation.Rejected > 0)
@@ -81,6 +90,7 @@ public sealed class OpeningStockImportService(
                     RequestHash = requestHash,
                     ApprovedBy = httpContextAccessor.HttpContext?.User?.Identity?.Name ?? "System",
                     ApprovedAt = DateTime.UtcNow,
+                    CutoverAt = cutoverAt,
                     LineCount = validation.Valid
                 };
 
@@ -102,23 +112,65 @@ public sealed class OpeningStockImportService(
                             Quantity = quantity
                         });
                     }
-                    else
+                    else if (stock.Quantity != quantity)
                     {
-                        stock.Quantity = checked(stock.Quantity + quantity);
+                        throw new InvalidOperationException(
+                            $"Opening baseline quantity for item {group.Key.ItemId} at location {group.Key.LocationId} " +
+                            $"does not reconcile with current stock ({stock.Quantity} versus approved {quantity}).");
                     }
-                }
 
-                foreach (var row in validation.ValidRows)
-                {
-                    import.Lines.Add(new OpeningStockImportLine
+                    if (await context.StockValuationBuckets.AnyAsync(bucket =>
+                            bucket.ItemId == group.Key.ItemId && bucket.LocationId == group.Key.LocationId,
+                            cancellationToken))
                     {
-                        RowNumber = row.RowNumber,
-                        ExternalReference = row.ExternalReference,
-                        ItemId = row.ItemId,
-                        LocationId = row.LocationId,
-                        Quantity = row.Quantity,
-                        UnitCost = row.UnitCost
-                    });
+                        throw new InvalidOperationException(
+                            $"Opening baseline cannot be applied to an already-valued stock bucket for item {group.Key.ItemId} " +
+                            $"at location {group.Key.LocationId}.");
+                    }
+
+                    var bucket = new StockValuationBucket
+                    {
+                        ItemId = group.Key.ItemId,
+                        LocationId = group.Key.LocationId,
+                        Quantity = quantity,
+                        Value = Round(group.Sum(row => row.Quantity * row.UnitCost))
+                    };
+                    context.StockValuationBuckets.Add(bucket);
+
+                    foreach (var row in group)
+                    {
+                        var transaction = new StockTransaction
+                        {
+                            ItemId = row.ItemId,
+                            FromLocationId = row.LocationId,
+                            ToLocationId = row.LocationId,
+                            Quantity = row.Quantity,
+                            TransactionType = TransactionType.Opening,
+                            TransactionDate = cutoverAt,
+                            Notes = $"Opening baseline {request.ImportReference}; source {row.ExternalReference}"
+                        };
+                        context.StockTransactions.Add(transaction);
+                        import.Lines.Add(new OpeningStockImportLine
+                        {
+                            RowNumber = row.RowNumber,
+                            ExternalReference = row.ExternalReference,
+                            ItemId = row.ItemId,
+                            LocationId = row.LocationId,
+                            Quantity = row.Quantity,
+                            UnitCost = row.UnitCost,
+                            StockTransaction = transaction
+                        });
+                        context.StockValuationEntries.Add(new StockValuationEntry
+                        {
+                            StockTransaction = transaction,
+                            ItemId = row.ItemId,
+                            LocationId = row.LocationId,
+                            EntryType = StockValuationEntryType.Receipt,
+                            Quantity = row.Quantity,
+                            UnitCost = Round(row.UnitCost),
+                            TotalValue = Round(row.Quantity * row.UnitCost)
+                        });
+                    }
                 }
 
                 context.OpeningStockImports.Add(import);
@@ -151,6 +203,76 @@ public sealed class OpeningStockImportService(
             ?? throw new InvalidOperationException("Opening stock replay did not produce a result.");
     }
 
+    public async Task<OpeningStockReversalResult> ReverseAsync(
+        OpeningStockReversalRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        ValidateReference(request.ImportReference, nameof(request.ImportReference));
+        ValidateReference(request.CorrectionReference, nameof(request.CorrectionReference));
+        ValidateReference(request.ApprovalReference, nameof(request.ApprovalReference));
+        if (string.IsNullOrWhiteSpace(request.Reason) || request.Reason.Length > 500)
+            throw new ArgumentException("A correction reason is required and must be at most 500 characters.", nameof(request));
+        if (!tenantContext.IsResolved)
+            throw new InvalidOperationException("A tenant context is required for opening stock reversal.");
+        if (stockService is null)
+            throw new InvalidOperationException("Stock reversal persistence is not configured.");
+
+        OpeningStockReversalResult? result = null;
+        var requestHash = Convert.ToHexString(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(request)));
+        await unitOfWork.ExecuteInTransactionAsync(async () =>
+        {
+            var existingCorrection = await context.OpeningStockCorrections
+                .AsNoTracking()
+                .SingleOrDefaultAsync(correction =>
+                    correction.CorrectionReference == request.CorrectionReference,
+                    cancellationToken);
+            if (existingCorrection is not null)
+            {
+                if (!string.Equals(existingCorrection.RequestHash, requestHash, StringComparison.Ordinal))
+                    throw new InvalidOperationException("The correction reference was already used with different data.");
+                result = new(request.CorrectionReference, existingCorrection.LineCount, true);
+                return;
+            }
+
+            var import = await context.OpeningStockImports
+                .Include(value => value.Lines)
+                .SingleOrDefaultAsync(value => value.ImportReference == request.ImportReference, cancellationToken)
+                ?? throw new KeyNotFoundException("Opening baseline was not found.");
+            if (await context.OpeningStockCorrections.AnyAsync(
+                    correction => correction.OpeningStockImportId == import.Id, cancellationToken))
+            {
+                throw new InvalidOperationException("The opening baseline has already been reversed.");
+            }
+
+            foreach (var line in import.Lines.OrderBy(line => line.RowNumber))
+            {
+                await stockService.SellStockAsync(
+                    line.ItemId,
+                    line.LocationId,
+                    line.Quantity,
+                    $"Opening baseline reversal {request.CorrectionReference}; {request.Reason}");
+            }
+
+            context.OpeningStockCorrections.Add(new OpeningStockCorrection
+            {
+                OpeningStockImportId = import.Id,
+                CorrectionReference = request.CorrectionReference,
+                ApprovalReference = request.ApprovalReference,
+                RequestHash = requestHash,
+                Reason = request.Reason.Trim(),
+                CorrectedBy = httpContextAccessor.HttpContext?.User?.Identity?.Name ?? "System",
+                CorrectedAt = DateTime.UtcNow,
+                LineCount = import.Lines.Count
+            });
+            await unitOfWork.SaveChangesAsync(cancellationToken);
+            result = new(request.CorrectionReference, import.Lines.Count, false);
+        }, cancellationToken);
+
+        return result
+            ?? throw new InvalidOperationException("Opening stock reversal did not produce a result.");
+    }
+
     private async Task<ValidationSnapshot> ValidateCsvAsync(
         string? csv,
         CancellationToken cancellationToken)
@@ -172,6 +294,10 @@ public sealed class OpeningStockImportService(
             .GroupBy(item => item.ExternalId!, StringComparer.Ordinal)
             .ToDictionary(group => group.Key, group => group.ToList(), StringComparer.Ordinal);
         var seenReferences = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var existingStock = await context.StockInHand
+            .AsNoTracking()
+            .Where(stock => stock.BatchNumber == null && stock.ExpiryDate == null)
+            .ToDictionaryAsync(stock => (stock.ItemId, stock.LocationId), stock => stock.Quantity, cancellationToken);
         var results = new List<OpeningStockRowResult>(rows.Count);
         var validRows = new List<ValidatedOpeningRow>();
 
@@ -193,15 +319,28 @@ public sealed class OpeningStockImportService(
             results.Add(new(row.RowNumber, row.ExternalReference, "valid"));
         }
 
+        var discrepancies = validRows
+            .GroupBy(row => (row.ItemId, row.LocationId))
+            .Select(group =>
+            {
+                var approved = group.Sum(row => row.Quantity);
+                var current = existingStock.GetValueOrDefault(group.Key);
+                return new OpeningStockDiscrepancy(group.Key.ItemId, group.Key.LocationId, current, approved, approved - current);
+            })
+            .Where(discrepancy => discrepancy.Difference != 0 &&
+                                  existingStock.ContainsKey((discrepancy.ItemId, discrepancy.LocationId)))
+            .ToArray();
+
         return new(
             results.Count(row => row.Status == "valid"),
             results.Count(row => row.Status == "rejected"),
             results,
-            validRows);
+            validRows,
+            discrepancies);
     }
 
     private static OpeningStockPreviewResult Summarize(ValidationSnapshot validation) =>
-        new(validation.Valid, validation.Rejected, validation.Results);
+        new(validation.Valid, validation.Rejected, validation.Results, validation.Discrepancies);
 
     private static string? Validate(
         OpeningRow row,
@@ -261,6 +400,8 @@ public sealed class OpeningStockImportService(
 
     private static bool IsUniqueConstraintViolation(DbUpdateException exception) =>
         exception.InnerException is PostgresException { SqlState: PostgresErrorCodes.UniqueViolation };
+
+    private static decimal Round(decimal value) => decimal.Round(value, 6, MidpointRounding.AwayFromZero);
 
     private static List<OpeningRow> Parse(string? csv)
     {
@@ -341,7 +482,8 @@ public sealed class OpeningStockImportService(
         int Valid,
         int Rejected,
         IReadOnlyList<OpeningStockRowResult> Results,
-        IReadOnlyList<ValidatedOpeningRow> ValidRows);
+        IReadOnlyList<ValidatedOpeningRow> ValidRows,
+        IReadOnlyList<OpeningStockDiscrepancy> Discrepancies);
 
     private sealed record ValidatedOpeningRow(
         int RowNumber,
