@@ -31,6 +31,7 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
 
     /// <summary>Catalog of items.</summary>
     public DbSet<Item> Items { get; set; } = null!;
+    public DbSet<UnitOfMeasure> UnitsOfMeasure { get; set; } = null!;
 
     /// <summary>Current stock-in-hand per item per location.</summary>
     public DbSet<StockInHand> StockInHand { get; set; } = null!;
@@ -237,6 +238,11 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
             entity.Property(e => e.Description).HasMaxLength(500);
             entity.Property(e => e.Barcode).HasMaxLength(100);
             entity.Property(e => e.Rate).HasColumnType("decimal(18,2)");
+            entity.Property(e => e.PurchaseToBaseFactor).HasColumnType("decimal(18,6)");
+            entity.Property(e => e.SalesToBaseFactor).HasColumnType("decimal(18,6)");
+            entity.HasOne(e => e.BaseUnit).WithMany().HasForeignKey(e => e.BaseUnitId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(e => e.PurchaseUnit).WithMany().HasForeignKey(e => e.PurchaseUnitId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(e => e.SalesUnit).WithMany().HasForeignKey(e => e.SalesUnitId).OnDelete(DeleteBehavior.Restrict);
             entity.HasIndex(e => e.SupplierId);
             entity.Property(e => e.ReorderLevel).HasDefaultValue(10);
 
@@ -244,6 +250,16 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
                   .WithMany(s => s.Items)
                   .HasForeignKey(i => i.SupplierId)
                   .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        modelBuilder.Entity<UnitOfMeasure>(entity =>
+        {
+            entity.HasQueryFilter(e => !e.IsDeleted && e.TenantId == CurrentTenantId);
+            entity.Property(e => e.TenantId).HasMaxLength(64).IsRequired();
+            entity.Property(e => e.Code).HasMaxLength(32).IsRequired();
+            entity.Property(e => e.Name).HasMaxLength(100).IsRequired();
+            entity.HasIndex(e => new { e.TenantId, e.Code }).IsUnique();
+            entity.Property(e => e.DecimalPlaces).HasDefaultValue(0);
         });
 
         modelBuilder.Entity<Supplier>(entity =>

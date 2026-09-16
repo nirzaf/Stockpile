@@ -21,6 +21,21 @@ public class Item : AuditableEntity, ISoftDelete
     /// <summary>Selling rate for the item.</summary>
     public decimal Rate { get; set; }
 
+    /// <summary>Current selling price; historical acquisition cost is stored on postings.</summary>
+    public decimal SellingPrice => Rate;
+
+    public int? BaseUnitId { get; set; }
+    public UnitOfMeasure? BaseUnit { get; set; }
+    public int? PurchaseUnitId { get; set; }
+    public UnitOfMeasure? PurchaseUnit { get; set; }
+    public int? SalesUnitId { get; set; }
+    public UnitOfMeasure? SalesUnit { get; set; }
+    public decimal PurchaseToBaseFactor { get; set; } = 1m;
+    public decimal SalesToBaseFactor { get; set; } = 1m;
+    public int QuantityPrecision { get; set; }
+    public bool WholeUnitOnly { get; set; }
+    public bool IsActive { get; set; } = true;
+
     public int? SupplierId { get; set; }
     public Supplier? Supplier { get; set; }
 

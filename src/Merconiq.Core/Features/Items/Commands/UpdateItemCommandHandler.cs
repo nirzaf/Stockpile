@@ -26,6 +26,13 @@ public class UpdateItemCommandHandler : IRequestHandler<UpdateItemCommand>
         item.Description = request.Description;
         item.Rate = request.Rate;
         item.SupplierId = request.SupplierId;
+        item.BaseUnitId = request.BaseUnitId;
+        item.PurchaseUnitId = request.PurchaseUnitId;
+        item.SalesUnitId = request.SalesUnitId;
+        item.PurchaseToBaseFactor = request.PurchaseToBaseFactor;
+        item.SalesToBaseFactor = request.SalesToBaseFactor;
+        item.QuantityPrecision = request.QuantityPrecision;
+        item.WholeUnitOnly = request.WholeUnitOnly;
         await _itemService.UpdateAsync(item);
     }
 }
