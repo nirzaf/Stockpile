@@ -107,6 +107,9 @@ public class PurchaseOrderService : IPurchaseOrderService
         var po = await _poRepo.GetByIdAsync(id);
         if (po != null)
         {
+            if (po.Status is not (PurchaseOrderStatus.Draft or PurchaseOrderStatus.Pending))
+                throw new InvalidOperationException($"Purchase order {id} in status {po.Status} cannot be deleted.");
+
             _logger.LogInformation("Deleting PO {Id}", id);
             await _poRepo.DeleteAsync(po);
             await _unitOfWork.SaveChangesAsync();
