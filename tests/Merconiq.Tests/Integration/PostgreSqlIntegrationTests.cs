@@ -10,6 +10,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
+using Npgsql;
 
 namespace Merconiq.Tests.Integration;
 
@@ -61,7 +62,10 @@ public sealed class PostgreSqlIntegrationTests
         var tenantB = Unique("stock-company-b");
         int itemId;
         int companyALocationId;
+        int sameCompanyLocationId;
         int companyBLocationId;
+        int legacyLocationId;
+        int deletedLocationId;
         int otherTenantLocationId;
 
         await using (var setup = _fixture.CreateContext(tenantA))
@@ -72,22 +76,29 @@ public sealed class PostgreSqlIntegrationTests
             await setup.SaveChangesAsync();
 
             var branchA = new Branch { CompanyId = companyA.Id, Code = $"A-{Guid.NewGuid():N}"[..12], Name = "Branch A" };
+            var branchA2 = new Branch { CompanyId = companyA.Id, Code = $"A-{Guid.NewGuid():N}"[..12], Name = "Branch A2" };
             var branchB = new Branch { CompanyId = companyB.Id, Code = $"B-{Guid.NewGuid():N}"[..12], Name = "Branch B" };
-            setup.Branches.AddRange(branchA, branchB);
+            setup.Branches.AddRange(branchA, branchA2, branchB);
             await setup.SaveChangesAsync();
 
             var item = new Item { ItemCode = Unique("STOCK-ITEM"), Description = "Ownership fixture", Rate = 1m };
             var locationA = new Location { Name = Unique("location-a"), BranchId = branchA.Id };
+            var sameCompanyLocation = new Location { Name = Unique("same-company"), BranchId = branchA2.Id };
             var locationB = new Location { Name = Unique("location-b"), BranchId = branchB.Id };
+            var legacyLocation = new Location { Name = Unique("legacy-unmapped") };
+            var deletedLocation = new Location { Name = Unique("deleted"), IsDeleted = true };
             setup.Items.Add(item);
-            setup.Locations.AddRange(locationA, locationB);
+            setup.Locations.AddRange(locationA, sameCompanyLocation, locationB, legacyLocation, deletedLocation);
             await setup.SaveChangesAsync();
 
             setup.StockInHand.Add(new StockInHand { ItemId = item.Id, LocationId = locationA.Id, Quantity = 10 });
             await setup.SaveChangesAsync();
             itemId = item.Id;
             companyALocationId = locationA.Id;
+            sameCompanyLocationId = sameCompanyLocation.Id;
             companyBLocationId = locationB.Id;
+            legacyLocationId = legacyLocation.Id;
+            deletedLocationId = deletedLocation.Id;
         }
 
         await using (var setup = _fixture.CreateContext(tenantB))
@@ -112,6 +123,11 @@ public sealed class PostgreSqlIntegrationTests
                 new TestTenantContext(tenantA),
                 NullLogger<StockService>.Instance);
 
+            await stockService.TransferStockAsync(
+                itemId, companyALocationId, sameCompanyLocationId, 1, "same-company");
+            await stockService.TransferStockAsync(
+                itemId, companyALocationId, legacyLocationId, 1, "legacy-unmapped");
+
             var crossCompany = () => stockService.TransferStockAsync(
                 itemId, companyALocationId, companyBLocationId, 1, "cross-company");
             await crossCompany.Should().ThrowAsync<InvalidOperationException>()
@@ -120,6 +136,22 @@ public sealed class PostgreSqlIntegrationTests
             var crossTenant = () => stockService.ReceiveStockAsync(itemId, otherTenantLocationId, 1, "cross-tenant");
             await crossTenant.Should().ThrowAsync<InvalidOperationException>()
                 .WithMessage("Location does not exist in the current tenant or is deleted.");
+
+            var deletedLocation = () => stockService.ReceiveStockAsync(itemId, deletedLocationId, 1, "deleted-location");
+            await deletedLocation.Should().ThrowAsync<InvalidOperationException>()
+                .WithMessage("Location does not exist in the current tenant or is deleted.");
+        }
+
+        await using (var verify = _fixture.CreateContext(tenantA))
+        {
+            (await verify.StockInHand.SingleAsync(stock => stock.ItemId == itemId && stock.LocationId == companyALocationId))
+                .Quantity.Should().Be(8);
+            (await verify.StockInHand.SingleAsync(stock => stock.ItemId == itemId && stock.LocationId == sameCompanyLocationId))
+                .Quantity.Should().Be(1);
+            (await verify.StockInHand.SingleAsync(stock => stock.ItemId == itemId && stock.LocationId == legacyLocationId))
+                .Quantity.Should().Be(1);
+            (await verify.StockInHand.AnyAsync(stock => stock.ItemId == itemId && stock.LocationId == companyBLocationId))
+                .Should().BeFalse();
         }
 
         await using (var forged = _fixture.CreateContext(tenantA))
@@ -133,6 +165,31 @@ public sealed class PostgreSqlIntegrationTests
 
             var act = () => forged.SaveChangesAsync();
             await act.Should().ThrowAsync<DbUpdateException>();
+        }
+
+        await using (var forgedTransaction = _fixture.CreateContext(tenantA))
+        {
+            forgedTransaction.StockTransactions.Add(new StockTransaction
+            {
+                ItemId = itemId,
+                FromLocationId = companyALocationId,
+                ToLocationId = otherTenantLocationId,
+                Quantity = 1,
+                TransactionType = TransactionType.Transfer,
+                TransactionDate = DateTime.UtcNow
+            });
+            var act = () => forgedTransaction.SaveChangesAsync();
+            await act.Should().ThrowAsync<DbUpdateException>();
+        }
+
+        await using (var hardDelete = _fixture.CreateContext(tenantA))
+        {
+            var deleteLegacyLocation = () => hardDelete.Locations
+                .IgnoreQueryFilters()
+                .Where(location => location.Id == legacyLocationId)
+                .ExecuteDeleteAsync();
+            var exception = await deleteLegacyLocation.Should().ThrowAsync<PostgresException>();
+            exception.Which.SqlState.Should().Be(PostgresErrorCodes.ForeignKeyViolation);
         }
     }
 

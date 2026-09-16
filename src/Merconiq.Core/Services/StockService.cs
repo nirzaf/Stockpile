@@ -316,18 +316,28 @@ public class StockService : IStockService
 
     private async Task<Location> EnsureLocationUsableAsync(int locationId)
     {
-        var location = await _locationRepo.GetByIdAsync(locationId)
-            ?? throw new InvalidOperationException("Location does not exist in the current tenant or is deleted.");
+        if (!_tenantContext.IsResolved)
+            throw new InvalidOperationException("A tenant context is required for stock operations.");
+
+        // Filtered queries apply tenant and soft-delete predicates even when this DbContext
+        // has already tracked an entity with the requested key.
+        var location = (await _locationRepo.FindAsync(candidate => candidate.Id == locationId))
+            .FirstOrDefault();
+        if (location is null || location.IsDeleted ||
+            !string.Equals(location.TenantId, _tenantContext.TenantId, StringComparison.Ordinal))
+            throw new InvalidOperationException("Location does not exist in the current tenant or is deleted.");
 
         if (location.BranchId is not int branchId)
             return location;
 
-        var branch = await _branchRepo.GetByIdAsync(branchId)
-            ?? throw new InvalidOperationException("Location ownership is not valid for the current tenant.");
+        var branch = (await _branchRepo.FindAsync(candidate => candidate.Id == branchId))
+            .FirstOrDefault();
+        if (branch is null ||
+            !string.Equals(branch.TenantId, _tenantContext.TenantId, StringComparison.Ordinal) ||
+            !string.Equals(branch.TenantId, location.TenantId, StringComparison.Ordinal))
+            throw new InvalidOperationException("Location ownership is not valid for the current tenant.");
         if (!branch.IsActive)
             throw new InvalidOperationException("Locations owned by inactive branches cannot be used in stock operations.");
-        if (!string.Equals(branch.TenantId, location.TenantId, StringComparison.Ordinal))
-            throw new InvalidOperationException("Location ownership is not valid for the current tenant.");
 
         location.Branch = branch;
         return location;

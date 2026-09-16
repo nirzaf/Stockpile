@@ -429,7 +429,9 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
                   .WithMany()
                   .HasForeignKey(st => new { st.ToLocationId, st.TenantId })
                   .HasPrincipalKey(l => new { l.Id, l.TenantId })
-                  .OnDelete(DeleteBehavior.SetNull);
+                  // Keep tenant identity non-null and preserve transfer history if a location
+                  // is hard-deleted. Normal location deletion is soft-delete only.
+                  .OnDelete(DeleteBehavior.Restrict);
         });
 
         modelBuilder.Entity<AuditLog>(entity =>

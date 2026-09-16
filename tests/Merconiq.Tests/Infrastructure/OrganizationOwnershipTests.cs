@@ -29,7 +29,7 @@ public class OrganizationOwnershipTests
     }
 
     [Fact]
-    public void Organization_model_requires_tenant_scoped_company_and_branch_keys()
+    public void Organization_model_requires_tenant_scoped_company_branch_and_stock_location_keys()
     {
         using var context = CreateContext(Guid.NewGuid().ToString(), "default");
         var company = context.Model.FindEntityType(typeof(Company))!;
@@ -56,6 +56,9 @@ public class OrganizationOwnershipTests
         transaction.GetForeignKeys().Should().Contain(fk =>
             fk.Properties.Select(p => p.Name).SequenceEqual(new[] { nameof(StockTransaction.ToLocationId), nameof(StockTransaction.TenantId) }) &&
             fk.PrincipalEntityType.ClrType == typeof(Location));
+        transaction.GetForeignKeys().Single(fk =>
+            fk.Properties.Select(p => p.Name).SequenceEqual(new[] { nameof(StockTransaction.ToLocationId), nameof(StockTransaction.TenantId) }))
+            .DeleteBehavior.Should().Be(DeleteBehavior.Restrict);
     }
 
     private static InventoryDbContext CreateContext(string databaseName, string tenantId)

@@ -22,16 +22,28 @@ public class StockServiceTests
     private readonly Mock<IRepository<Branch>> _branchRepoMock = new();
     private readonly Mock<IUnitOfWork> _uowMock = new();
     private readonly Mock<IWebhookDispatcher> _webhookDispatcherMock = new();
+    private readonly List<Location> _locations = Enumerable.Range(1, 100)
+        .Select(id => new Location { Id = id, TenantId = "test-tenant" })
+        .ToList();
+    private readonly List<Branch> _branches = new();
     private readonly StockService _sut;
 
     public StockServiceTests()
     {
         _itemRepoMock.Setup(r => r.GetByIdAsync(It.IsAny<int>()))
             .ReturnsAsync((Item?)null);
-        _locationRepoMock.Setup(r => r.GetByIdAsync(It.IsAny<int>()))
-            .ReturnsAsync((int id) => new Location { Id = id });
-        _branchRepoMock.Setup(r => r.GetByIdAsync(It.IsAny<int>()))
-            .ReturnsAsync((Branch?)null);
+        _locationRepoMock.Setup(r => r.FindAsync(It.IsAny<Expression<Func<Location, bool>>>() ))
+            .Returns((Expression<Func<Location, bool>> predicate) =>
+                Task.FromResult<IEnumerable<Location>>(_locations
+                    .Where(location => !location.IsDeleted && location.TenantId == "test-tenant")
+                    .Where(predicate.Compile())
+                    .ToArray()));
+        _branchRepoMock.Setup(r => r.FindAsync(It.IsAny<Expression<Func<Branch, bool>>>() ))
+            .Returns((Expression<Func<Branch, bool>> predicate) =>
+                Task.FromResult<IEnumerable<Branch>>(_branches
+                    .Where(branch => branch.TenantId == "test-tenant")
+                    .Where(predicate.Compile())
+                    .ToArray()));
         _uowMock
             .Setup(u => u.ExecuteInTransactionAsync(
                 It.IsAny<Func<Task>>(),
@@ -189,7 +201,7 @@ public class StockServiceTests
     [Fact]
     public async Task ReceiveStockAsync_UnknownLocation_ThrowsBeforeWriting()
     {
-        _locationRepoMock.Setup(r => r.GetByIdAsync(2)).ReturnsAsync((Location?)null);
+        _locations.RemoveAll(location => location.Id == 2);
 
         var act = () => _sut.ReceiveStockAsync(1, 2, 1, null);
 
@@ -197,6 +209,37 @@ public class StockServiceTests
             .WithMessage("Location does not exist in the current tenant or is deleted.");
         _stockRepoMock.Verify(r => r.AddAsync(It.IsAny<StockInHand>()), Times.Never);
         _txRepoMock.Verify(r => r.AddAsync(It.IsAny<StockTransaction>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ReceiveStockAsync_DeletedLocation_IsRejectedBeforeWriting()
+    {
+        _locations.Single(location => location.Id == 2).IsDeleted = true;
+
+        var act = () => _sut.ReceiveStockAsync(1, 2, 1, null);
+
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("Location does not exist in the current tenant or is deleted.");
+        _stockRepoMock.Verify(repository => repository.FindAsync(
+            It.IsAny<Expression<Func<StockInHand, bool>>>()), Times.Never);
+        _txRepoMock.Verify(repository => repository.AddAsync(It.IsAny<StockTransaction>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ReceiveStockAsync_LocationReturnedFromAnotherTenant_IsRejected()
+    {
+        _locationRepoMock.Setup(repository => repository.FindAsync(
+                It.IsAny<Expression<Func<Location, bool>>>() ))
+            .Returns((Expression<Func<Location, bool>> _) =>
+                Task.FromResult<IEnumerable<Location>>(new[]
+                {
+                    new Location { Id = 2, TenantId = "another-tenant" }
+                }));
+
+        var act = () => _sut.ReceiveStockAsync(1, 2, 1, null);
+
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("Location does not exist in the current tenant or is deleted.");
     }
 
     [Fact]
@@ -277,37 +320,67 @@ public class StockServiceTests
     [Fact]
     public async Task TransferStockAsync_CrossCompanyLocations_ThrowsBeforeWriting()
     {
-        _locationRepoMock.Setup(r => r.GetByIdAsync(10)).ReturnsAsync(new Location
+        _locations.AddRange(new[]
         {
-            Id = 10,
-            BranchId = 100,
-            TenantId = "test-tenant"
+            new Location { Id = 201, BranchId = 301, TenantId = "test-tenant" },
+            new Location { Id = 202, BranchId = 302, TenantId = "test-tenant" }
         });
-        _locationRepoMock.Setup(r => r.GetByIdAsync(20)).ReturnsAsync(new Location
+        _branches.AddRange(new[]
         {
-            Id = 20,
-            BranchId = 200,
-            TenantId = "test-tenant"
-        });
-        _branchRepoMock.Setup(r => r.GetByIdAsync(100)).ReturnsAsync(new Branch
-        {
-            Id = 100,
-            CompanyId = 1,
-            TenantId = "test-tenant"
-        });
-        _branchRepoMock.Setup(r => r.GetByIdAsync(200)).ReturnsAsync(new Branch
-        {
-            Id = 200,
-            CompanyId = 2,
-            TenantId = "test-tenant"
+            new Branch { Id = 301, CompanyId = 401, TenantId = "test-tenant" },
+            new Branch { Id = 302, CompanyId = 402, TenantId = "test-tenant" }
         });
 
-        var act = () => _sut.TransferStockAsync(1, 10, 20, 1, null);
+        var act = () => _sut.TransferStockAsync(1, 201, 202, 1, null);
 
         await act.Should().ThrowAsync<InvalidOperationException>()
             .WithMessage("Cross-company stock transfers are not supported.");
         _stockRepoMock.Verify(r => r.FindAsync(
             It.IsAny<Expression<Func<StockInHand, bool>>>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task TransferStockAsync_MappedLocationsInSameCompany_AreAllowed()
+    {
+        _locations.AddRange(new[]
+        {
+            new Location { Id = 201, BranchId = 301, TenantId = "test-tenant" },
+            new Location { Id = 202, BranchId = 302, TenantId = "test-tenant" }
+        });
+        _branches.AddRange(new[]
+        {
+            new Branch { Id = 301, CompanyId = 401, TenantId = "test-tenant" },
+            new Branch { Id = 302, CompanyId = 401, TenantId = "test-tenant" }
+        });
+        var source = new StockInHand { ItemId = 1, LocationId = 201, Quantity = 5 };
+        _stockRepoMock.Setup(repository => repository.FindAsync(
+                It.IsAny<Expression<Func<StockInHand, bool>>>() ))
+            .Returns((Expression<Func<StockInHand, bool>> predicate) =>
+                Task.FromResult<IEnumerable<StockInHand>>(new[] { source }.Where(predicate.Compile()).ToArray()));
+
+        await _sut.TransferStockAsync(1, 201, 202, 2, null);
+
+        source.Quantity.Should().Be(3);
+        _stockRepoMock.Verify(repository => repository.AddAsync(It.Is<StockInHand>(stock =>
+            stock.LocationId == 202 && stock.Quantity == 2)), Times.Once);
+    }
+
+    [Fact]
+    public async Task TransferStockAsync_MappedToUnmappedLegacyLocation_IsAllowed()
+    {
+        _locations.Add(new Location { Id = 201, BranchId = 301, TenantId = "test-tenant" });
+        _branches.Add(new Branch { Id = 301, CompanyId = 401, TenantId = "test-tenant" });
+        var source = new StockInHand { ItemId = 1, LocationId = 201, Quantity = 5 };
+        _stockRepoMock.Setup(repository => repository.FindAsync(
+                It.IsAny<Expression<Func<StockInHand, bool>>>() ))
+            .Returns((Expression<Func<StockInHand, bool>> predicate) =>
+                Task.FromResult<IEnumerable<StockInHand>>(new[] { source }.Where(predicate.Compile()).ToArray()));
+
+        await _sut.TransferStockAsync(1, 201, 20, 2, null);
+
+        source.Quantity.Should().Be(3);
+        _stockRepoMock.Verify(repository => repository.AddAsync(It.Is<StockInHand>(stock =>
+            stock.LocationId == 20 && stock.Quantity == 2)), Times.Once);
     }
 
     [Fact]
