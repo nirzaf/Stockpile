@@ -120,6 +120,11 @@ public class UnitOfWork : IUnitOfWork
                     await operation();
                     await _context.SaveChangesAsync(transactionCancellationToken);
                 }
+                catch (DbUpdateConcurrencyException ex)
+                {
+                    _context.ChangeTracker.Clear();
+                    throw new ConcurrencyException("A concurrency conflict occurred during the transaction.", ex);
+                }
                 catch
                 {
                     _context.ChangeTracker.Clear();
