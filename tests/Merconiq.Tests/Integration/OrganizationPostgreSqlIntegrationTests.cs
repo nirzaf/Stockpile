@@ -68,6 +68,45 @@ public sealed class OrganizationPostgreSqlIntegrationTests(PostgreSqlIntegration
         (await verify.Branches.SingleAsync(branch => branch.Id == branchId)).IsActive.Should().BeFalse();
     }
 
+    [PostgreSqlFact]
+    public async Task Company_base_currency_cannot_change_after_stock_activity()
+    {
+        fixture.EnsureEnabled();
+        var tenantId = $"currency-freeze-{Guid.NewGuid():N}";
+        int companyId;
+
+        await using (var setup = fixture.CreateContext(tenantId))
+        {
+            var company = new Company { Code = "CURRENCY", LegalName = "Currency company", BaseCurrency = "QAR" };
+            var branch = new Branch { Company = company, Code = "BRANCH", Name = "Branch" };
+            var location = new Location { Branch = branch, Name = "Warehouse" };
+            var item = new Item { ItemCode = "CURRENCY-ITEM", Description = "Currency fixture", Rate = 1m };
+            setup.Companies.Add(company);
+            setup.Branches.Add(branch);
+            setup.Locations.Add(location);
+            setup.Items.Add(item);
+            await setup.SaveChangesAsync();
+            setup.StockTransactions.Add(new StockTransaction
+            {
+                ItemId = item.Id,
+                FromLocationId = location.Id,
+                Quantity = 1,
+                TransactionType = TransactionType.Receive
+            });
+            await setup.SaveChangesAsync();
+            companyId = company.Id;
+        }
+
+        await using var context = fixture.CreateContext(tenantId);
+        var service = CreateService(context, tenantId);
+        var act = () => service.UpdateCompanyAsync(companyId,
+            new UpdateCompanyRequest("Currency company", null, null, null, "USD", null, true));
+
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("A company's base currency cannot change after posted stock activity.");
+        (await context.Companies.SingleAsync()).BaseCurrency.Should().Be("QAR");
+    }
+
     private static async Task RunCompanyUpdateAsync(
         PostgreSqlIntegrationFixture fixture,
         string tenantId,
