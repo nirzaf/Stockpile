@@ -32,9 +32,9 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\Merconiq.Core\Merconiq.Core.csproj" />
-    <ProjectReference Include="..\Merconiq.Infrastructure\Merconiq.Infrastructure.csproj" />
-    <ProjectReference Include="..\Merconiq.Web\Merconiq.Web.csproj" />
+    <ProjectReference Include="..\..\src\Merconiq.Core\Merconiq.Core.csproj" />
+    <ProjectReference Include="..\..\src\Merconiq.Infrastructure\Merconiq.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\src\Merconiq.Web\Merconiq.Web.csproj" />
   </ItemGroup>
 
 </Project>

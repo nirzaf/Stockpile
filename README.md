@@ -118,8 +118,8 @@ export ConnectionStrings__DefaultConnection="Host=localhost;Database=InventoryDB
 export JwtSettings__Secret="$JWT_SECRET"
 
 # 3. Apply migrations and start the development application
-dotnet ef database update --project Merconiq.Infrastructure --startup-project Merconiq.Web
-cd Merconiq.Web
+dotnet ef database update --project src/Merconiq.Infrastructure --startup-project src/Merconiq.Web
+cd src/Merconiq.Web
 dotnet run
 ```
 
@@ -128,19 +128,19 @@ Open the HTTP URL printed by `dotnet run` (this repository's launch profile uses
 For local Development runs, configure the database connection and JWT secret with ASP.NET User Secrets instead of committing them:
 
 ```bash
-dotnet user-secrets init --project Merconiq.Web
-dotnet user-secrets set "ConnectionStrings:DefaultConnection" "Host=localhost;Database=InventoryDB;Username=postgres;Password=<local-password>" --project Merconiq.Web
-dotnet user-secrets set "JwtSettings:Secret" "<at-least-32-byte-local-secret>" --project Merconiq.Web
-dotnet user-secrets set "BootstrapAdmin:TenantId" "default" --project Merconiq.Web
-dotnet user-secrets set "BootstrapAdmin:Email" "<admin-email>" --project Merconiq.Web
-dotnet user-secrets set "BootstrapAdmin:Password" "<admin-password>" --project Merconiq.Web
+dotnet user-secrets init --project src/Merconiq.Web
+dotnet user-secrets set "ConnectionStrings:DefaultConnection" "Host=localhost;Database=InventoryDB;Username=postgres;Password=<local-password>" --project src/Merconiq.Web
+dotnet user-secrets set "JwtSettings:Secret" "<at-least-32-byte-local-secret>" --project src/Merconiq.Web
+dotnet user-secrets set "BootstrapAdmin:TenantId" "default" --project src/Merconiq.Web
+dotnet user-secrets set "BootstrapAdmin:Email" "<admin-email>" --project src/Merconiq.Web
+dotnet user-secrets set "BootstrapAdmin:Password" "<admin-password>" --project src/Merconiq.Web
 ```
 
 Run the one-shot bootstrap before the first login, then start the web application normally:
 
 ```bash
-dotnet run --project Merconiq.Web -- --bootstrap-admin
-dotnet run --project Merconiq.Web
+dotnet run --project src/Merconiq.Web -- --bootstrap-admin
+dotnet run --project src/Merconiq.Web
 ```
 
 ## API Reference
@@ -160,24 +160,24 @@ All endpoints are prefixed with `/api/v1`.
 ## Project Structure
 
 ```
-Merconiq.Web/          # ASP.NET Core MVC + API
+src/Merconiq.Web/          # ASP.NET Core MVC + API
 ├── Controllers/                        # MVC controllers (Items, Stock, Suppliers, etc.)
 │   └── Api/V1/                         # Versioned API controllers
 ├── Views/                              # MudBlazor Razor views
 ├── Program.cs                          # App entry point + DI configuration
 
-Merconiq.Core/         # Domain layer
+src/Merconiq.Core/         # Domain layer
 ├── Entities/                           # Item, StockTransaction, Supplier, Location, etc.
 ├── Interfaces/                         # IItemService, IStockService, IUnitOfWork, etc.
 ├── Services/                           # Business logic + ML.NET AI services
 ├── Features/                           # MediatR CQRS (Commands, Queries, Handlers)
 └── Models/                             # DTOs (DemandForecastResult, StockAnomaly)
 
-Merconiq.Infrastructure/ # Data access
+src/Merconiq.Infrastructure/ # Data access
 ├── Data/                               # DbContext, migrations, seed data
 └── Repositories/                       # Generic Repository<T> implementation
 
-Merconiq.Tests/        # xUnit test suite
+tests/Merconiq.Tests/        # xUnit test suite
 ├── Core/Services/                      # Service unit tests
 ├── Core/Handlers/                      # MediatR handler tests
 ├── Web/Controllers/                    # Controller tests
@@ -190,8 +190,8 @@ Merconiq.Tests/        # xUnit test suite
 dotnet build                              # build solution
 dotnet test                               # run all tests
 dotnet ef migrations add MigrationName    # add migration
-  --project Merconiq.Infrastructure
-  --startup-project Merconiq.Web
+  --project src/Merconiq.Infrastructure
+  --startup-project src/Merconiq.Web
 ```
 
 ### Multi-operation transactions

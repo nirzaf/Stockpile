@@ -10,7 +10,7 @@ See [Forecasting runtime](FORECASTING_RUNTIME.md) for deployment prerequisites.
 
 The test
 `ForecastingEvaluation_UsesChronologicalHoldoutAndReportsBaseline` in
-`Merconiq.Tests/Core/Services/DemandForecastServiceTests.cs`
+`tests/Merconiq.Tests/Core/Services/DemandForecastServiceTests.cs`
 uses eight daily observations:
 
 | Split | Values | Count |
@@ -28,7 +28,7 @@ the fact that no holdout values are used to produce the prediction.
 Run the focused evaluation with the pinned SDK:
 
 ```bash
-dotnet test Merconiq.Tests/Merconiq.Tests.csproj \
+dotnet test tests/Merconiq.Tests/Merconiq.Tests.csproj \
   --configuration Release --filter "FullyQualifiedName~ForecastingEvaluation_UsesChronologicalHoldoutAndReportsBaseline"
 ```
 
