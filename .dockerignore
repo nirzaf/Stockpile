@@ -10,8 +10,8 @@
 **/packages
 **/Tests/
 **/*.Tests/
-!Merconiq.Tests/
-!Merconiq.Tests/**
+!tests/Merconiq.Tests/
+!tests/Merconiq.Tests/**
 **/TestResults
 **/*.md
 **/*.log

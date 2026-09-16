@@ -82,11 +82,11 @@ dotnet_style_null_propagation = true:suggestion
 # Core, Infrastructure, and Web require XML doc comments on public
 # members, while the Tests project is exempted (test code does not need
 # public API docs and adding them would slow down test authoring).
-[Merconiq.Core/**/*.cs]
+[src/Merconiq.Core/**/*.cs]
 dotnet_diagnostic.CS1591.severity = warning
 
-[Merconiq.Infrastructure/**/*.cs]
+[src/Merconiq.Infrastructure/**/*.cs]
 dotnet_diagnostic.CS1591.severity = warning
 
-[Merconiq.Web/**/*.cs]
+[src/Merconiq.Web/**/*.cs]
 dotnet_diagnostic.CS1591.severity = warning
