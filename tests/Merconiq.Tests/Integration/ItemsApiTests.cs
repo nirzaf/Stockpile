@@ -114,10 +114,16 @@ public class ItemsApiTests : IClassFixture<CustomWebApplicationFactory>
     public async Task ItemReads_Viewer_returns200()
     {
         var client = _factory.CreateAuthenticatedClient("Viewer");
+        var item = await SeedItemAsync($"VIEWER-{Guid.NewGuid():N}".Substring(0, 20));
 
-        var response = await client.GetAsync("/api/v1/items");
+        var responses = new[]
+        {
+            await client.GetAsync("/api/v1/items"),
+            await client.GetAsync($"/api/v1/items/{item.Id}"),
+            await client.GetAsync($"/api/v1/items/search?q={item.ItemCode}")
+        };
 
-        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        responses.Should().OnlyContain(response => response.StatusCode == HttpStatusCode.OK);
     }
 
     [Fact]
