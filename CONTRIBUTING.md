@@ -161,6 +161,72 @@ The normal workflows may have side effects: pushes to `master` publish the confi
 - Update documentation if applicable
 - Ensure CI passes (build + tests)
 
+## Newcomer path
+
+Start with one small, reproducible change. The supported path is:
+
+1. Read the [README](README.md), [Code of Conduct](CODE_OF_CONDUCT.md), and
+   [Security policy](SECURITY.md).
+2. Fork the repository, create a branch from the current `master`, and keep the
+   change focused on one issue.
+3. Make the smallest source or documentation change that addresses the issue.
+4. Run the narrowest relevant test first, then the normal build/test commands
+   above when the environment has the pinned SDK.
+5. Open a PR against `master`, describe the reproduction and verification, and
+   answer review comments. Do not include secrets, customer data, generated
+   history, or unrelated formatting changes.
+
+Useful first contributions are documentation corrections, focused regression tests,
+accessibility/localization fixes, and reproducible bug fixes. Security boundaries,
+authentication, migrations, and release publication need maintainer review and are
+not automatically good-first issues.
+
+### Starter-task candidates
+
+These are bounded candidates, not manufactured issues or promises that a label has
+already been applied. A maintainer should confirm the gap and create/link the issue
+before a contributor starts:
+
+| Candidate | Smallest useful change | First verification |
+| --- | --- | --- |
+| Documentation link check | Add or improve a check that catches broken relative Markdown links without crawling external sites. | Run it against `README.md` and `docs/`. |
+| Webhook validation regression | Add a local, non-networking test for one documented unsafe URL case in `WebhookUrlValidator`. | Run the focused webhook validator tests. |
+| Forecasting documentation | Correct a source mismatch in the forecasting guide while preserving the managed-moving-average default and SSA opt-in wording. | Compare the guide with `docs/FORECASTING_RUNTIME.md` and run Markdown checks. |
+
+For clarification, comment on the issue with the exact command, source commit, and
+the smallest unanswered question. Maintainers may be unavailable; this repository
+does not promise a response-time SLA until the owner explicitly adopts one. If no
+maintainer is available, leave the issue and PR state intact rather than opening
+duplicate work or moving the project to Discussions.
+
+### Review, AI assistance, and acknowledgement
+
+The native `chatgpt-codex-connector[bot]` is an automated review signal. It is not a
+human approval and does not replace a maintainer or CODEOWNERS decision. A completed
+review must be tied to the current full PR head; any finding must be reproduced or
+dispositioned with evidence before merge. AI-assisted contributors remain responsible
+for the design, tests, licensing, and security of their submission.
+
+Accepted work may be acknowledged only with the contributor's consent. Automated
+agents, organization accounts, and external human contributors must remain distinct
+when maintainers later report contribution metrics. No stars, forks, reciprocal
+reviews, or artificial PR splitting are requested.
+
+### Walkthrough evidence
+
+The following is a maintainer simulation, not evidence of external participation:
+
+```text
+Fresh checkout -> read README and this file -> choose a bounded candidate
+-> create codex/issue-<number>-<short-description>
+-> run focused verification -> open one PR against master -> inspect CI and review
+-> respond with evidence -> wait for normal maintainer merge.
+```
+
+An actual contributor walkthrough should be recorded only after a consenting person
+completes it, with participant type, commit, commands, result, and friction points.
+Do not turn this simulation into an adoption, responsiveness, or community claim.
+
 ## Development Setup
 
 See the [README](README.md#getting-started) for setup instructions.
