@@ -1,9 +1,12 @@
 using FluentAssertions;
 using InventoryManagementSystem.Core.Entities;
+using InventoryManagementSystem.Core.Exceptions;
+using InventoryManagementSystem.Core.Interfaces;
 using InventoryManagementSystem.Infrastructure.Data;
 using InventoryManagementSystem.Tests.Infrastructure;
 using InventoryManagementSystem.Web.Services;
 using Microsoft.EntityFrameworkCore;
+using Moq;
 
 namespace InventoryManagementSystem.Tests.Web.Services;
 
@@ -126,7 +129,8 @@ public class IdempotencyKeyStoreTests
             return Task.CompletedTask;
         });
 
-        (await context.IdempotencyRecords.SingleAsync()).Status
+        context.ChangeTracker.Clear();
+        (await context.IdempotencyRecords.AsNoTracking().SingleAsync()).Status
             .Should().Be(IdempotencyRecordStatus.Completed);
     }
 
@@ -143,8 +147,49 @@ public class IdempotencyKeyStoreTests
             return Task.CompletedTask;
         }, cancellation.Token);
 
-        (await context.IdempotencyRecords.SingleAsync()).Status
+        context.ChangeTracker.Clear();
+        (await context.IdempotencyRecords.AsNoTracking().SingleAsync()).Status
             .Should().Be(IdempotencyRecordStatus.Completed);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_RestartsTheWholeOperationAfterAConcurrencyConflict()
+    {
+        await using var context = CreateContext();
+        var unitOfWork = new Mock<IUnitOfWork>();
+        var attempts = 0;
+        unitOfWork.SetupGet(item => item.HasActiveTransaction).Returns(false);
+        unitOfWork
+            .Setup(item => item.ExecuteInTransactionAsync(
+                It.IsAny<Func<Task>>(),
+                It.IsAny<CancellationToken>(),
+                It.IsAny<Func<Task<bool>>?>()))
+            .Returns(async (Func<Task> operation, CancellationToken _, Func<Task<bool>>? _) =>
+            {
+                if (++attempts == 1)
+                {
+                    throw new ConcurrencyException("simulated conflict");
+                }
+
+                await operation();
+            });
+        unitOfWork.Setup(item => item.ClearTracker()).Callback(context.ChangeTracker.Clear);
+
+        var store = new IdempotencyKeyStore(
+            context,
+            new TestTenantContext("test-tenant"),
+            unitOfWork.Object);
+        var executions = 0;
+
+        await store.ExecuteAsync("POST:/stock/retry", "request-retry", "hash-retry", () =>
+        {
+            executions++;
+            return Task.CompletedTask;
+        });
+
+        executions.Should().Be(1);
+        attempts.Should().Be(2);
+        unitOfWork.Verify(item => item.ClearTracker(), Times.Once);
     }
 
     private static IdempotencyKeyStore CreateStore(InventoryDbContext context) =>
