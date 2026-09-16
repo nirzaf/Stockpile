@@ -100,17 +100,39 @@ if ! ACTIVE_RULESETS="$(gh api "repos/nirzaf/stockpile/rulesets" --paginate --sl
   printf 'Could not inspect repository rulesets; do not merge until the target branch policy is known.\n'
   exit 1
 fi
-if printf '%s' "$ACTIVE_RULESETS" | jq -e --arg base_ref "refs/heads/$REVIEWED_BASE_BRANCH" '
+if ! DEFAULT_BRANCH="$(gh api "repos/nirzaf/stockpile" --jq '.default_branch')"; then
+  printf 'Could not inspect the repository default branch; do not merge until the target branch policy is known.\n'
+  exit 1
+fi
+if QUEUE_RULE_RESULT="$(printf '%s' "$ACTIVE_RULESETS" | jq -e --arg base_ref "refs/heads/$REVIEWED_BASE_BRANCH" --arg default_branch "$DEFAULT_BRANCH" '
+  def selector_matches($selector; $ref; $default):
+    if $selector == "~ALL" then true
+    elif $selector == "~DEFAULT_BRANCH" then $ref == ("refs/heads/" + $default)
+    elif ($selector | endswith("*")) then $ref | startswith($selector[0:-1])
+    else $selector == $ref
+    end;
+  def applies_to_base($ruleset; $ref; $default):
+    ($ruleset.conditions.ref_name.include // []) as $includes
+    | ($ruleset.conditions.ref_name.exclude // []) as $excludes
+    | (($includes | length) == 0 or any($includes[]; selector_matches(.; $ref; $default)))
+      and all($excludes[]?; selector_matches(.; $ref; $default) | not);
   flatten
   | any(.[]?;
       .enforcement == "active"
-      and (((.conditions.ref_name.include // []) | length) == 0
-        or ((.conditions.ref_name.include // []) | index($base_ref)) != null)
       and any(.rules[]?; .type == "merge_queue")
+      and applies_to_base(.; $base_ref; $default_branch)
     )
-' >/dev/null; then
-  printf 'The target branch requires a merge queue; stop before invoking gh pr merge.\n'
-  exit 1
+'); then
+  if test "$QUEUE_RULE_RESULT" = "true"; then
+    printf 'The target branch requires a merge queue; stop before invoking gh pr merge.\n'
+    exit 1
+  fi
+else
+  QUEUE_RULE_STATUS=$?
+  if test "$QUEUE_RULE_STATUS" -ne 1; then
+    printf 'Could not parse repository rulesets; do not merge until the target branch policy is known.\n'
+    exit 1
+  fi
 fi
 gh pr merge <PR_NUMBER> --repo nirzaf/stockpile --squash --match-head-commit "$REVIEWED_HEAD"
 ```
