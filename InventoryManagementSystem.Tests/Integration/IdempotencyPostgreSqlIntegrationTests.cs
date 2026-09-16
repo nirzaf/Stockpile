@@ -1,4 +1,5 @@
 using FluentAssertions;
+using InventoryManagementSystem.Core.Entities;
 using InventoryManagementSystem.Core.Interfaces;
 using InventoryManagementSystem.Infrastructure.Data;
 using InventoryManagementSystem.Tests.Infrastructure;
