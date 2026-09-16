@@ -20,6 +20,6 @@ public class ReceiveStockCommandHandler : IRequestHandler<ReceiveStockCommand>
         _logger.LogDebug("Handling ReceiveStockCommand item={ItemId}, loc={LocId}, qty={Qty}", request.ItemId, request.LocationId, request.Quantity);
         await _stockService.ReceiveStockAsync(
             request.ItemId, request.LocationId, request.Quantity, request.Notes,
-            request.BatchNumber, request.ExpiryDate);
+            request.BatchNumber, request.ExpiryDate, request.UnitCost);
     }
 }

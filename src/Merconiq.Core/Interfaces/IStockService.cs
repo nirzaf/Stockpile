@@ -39,8 +39,16 @@ public interface IStockService
     /// <param name="notes">Optional free-text notes.</param>
     /// <param name="batchNumber">Optional lot/batch number.</param>
     /// <param name="expiryDate">Optional expiry date for perishable stock.</param>
+    /// <param name="unitCost">Optional acquisition cost per base unit.</param>
     /// <exception cref="Exceptions.ConcurrencyException">Thrown when concurrent updates are detected after retries are exhausted.</exception>
-    Task ReceiveStockAsync(int itemId, int locationId, int quantity, string? notes, string? batchNumber = null, DateTime? expiryDate = null);
+    Task ReceiveStockAsync(
+        int itemId,
+        int locationId,
+        int quantity,
+        string? notes,
+        string? batchNumber = null,
+        DateTime? expiryDate = null,
+        decimal? unitCost = null);
 
     /// <summary>Transfers stock between two locations atomically.</summary>
     /// <param name="itemId">The item identifier.</param>
