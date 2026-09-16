@@ -12,6 +12,9 @@ public class Item : AuditableEntity, ISoftDelete
     /// <summary>Human-friendly business code (e.g. <c>SKU-001</c>).</summary>
     public string ItemCode { get; set; } = string.Empty;
 
+    /// <summary>Optional stable identifier used by controlled master-data imports.</summary>
+    public string? ExternalId { get; set; }
+
     /// <summary>Free-text description of the item.</summary>
     public string Description { get; set; } = string.Empty;
 

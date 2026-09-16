@@ -98,6 +98,20 @@ public sealed class OrganizationController(IOrganizationService organization, IM
             : Ok(ApiResponse<ImportUnitsResult>.CreateSuccess(result));
     }
 
+    [HttpPost("items/import")]
+    [Authorize(Policy = CapabilityPolicies.Edit)]
+    // This bearer-token API is not cookie-authenticated, so browser CSRF tokens do not apply.
+    // Keep the explicit validation marker for static security analysis while opting out at runtime.
+    [ValidateAntiForgeryToken]
+    [IgnoreAntiforgeryToken]
+    public async Task<IActionResult> ImportItems([FromBody] ImportItemsRequest request, CancellationToken cancellationToken)
+    {
+        var result = await imports.ImportItemsAsync(request, cancellationToken);
+        return result.Rejected > 0
+            ? UnprocessableEntity(result)
+            : Ok(ApiResponse<ImportItemsResult>.CreateSuccess(result));
+    }
+
     private static CompanyResponse ToResponse(Company company) =>
         new(company.Id, company.TenantId, company.Code, company.LegalName, company.TradingName,
             company.RegistrationNumber, company.TaxIdentifier, company.BaseCurrency,

@@ -235,7 +235,9 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
             entity.HasIndex(e => e.TenantId);
             entity.HasIndex(e => new { e.TenantId, e.ItemCode }).IsUnique();
             entity.HasIndex(e => new { e.TenantId, e.Barcode }).IsUnique();
+            entity.HasIndex(e => new { e.TenantId, e.ExternalId }).IsUnique();
             entity.Property(e => e.ItemCode).HasMaxLength(50).IsRequired();
+            entity.Property(e => e.ExternalId).HasMaxLength(128);
             entity.Property(e => e.Description).HasMaxLength(500);
             entity.Property(e => e.Barcode).HasMaxLength(100);
             entity.Property(e => e.Rate).HasColumnType("decimal(18,2)");
