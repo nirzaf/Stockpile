@@ -34,14 +34,12 @@ A modern inventory management web application for tracking items, stock levels, 
 | Testing | xUnit, Moq, FluentAssertions, AutoFixture, EF Core InMemory |
 | CI/CD | GitHub Actions + GHCR |
 
-## Features
-
 ## Repository Layout
 
 The repository contains only the maintained web application and its supporting projects:
 
 - `InventoryManagementSystem.Core` — domain entities, services, validators, and CQRS handlers
-- `InventoryManagementSystem.Infrastructure` — EF Core persistence and integrations
+- `InventoryManagementSystem.Infrastructure` — EF Core persistence, migrations and integrations
 - `InventoryManagementSystem.Web` — ASP.NET Core API and Blazor UI
 - `InventoryManagementSystem.Tests` — unit and integration tests
 
@@ -81,11 +79,16 @@ it is not part of the supported build or deployment path.
 ```bash
 git clone https://github.com/nirzaf/stockpile.git
 cd stockpile
-cp .env.example .env        # edit credentials if desired
-docker compose up -d        # starts app + PostgreSQL after required secrets are set
+cp .env.example .env        # set DB_PASSWORD and JWT_SECRET; do not commit .env
+docker compose -f docker-compose.yml -f docker-compose.override.yml config --quiet
+docker compose -f docker-compose.yml -f docker-compose.override.yml up -d --wait
 ```
 
 The app will be available at **http://localhost:8080**.
+
+This is the local Development path. The override is selected explicitly and publishes
+development ports for local tooling; it is not a production deployment. Normal startup
+does not create an administrator; use the explicit production bootstrap path below.
 
 Swagger UI is available at **http://localhost:8080/swagger** in the Development environment for interactive API exploration.
 
@@ -137,8 +140,12 @@ All endpoints are prefixed with `/api/v1`.
 |--------|----------|-------------|
 | `GET` | `/items` | List all items |
 | `GET` | `/items/{id}` | Get item by ID |
-| `GET` | `/stock` | List all stock in hand |
+| `GET` | `/items/search?q=...` | Search items |
+| `GET` | `/stock/in-hand` | List all stock in hand |
+| `GET` | `/stock/transactions` | List stock transactions |
 | `POST` | `/stock/receive` | Receive stock |
+| `POST` | `/stock/transfer` | Transfer stock |
+| `POST` | `/stock/sell` | Sell stock |
 | `GET` | `/forecast/{itemId}` | Demand forecast for an item |
 | `GET` | `/forecast` | Forecast all items |
 | `GET` | `/anomalies` | Detect stock anomalies |
@@ -160,7 +167,7 @@ InventoryManagementSystem.Core/         # Domain layer
 └── Models/                             # DTOs (DemandForecastResult, StockAnomaly)
 
 InventoryManagementSystem.Infrastructure/ # Data access
-├── Data/                               # DbContext, migrations, seed data
+├── Data/                               # DbContext, migrations and tenant bootstrap
 └── Repositories/                       # Generic Repository<T> implementation
 
 InventoryManagementSystem.Tests/        # xUnit test suite
@@ -210,10 +217,10 @@ separate from the development path above and requires explicit non-empty secrets
 ```bash
 cp .env.example .env
 # Edit .env: DB_PASSWORD and JWT_SECRET.
-docker compose config
-docker compose --profile migrations run --rm migrator
-docker compose --profile bootstrap run --rm bootstrap-admin
-docker compose up -d --wait
+docker compose -f docker-compose.yml config
+docker compose -f docker-compose.yml --profile migrations run --rm migrator
+docker compose -f docker-compose.yml --profile bootstrap run --rm bootstrap-admin
+docker compose -f docker-compose.yml up -d --wait
 ```
 
 Before the bootstrap command, set `BOOTSTRAP_ADMIN_TENANT`, `BOOTSTRAP_ADMIN_EMAIL`,
@@ -230,7 +237,7 @@ values retain their documented behavior.
 dotnet publish -c Release -o ./publish
 
 # Docker Compose (production)
-cp .env.example .env    # set DB_PASSWORD and JWT_SECRET; bootstrap settings are one-shot
+cp .env.example .env    # set DB_PASSWORD, JWT_SECRET, and one-shot bootstrap settings
 ./scripts/deploy.sh --migrate
 
 # Automated deployment script
