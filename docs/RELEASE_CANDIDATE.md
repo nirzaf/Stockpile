@@ -10,7 +10,7 @@ published artifact remains a separate owner-authorized action.
 | Field | Value |
 |---|---|
 | Candidate label | `v<owner-approved-version>-rc.1` (not created) |
-| Candidate commit | Record the full SHA after the preparation PR merges; current baseline is `6db17943cacb29e29b9396e011c643c61c5e71a1` |
+| Candidate commit | Record the full SHA after the preparation PR merges; current baseline is `b1646978f51ac7493d70e1b701685d0e8fd7b7f2` |
 | Runtime | .NET SDK 10.0.300; PostgreSQL 16; Docker Linux containers for Compose/Testcontainers |
 | Supported image architectures | `linux/amd64` and `linux/arm64` are configured; platform smoke evidence is required before calling either validated |
 | Publication state | `release candidate prepared; publication pending` |
@@ -29,7 +29,8 @@ planned, untested, or owner-only work as delivered capability.
 - Full candidate SHA and `git diff` from the previous approved candidate.
 - CI restore/build/test results, PostgreSQL integration result, coverage report,
   CodeQL, container scan, Trivy, and GitGuardian results linked to that SHA.
-- Clean-install record using `docker compose config`, required non-empty secrets,
+- Clean-install record using `./scripts/validate-compose.sh production`,
+  required non-empty secrets,
   migrations, administrator provisioning, login, item/location creation, receive,
   sell, transfer, and fresh-context balance/history checks with synthetic data.
 - Restart/data-protection check and explicit local HTTP versus production
@@ -44,6 +45,16 @@ The current known limitation is that a local smoke run is not recorded in this
 preparation branch; remote CI is not a substitute for authenticated browser or
 operator validation. Do not fill missing evidence with generated history,
 invented metrics, or a green health endpoint.
+
+The Docker and Release workflows validate the selected branch/tag against the
+current remote ref and carry the exact full commit SHA through checkout,
+metadata, and release notes. Docker publishes `sha-<full-commit>` as the
+immutable image reference; Release verifies that image and the matching semver
+image tag before creating a GitHub Release. Their manual `dry_run` inputs are
+safe validation paths and do not log in, push, or create a release.
+Both publication workflows also wait for successful CI and Security runs whose
+head SHA is the selected candidate. A missing, failed, cancelled, or still
+running validation cannot authorize publication.
 
 ## Owner-authorized publication checklist
 

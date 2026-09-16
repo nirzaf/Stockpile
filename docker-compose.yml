@@ -9,8 +9,6 @@ services:
       POSTGRES_PASSWORD: ${DB_PASSWORD}
     volumes:
       - pgdata:/var/lib/postgresql/data
-    ports:
-      - "${DB_PORT:-5432}:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres}"]
       interval: 5s
@@ -24,17 +22,33 @@ services:
     container_name: inventory-app
     restart: unless-stopped
     environment:
-      - ASPNETCORE_ENVIRONMENT=${ASPNETCORE_ENVIRONMENT:-Production}
+      - ASPNETCORE_ENVIRONMENT=Production
       - DISABLE_HTTPS=true
       - ConnectionStrings__DefaultConnection=Host=db;Database=${DB_NAME:-InventoryDB};Username=${DB_USER:-postgres};Password=${DB_PASSWORD}
-      - AdminSettings__Email=${ADMIN_EMAIL-}
-      - AdminSettings__Password=${ADMIN_PASSWORD-}
       - JwtSettings__Secret=${JWT_SECRET:?Set JWT_SECRET in .env}
       - DataProtection__KeyStoragePath=/app/data/keys
     volumes:
       - dataprotection:/app/data
     ports:
       - "${APP_PORT:-8080}:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  bootstrap-admin:
+    profiles: ["bootstrap"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Production
+      - DISABLE_HTTPS=true
+      - ConnectionStrings__DefaultConnection=Host=db;Database=${DB_NAME:-InventoryDB};Username=${DB_USER:-postgres};Password=${DB_PASSWORD}
+      - JwtSettings__Secret=${JWT_SECRET:?Set JWT_SECRET in .env}
+      - BootstrapAdmin__TenantId=${BOOTSTRAP_ADMIN_TENANT:-default}
+      - BootstrapAdmin__Email=${BOOTSTRAP_ADMIN_EMAIL-}
+      - BootstrapAdmin__Password=${BOOTSTRAP_ADMIN_PASSWORD-}
+    command: ["--bootstrap-admin"]
     depends_on:
       db:
         condition: service_healthy
