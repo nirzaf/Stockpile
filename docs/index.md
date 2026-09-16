@@ -101,4 +101,6 @@ For a custom domain, see [the GitHub Pages docs](https://docs.github.com/en/page
 
 ---
 
-*Built with .NET 10, ASP.NET Core, MudBlazor, PostgreSQL, MediatR, and ML.NET. Released under the [MIT License](https://github.com/nirzaf/merconiq/blob/master/LICENSE).*
+*Built with .NET 10, ASP.NET Core, MudBlazor, PostgreSQL, MediatR, and ML.NET.
+Merconiq-authored material is released under the [MIT License](https://github.com/nirzaf/merconiq/blob/master/LICENSE);
+third-party terms and notices are listed in the [third-party inventory](THIRD_PARTY_NOTICES.md).*
