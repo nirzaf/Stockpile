@@ -82,7 +82,7 @@ public class StockController : ControllerBase
         else
         {
             var scope = $"{tenantContext.TenantId}:{Request.Method}:{Request.Path}";
-            await idempotencyKeyStore.ExecuteAsync(scope, idempotencyKey, IdempotencyRequestHasher.Compute(command), () => _mediator.Send(command));
+            await idempotencyKeyStore.ExecuteAsync(scope, idempotencyKey, IdempotencyRequestHasher.Compute(command), () => _mediator.Send(command), RequestAborted);
         }
         return NoContent();
     }
