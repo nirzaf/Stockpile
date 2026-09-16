@@ -2,7 +2,7 @@
 
 _Last reviewed: 2026-09-15_
 
-The Inventory Management System has been migrated from a legacy Windows Forms / SQL Server
+The Merconiq has been migrated from a legacy Windows Forms / SQL Server
 application to a modern .NET 10 web stack. This document tracks the current state of the
 migration. It is reviewed periodically and updated when major milestones change.
 
@@ -70,18 +70,18 @@ and ongoing dependency updates.
 dotnet build
 
 # Run application
-cd InventoryManagementSystem.Web
+cd Merconiq.Web
 dotnet run
 
 # Add migration
 dotnet ef migrations add MigrationName \
-  --project InventoryManagementSystem.Infrastructure \
-  --startup-project InventoryManagementSystem.Web
+  --project Merconiq.Infrastructure \
+  --startup-project Merconiq.Web
 
 # Update database
 dotnet ef database update \
-  --project InventoryManagementSystem.Infrastructure \
-  --startup-project InventoryManagementSystem.Web
+  --project Merconiq.Infrastructure \
+  --startup-project Merconiq.Web
 
 # Run tests
 dotnet test
