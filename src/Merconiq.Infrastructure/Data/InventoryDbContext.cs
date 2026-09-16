@@ -87,6 +87,20 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
     public DbSet<DocumentLineIdentity> DocumentLineIdentities { get; set; } = null!;
     public DbSet<DocumentLineLink> DocumentLineLinks { get; set; } = null!;
 
+    public override int SaveChanges(bool acceptAllChangesOnSuccess)
+    {
+        EnsureValuationEntriesAreAppendOnly();
+        return base.SaveChanges(acceptAllChangesOnSuccess);
+    }
+
+    public override Task<int> SaveChangesAsync(
+        bool acceptAllChangesOnSuccess,
+        CancellationToken cancellationToken = default)
+    {
+        EnsureValuationEntriesAreAppendOnly();
+        return base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
+    }
+
     /// <summary>
     /// Saves pending changes, stamping <see cref="AuditableEntity"/> timestamps, translating
     /// soft-delete <see cref="EntityState.Deleted"/> entries to a flag flip, and emitting
@@ -103,6 +117,7 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
     /// <returns>The number of state entries written to the database.</returns>
     public override async Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
     {
+        EnsureValuationEntriesAreAppendOnly();
         var currentUser = _httpContextAccessor?.HttpContext?.User?.Identity?.Name ?? "System";
         var utcNow = DateTime.UtcNow;
 
@@ -146,6 +161,15 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
         }
 
         return result;
+    }
+
+    private void EnsureValuationEntriesAreAppendOnly()
+    {
+        if (ChangeTracker.Entries<StockValuationEntry>()
+            .Any(entry => entry.State is EntityState.Modified or EntityState.Deleted))
+        {
+            throw new InvalidOperationException("Stock valuation entries are append-only and cannot be updated or deleted.");
+        }
     }
 
     private List<AuditEntry> OnBeforeSaveChanges(string username)
@@ -249,6 +273,7 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
         {
             entity.HasQueryFilter(e => !e.IsDeleted && e.TenantId == CurrentTenantId);
             entity.Property(e => e.TenantId).HasMaxLength(64).IsRequired();
+            entity.HasAlternateKey(e => new { e.Id, e.TenantId });
             entity.HasIndex(e => e.TenantId);
             entity.HasIndex(e => new { e.TenantId, e.ItemCode }).IsUnique();
             entity.HasIndex(e => new { e.TenantId, e.Barcode }).IsUnique();
@@ -412,7 +437,8 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
             entity.HasIndex(e => new { e.TenantId, e.ItemId, e.LocationId }).IsUnique();
             entity.HasOne(e => e.Item)
                 .WithMany()
-                .HasForeignKey(e => e.ItemId)
+                .HasForeignKey(e => new { e.ItemId, e.TenantId })
+                .HasPrincipalKey(e => new { e.Id, e.TenantId })
                 .OnDelete(DeleteBehavior.Restrict);
             entity.HasOne(e => e.Location)
                 .WithMany()
@@ -437,11 +463,13 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
             entity.HasIndex(e => new { e.TenantId, e.StockTransactionId }).IsUnique();
             entity.HasOne(e => e.StockTransaction)
                 .WithMany()
-                .HasForeignKey(e => e.StockTransactionId)
+                .HasForeignKey(e => new { e.StockTransactionId, e.TenantId })
+                .HasPrincipalKey(e => new { e.Id, e.TenantId })
                 .OnDelete(DeleteBehavior.Restrict);
             entity.HasOne(e => e.Item)
                 .WithMany()
-                .HasForeignKey(e => e.ItemId)
+                .HasForeignKey(e => new { e.ItemId, e.TenantId })
+                .HasPrincipalKey(e => new { e.Id, e.TenantId })
                 .OnDelete(DeleteBehavior.Restrict);
             entity.HasOne(e => e.Location)
                 .WithMany()
@@ -611,6 +639,7 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
         {
             entity.HasQueryFilter(e => e.TenantId == CurrentTenantId);
             entity.Property(e => e.TenantId).HasMaxLength(64).IsRequired();
+            entity.HasAlternateKey(e => new { e.Id, e.TenantId });
             entity.HasIndex(e => e.TenantId);
             entity.Property(e => e.TransactionType).HasConversion<string>().HasMaxLength(50).IsRequired();
             entity.Property(e => e.Notes).HasMaxLength(500);
