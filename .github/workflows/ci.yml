@@ -5,6 +5,7 @@ on:
     branches: [master]
   push:
     branches: [master]
+    tags: ["v*"]
   workflow_dispatch:
 
 env:
@@ -52,6 +53,14 @@ jobs:
         # is visible in the CI log. Warnings do not fail the build; a separate
         # effort (TreatWarningsAsErrors on CS1591) can be enabled later.
         run: dotnet build --no-restore --configuration Release /warnaserror:-
+
+      - name: Validate Compose contracts
+        env:
+          DB_PASSWORD: ci-compose-db-password
+          JWT_SECRET: ci-compose-jwt-secret-with-at-least-32-bytes
+          ADMIN_EMAIL: ci-admin@example.com
+          ADMIN_PASSWORD: ci-compose-admin-password
+        run: ./scripts/validate-compose.sh
 
       - name: Test with coverage
         run: |
