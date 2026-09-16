@@ -144,6 +144,13 @@
             return;
         }
 
+        var stampResult = await UserManager.UpdateSecurityStampAsync(row.User);
+        if (!stampResult.Succeeded)
+        {
+            Snackbar.Add(string.Join(" ", stampResult.Errors.Select(error => error.Description)), Severity.Error);
+            return;
+        }
+
         var currentRoles = await UserManager.GetRolesAsync(row.User);
         var removeResult = await UserManager.RemoveFromRolesAsync(row.User, currentRoles);
         if (!removeResult.Succeeded)

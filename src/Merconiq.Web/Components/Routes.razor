@@ -1,3 +1,5 @@
+@using Merconiq.Core.Interfaces
+@inject ITenantContext TenantContext
 <CascadingAuthenticationState>
     <Router AppAssembly="typeof(Program).Assembly">
     <Found Context="routeData">
@@ -12,3 +14,18 @@
     </NotFound>
     </Router>
 </CascadingAuthenticationState>
+
+@code {
+    [Parameter, EditorRequired]
+    public string ResolvedTenantId { get; set; } = string.Empty;
+
+    protected override void OnParametersSet()
+    {
+        if (string.IsNullOrWhiteSpace(ResolvedTenantId))
+        {
+            throw new InvalidOperationException("A validated tenant is required to start the interactive circuit.");
+        }
+
+        TenantContext.SetTenant(ResolvedTenantId);
+    }
+}

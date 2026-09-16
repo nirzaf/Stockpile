@@ -2,6 +2,9 @@ using System.Net;
 using System.Security.Claims;
 using FluentAssertions;
 using Merconiq.Core.Entities;
+using Merconiq.Core.Interfaces;
+using Merconiq.Web.Security;
+using Microsoft.AspNetCore.Components.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -101,6 +104,44 @@ public class TenantAuthenticationTests : IClassFixture<CookieAuthenticationWebAp
         var response = await client.GetAsync("/Account/AccessDenied");
 
         response.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    [Fact]
+    public async Task Interactive_session_and_organization_access_use_current_tenant_stamp_and_roles()
+    {
+        var user = await CreateUserAsync();
+        using var scope = _factory.Services.CreateScope();
+        var services = scope.ServiceProvider;
+        var tenantContext = services.GetRequiredService<ITenantContext>();
+        tenantContext.SetTenant("test-tenant");
+
+        var roleManager = services.GetRequiredService<RoleManager<IdentityRole>>();
+        if (!await roleManager.RoleExistsAsync("Manager"))
+        {
+            (await roleManager.CreateAsync(new IdentityRole("Manager"))).Succeeded.Should().BeTrue();
+        }
+
+        var userManager = services.GetRequiredService<UserManager<ApplicationUser>>();
+        var storedUser = await userManager.FindByIdAsync(user.Id);
+        storedUser.Should().NotBeNull();
+        (await userManager.AddToRoleAsync(storedUser!, "Manager")).Succeeded.Should().BeTrue();
+
+        var principalFactory = services.GetRequiredService<IUserClaimsPrincipalFactory<ApplicationUser>>();
+        var principal = await principalFactory.CreateAsync(storedUser!);
+        var authorization = services.GetRequiredService<CurrentUserAuthorization>();
+
+        (await authorization.IsSessionCurrentAsync(principal)).Should().BeTrue();
+        (await authorization.CanEditOrganizationAsync(principal)).Should().BeTrue();
+
+        (await userManager.RemoveFromRoleAsync(storedUser!, "Manager")).Succeeded.Should().BeTrue();
+        (await authorization.IsSessionCurrentAsync(principal)).Should().BeTrue();
+        (await authorization.CanEditOrganizationAsync(principal)).Should().BeFalse();
+
+        (await userManager.UpdateSecurityStampAsync(storedUser!)).Succeeded.Should().BeTrue();
+        (await authorization.IsSessionCurrentAsync(principal)).Should().BeFalse();
+
+        services.GetRequiredService<AuthenticationStateProvider>()
+            .Should().BeOfType<TenantAwareAuthenticationStateProvider>();
     }
 
     private async Task<ApplicationUser> CreateUserAsync()

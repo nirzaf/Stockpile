@@ -10,11 +10,16 @@ public class AccountController : Controller
 {
     private readonly SignInManager<ApplicationUser> _signInManager;
     private readonly UserManager<ApplicationUser> _userManager;
+    private readonly ILogger<AccountController> _logger;
 
-    public AccountController(SignInManager<ApplicationUser> signInManager, UserManager<ApplicationUser> userManager)
+    public AccountController(
+        SignInManager<ApplicationUser> signInManager,
+        UserManager<ApplicationUser> userManager,
+        ILogger<AccountController> logger)
     {
         _signInManager = signInManager;
         _userManager = userManager;
+        _logger = logger;
     }
 
     [HttpGet]
@@ -61,7 +66,20 @@ public class AccountController : Controller
     [ValidateAntiForgeryToken]
     public async Task<IActionResult> Logout()
     {
+        var user = await _userManager.GetUserAsync(User);
+        var stampResult = user is null
+            ? IdentityResult.Success
+            : await _userManager.UpdateSecurityStampAsync(user);
         await _signInManager.SignOutAsync();
+
+        if (!stampResult.Succeeded)
+        {
+            _logger.LogError("Could not invalidate existing sessions for user {UserId} during logout: {Errors}",
+                user?.Id, string.Join(" ", stampResult.Errors.Select(error => error.Code)));
+            return StatusCode(StatusCodes.Status500InternalServerError,
+                "Signed out here, but other sessions could not be invalidated. Please retry or contact an administrator.");
+        }
+
         return RedirectToAction("Login", "Account");
     }
 
