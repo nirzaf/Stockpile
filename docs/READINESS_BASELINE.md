@@ -64,15 +64,15 @@ The current SFR follow-up inventory is:
 The current source contains explicit evidence for the previously identified
 readiness controls:
 
-- Administrator bootstrap: `Merconiq.Web/Configuration/AdminBootstrapCommand.cs`,
-  `Merconiq.Infrastructure/Data/AdminBootstrapService.cs`, and the bootstrap
+- Administrator bootstrap: `src/Merconiq.Web/Configuration/AdminBootstrapCommand.cs`,
+  `src/Merconiq.Infrastructure/Data/AdminBootstrapService.cs`, and the bootstrap
   integration tests.
 - Compose separation: `docker-compose.yml`, `docker-compose.dev.yml`, and
   `scripts/validate-compose.sh`.
-- Cancellation and idempotency: `Merconiq.Core/Services/StockService.cs`,
-  `Merconiq.Web/Services/IdempotencyKeyStore.cs`, and their tests.
-- Cookie security-stamp validation: `Merconiq.Web/Configuration/IdentityExtensions.cs`
-  and `Merconiq.Tests/Integration/TenantAuthenticationTests.cs`.
+- Cancellation and idempotency: `src/Merconiq.Core/Services/StockService.cs`,
+  `src/Merconiq.Web/Services/IdempotencyKeyStore.cs`, and their tests.
+- Cookie security-stamp validation: `src/Merconiq.Web/Configuration/IdentityExtensions.cs`
+  and `tests/Merconiq.Tests/Integration/TenantAuthenticationTests.cs`.
 
 These source references show where the controls are implemented; they do not
 claim that a local PostgreSQL, Docker, production, or provider run was

@@ -25,14 +25,14 @@ completing the delivery.
 
 | Operation | Anonymous | Admin | Manager | Staff | Evidence and status |
 | --- | --- | --- | --- | --- | --- |
-| Item catalog reads and writes | Denied by `Api` policy | Allowed | Allowed | Allowed | `Merconiq.Web/Controllers/Api/V1/ItemsController.cs`; `Merconiq.Tests/Integration/TenantAuthenticationTests.cs`; implemented, API-tested |
-| Stock/in-hand and transaction reads | Denied by `Api` policy | Allowed | Allowed | Allowed | `Merconiq.Web/Controllers/Api/V1/StockController.cs`; tenant query filters; implemented, existing API/tenant tests |
-| Receive, transfer, and sell | Denied by `Api` policy | Allowed | Allowed | Allowed | `Merconiq.Web/Controllers/Api/V1/StockController.cs` role attributes; `Merconiq.Tests/Web/Controllers/TransferStockIdempotencyTests.cs` and `Merconiq.Tests/Web/Controllers/SellStockIdempotencyTests.cs`; implemented, unit-tested; PostgreSQL execution is separately recorded by CI |
-| User creation and role changes | Denied by `Api` policy | Allowed | Denied | Denied | `Merconiq.Web/Components/Pages/Users/UserIndex.razor`; Admin-only UI authorization and implementation; no dedicated component test located |
-| Webhook list/create/update/delete | Denied by `Api` policy | Allowed | Allowed | Denied | `Merconiq.Web/Configuration/EndpointExtensions.cs` role policies; `Merconiq.Tests/Infrastructure/WebhookDispatcherTests.cs`; implemented, service-tested |
-| Forecasts and anomaly detection | Denied by `Api` policy | Allowed | Allowed | Allowed | `Merconiq.Web/Configuration/EndpointExtensions.cs` API group and tenant cache keys; `Merconiq.Tests/Integration/AiEndpointTests.cs`; implemented, API-tested |
-| Browser login/logout | Login is public; logout requires a valid cookie | Authenticated user | Authenticated user | Authenticated user | `Merconiq.Web/Controllers/AccountController.cs`; antiforgery on browser mutations; implemented |
-| Health and culture selection | Health is public; invalid culture is rejected | Public | Public | Public | `Merconiq.Web/Configuration/EndpointExtensions.cs`; operational endpoint, no tenant data |
+| Item catalog reads and writes | Denied by `Api` policy | Allowed | Allowed | Allowed | `src/Merconiq.Web/Controllers/Api/V1/ItemsController.cs`; `tests/Merconiq.Tests/Integration/TenantAuthenticationTests.cs`; implemented, API-tested |
+| Stock/in-hand and transaction reads | Denied by `Api` policy | Allowed | Allowed | Allowed | `src/Merconiq.Web/Controllers/Api/V1/StockController.cs`; tenant query filters; implemented, existing API/tenant tests |
+| Receive, transfer, and sell | Denied by `Api` policy | Allowed | Allowed | Allowed | `src/Merconiq.Web/Controllers/Api/V1/StockController.cs` role attributes; `tests/Merconiq.Tests/Web/Controllers/TransferStockIdempotencyTests.cs` and `tests/Merconiq.Tests/Web/Controllers/SellStockIdempotencyTests.cs`; implemented, unit-tested; PostgreSQL execution is separately recorded by CI |
+| User creation and role changes | Denied by `Api` policy | Allowed | Denied | Denied | `src/Merconiq.Web/Components/Pages/Users/UserIndex.razor`; Admin-only UI authorization and implementation; no dedicated component test located |
+| Webhook list/create/update/delete | Denied by `Api` policy | Allowed | Allowed | Denied | `src/Merconiq.Web/Configuration/EndpointExtensions.cs` role policies; `tests/Merconiq.Tests/Infrastructure/WebhookDispatcherTests.cs`; implemented, service-tested |
+| Forecasts and anomaly detection | Denied by `Api` policy | Allowed | Allowed | Allowed | `src/Merconiq.Web/Configuration/EndpointExtensions.cs` API group and tenant cache keys; `tests/Merconiq.Tests/Integration/AiEndpointTests.cs`; implemented, API-tested |
+| Browser login/logout | Login is public; logout requires a valid cookie | Authenticated user | Authenticated user | Authenticated user | `src/Merconiq.Web/Controllers/AccountController.cs`; antiforgery on browser mutations; implemented |
+| Health and culture selection | Health is public; invalid culture is rejected | Public | Public | Public | `src/Merconiq.Web/Configuration/EndpointExtensions.cs`; operational endpoint, no tenant data |
 
 The API uses bearer authentication through the `Api` policy. Browser cookie authentication
 is used by MVC/Razor UI routes. The two surfaces must not be treated as interchangeable:
@@ -43,10 +43,10 @@ ASP.NET Core antiforgery validation.
 
 ### Tenant and authentication boundaries
 
-`Merconiq.Web/Configuration/IdentityExtensions.cs` rejects a cookie or JWT whose `tenant_id` does not equal the resolved
-host tenant, and rejects requests when no tenant is resolved. `Merconiq.Tests/Integration/TenantAuthenticationTests.cs`
-covers wrong-host and mismatched-claim rejection. `Merconiq.Tests/Infrastructure/TenantIsolationTests.cs` and the filtered
-`Merconiq.Infrastructure/Data/InventoryDbContext.cs` cover tenant-scoped reads; `Merconiq.Core/Interfaces/TenantCacheKeys.cs` is used by forecast
+`src/Merconiq.Web/Configuration/IdentityExtensions.cs` rejects a cookie or JWT whose `tenant_id` does not equal the resolved
+host tenant, and rejects requests when no tenant is resolved. `tests/Merconiq.Tests/Integration/TenantAuthenticationTests.cs`
+covers wrong-host and mismatched-claim rejection. `tests/Merconiq.Tests/Infrastructure/TenantIsolationTests.cs` and the filtered
+`src/Merconiq.Infrastructure/Data/InventoryDbContext.cs` cover tenant-scoped reads; `src/Merconiq.Core/Interfaces/TenantCacheKeys.cs` is used by forecast
 endpoints so equal item IDs in two tenants do not share a cache entry.
 
 `auth/token` is intentionally anonymous only long enough to verify credentials. It still
@@ -58,7 +58,7 @@ login-abuse controls. Token-login abuse protection therefore remains an unresolv
 
 ### Browser CSRF and bearer API behavior
 
-`Merconiq.Web/Controllers/AccountController` retains `[ValidateAntiForgeryToken]` on login and logout. The stock
+`src/Merconiq.Web/Controllers/AccountController` retains `[ValidateAntiForgeryToken]` on login and logout. The stock
 transfer and sell actions are bearer-only API actions; their explicit antiforgery marker
 is accompanied by `[IgnoreAntiforgeryToken]` because no ambient cookie authenticates them.
 This is a source-analysis annotation for the supported authentication boundary, not a
@@ -67,22 +67,22 @@ integration test before changing this decision.
 
 ### Background workers
 
-`Merconiq.Web/BackgroundServices/ForecastBackgroundService.cs` enumerates configured tenant IDs and invokes
-`Merconiq.Web/BackgroundServices/TenantForecastRunner.cs`, which sets the tenant before creating the forecast service.
-`Merconiq.Web/BackgroundServices/WebhookDeliveryBackgroundService.cs` loads the delivery and subscription using the delivery
+`src/Merconiq.Web/BackgroundServices/ForecastBackgroundService.cs` enumerates configured tenant IDs and invokes
+`src/Merconiq.Web/BackgroundServices/TenantForecastRunner.cs`, which sets the tenant before creating the forecast service.
+`src/Merconiq.Web/BackgroundServices/WebhookDeliveryBackgroundService.cs` loads the delivery and subscription using the delivery
 tenant, sets the tenant context, then completes the record under that tenant. These paths
 are isolated from HTTP middleware. The delivery worker intentionally claims the next
 delivery with `IgnoreQueryFilters()` and explicit delivery/subscription tenant predicates
-before setting the tenant context. `Merconiq.Tests/Integration/TenantBackgroundProcessingTests.cs`
-tests forecast tenant selection; `Merconiq.Tests/Infrastructure/WebhookDispatcherTests.cs`
+before setting the tenant context. `tests/Merconiq.Tests/Integration/TenantBackgroundProcessingTests.cs`
+tests forecast tenant selection; `tests/Merconiq.Tests/Infrastructure/WebhookDispatcherTests.cs`
 tests direct dispatch, but no test exercises `WebhookDeliveryBackgroundService` itself.
 Production multi-tenant scheduling and failed-worker recovery remain configured-not-exercised here.
 
 ### Webhooks and outbound network trust
 
-`Merconiq.Web/Security/WebhookUrlValidator.cs` rejects unsupported schemes, loopback/private/link-local addresses
+`src/Merconiq.Web/Security/WebhookUrlValidator.cs` rejects unsupported schemes, loopback/private/link-local addresses
 and unsafe DNS results on the durable background-delivery path. The synchronous
-`Merconiq.Infrastructure/Services/WebhookDispatcher.cs` path currently sends its stored
+`src/Merconiq.Infrastructure/Services/WebhookDispatcher.cs` path currently sends its stored
 subscription URL without calling the validator, so this claim does not cover every send
 path. The validator also does not reject every possible non-global IPv4 range (for example,
 its default IPv4 branch permits multicast), so its protection is not a complete global

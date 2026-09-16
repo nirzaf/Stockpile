@@ -200,9 +200,9 @@ The state transitions are:
   fails, the failed claim can be retried.
 
 Existing executable coverage for this contract is kept in
-`Merconiq.Tests/Web/Services/IdempotencyKeyStoreTests.cs`,
-`Merconiq.Tests/Integration/TenantAuthenticationTests.cs`,
-and `Merconiq.Tests/Web/Services/RateLimitPartitionKeyTests.cs`.
+`tests/Merconiq.Tests/Web/Services/IdempotencyKeyStoreTests.cs`,
+`tests/Merconiq.Tests/Integration/TenantAuthenticationTests.cs`,
+and `tests/Merconiq.Tests/Web/Services/RateLimitPartitionKeyTests.cs`.
 The integration test factory uses an in-memory database and synthetic signed
 JWTs; it does not represent an external identity provider or a production rate
 limit measurement.

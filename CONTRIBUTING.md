@@ -41,7 +41,7 @@ Please read and follow our [Code of Conduct](CODE_OF_CONDUCT.md).
    The repository pins the SDK to exactly **.NET 10.0.300** in `global.json` (`rollForward` is disabled); install that SDK before running these commands. A generic .NET 10 installation is not sufficient.
 6. **Run the PostgreSQL phase** when a change involves relational constraints, transactions, concurrency, persistence boundaries, migrations, or API behavior that depends on PostgreSQL:
    ```bash
-   RUN_POSTGRES_TESTS=true dotnet test Merconiq.Tests/Merconiq.Tests.csproj \
+   RUN_POSTGRES_TESTS=true dotnet test tests/Merconiq.Tests/Merconiq.Tests.csproj \
      --no-build --configuration Release --filter "Category=PostgreSQL"
    ```
    The PostgreSQL phase uses Testcontainers to create a disposable `postgres:16-alpine` instance, so Docker must be installed and running in Linux-container mode; a locally installed PostgreSQL server alone is not sufficient for this command. InMemory tests are useful for fast unit coverage, but a skipped or InMemory-only test does not prove PostgreSQL behavior. Confirm that the PostgreSQL phase actually ran.
@@ -50,7 +50,7 @@ Please read and follow our [Code of Conduct](CODE_OF_CONDUCT.md).
    $previousRunPostgresTests = $env:RUN_POSTGRES_TESTS
    try {
      $env:RUN_POSTGRES_TESTS = "true"
-     dotnet test Merconiq.Tests/Merconiq.Tests.csproj --no-build --configuration Release --filter "Category=PostgreSQL"
+     dotnet test tests/Merconiq.Tests/Merconiq.Tests.csproj --no-build --configuration Release --filter "Category=PostgreSQL"
    }
    finally {
      if ($null -eq $previousRunPostgresTests) { Remove-Item Env:RUN_POSTGRES_TESTS -ErrorAction SilentlyContinue }
@@ -258,17 +258,17 @@ type(scope): description
 ## Project Structure
 
 ```
-├── Merconiq.Core/         Domain layer
+├── src/Merconiq.Core/         Domain layer
 │   ├── Entities/                           Domain models
 │   ├── Interfaces/                         Service contracts
 │   └── Services/                           Business logic
-├── Merconiq.Infrastructure/ Data access
+├── src/Merconiq.Infrastructure/ Data access
 │   ├── Data/                               DbContext, migrations, seed
 │   └── Repositories/                       Repository implementations
-├── Merconiq.Web/          ASP.NET Core MVC
+├── src/Merconiq.Web/          ASP.NET Core MVC
 │   ├── Controllers/                        MVC controllers
 │   └── Views/                              Razor views
-└── Merconiq.Tests/        Test projects
+└── tests/Merconiq.Tests/        Test projects
 ```
 
 ## Questions?
