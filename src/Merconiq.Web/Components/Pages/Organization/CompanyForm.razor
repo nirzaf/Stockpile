@@ -1,0 +1,235 @@
+@page "/Organization/Companies/Create"
+@page "/Organization/Companies/Edit/{Id:int}"
+@using Microsoft.AspNetCore.Authorization
+@using Merconiq.Core.Models
+@using Merconiq.Web.Security
+@attribute [Authorize(Policy = CapabilityPolicies.Edit)]
+@inject IOrganizationService OrganizationService
+@inject NavigationManager Navigation
+@inject ISnackbar Snackbar
+@inject ILogger<CompanyForm> Logger
+
+<PageTitle>@(IsEdit ? "Edit company" : "Create company")</PageTitle>
+
+<MudStack Spacing="1" Class="mb-4">
+    <MudText Typo="Typo.h4">@(IsEdit ? "Edit company" : "Create company")</MudText>
+    <MudText Typo="Typo.body2" Color="Color.Secondary">
+        Company details are scoped to the current tenant. Legal and currency information must be supplied by an authorized operator.
+    </MudText>
+</MudStack>
+
+@if (_loading)
+{
+    <MudProgressLinear Indeterminate="true" Color="Color.Primary" aria-label="Loading company" />
+}
+else if (_loadErrorMessage is not null)
+{
+    <MudAlert Severity="Severity.Error" Variant="Variant.Outlined">@_loadErrorMessage</MudAlert>
+    <MudButton Color="Color.Primary" Variant="Variant.Text" Class="mt-3" OnClick="RetryLoadAsync">Retry</MudButton>
+}
+else if (_notFound)
+{
+    <MudAlert Severity="Severity.Warning" Variant="Variant.Outlined">Company not found in this tenant.</MudAlert>
+    <MudButton Href="/Organization/Companies" Color="Color.Primary" Variant="Variant.Text" Class="mt-3">Back to companies</MudButton>
+}
+else
+{
+    @if (!string.IsNullOrWhiteSpace(_errorMessage))
+    {
+        <MudAlert Severity="Severity.Error" Variant="Variant.Outlined" Class="mb-4">@_errorMessage</MudAlert>
+    }
+
+    <MudPaper Outlined="true" Class="pa-4 pa-md-6">
+        <MudForm @ref="_form" ValidationDelay="0">
+            <MudGrid Spacing="3">
+                <MudItem xs="12" md="6">
+                    @if (IsEdit)
+                    {
+                        <MudTextField T="string" Label="Company code" Value="@_model.Code" ReadOnly="true"
+                                      HelperText="Company code is immutable after creation." />
+                    }
+                    else
+                    {
+                        <MudTextField T="string" Label="Company code" @bind-Value="_model.Code"
+                                      Required="true" RequiredError="Company code is required."
+                                      MaxLength="32" Counter="32" Immediate="true" />
+                    }
+                </MudItem>
+                <MudItem xs="12" md="6">
+                    <MudTextField T="string" Label="Legal name" @bind-Value="_model.LegalName"
+                                  Required="true" RequiredError="Legal name is required."
+                                  MaxLength="200" Counter="200" Immediate="true" />
+                </MudItem>
+                <MudItem xs="12" md="6">
+                    <MudTextField T="string" Label="Trading name (optional)" @bind-Value="_model.TradingName"
+                                  MaxLength="200" Counter="200" />
+                </MudItem>
+                <MudItem xs="12" md="6">
+                    <MudTextField T="string" Label="Registration number (optional)" @bind-Value="_model.RegistrationNumber"
+                                  MaxLength="100" Counter="100" />
+                </MudItem>
+                <MudItem xs="12" md="6">
+                    <MudTextField T="string" Label="Tax identifier (optional)" @bind-Value="_model.TaxIdentifier"
+                                  MaxLength="100" Counter="100" />
+                </MudItem>
+                <MudItem xs="12" md="6">
+                    <MudTextField T="string" Label="Base currency" @bind-Value="_model.BaseCurrency"
+                                  Required="true" RequiredError="Base currency is required."
+                                  MaxLength="3" Counter="3" Immediate="true"
+                                  HelperText="Enter the approved three-letter currency code; no country default is assumed." />
+                </MudItem>
+                <MudItem xs="12" md="6">
+                    <MudTextField T="string" Label="Country code (optional)" @bind-Value="_model.CountryCode"
+                                  MaxLength="2" Counter="2" HelperText="Optional two-letter country code." />
+                </MudItem>
+                @if (IsEdit)
+                {
+                    <MudItem xs="12">
+                        <MudSwitch T="bool" @bind-Value="_model.IsActive" Color="Color.Success" Label="Company is active" />
+                        @if (!_model.IsActive)
+                        {
+                            <MudText Typo="Typo.caption" Color="Color.Secondary">
+                                Active branches must be deactivated or reassigned before this company can be deactivated.
+                            </MudText>
+                        }
+                    </MudItem>
+                }
+            </MudGrid>
+        </MudForm>
+
+        <MudDivider Class="my-4" />
+        <MudStack Row="true" Spacing="2" Wrap="Wrap.Wrap">
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="SaveAsync" Disabled="_saving">
+                @(_saving ? "Saving…" : IsEdit ? "Save changes" : "Create company")
+            </MudButton>
+            <MudButton Variant="Variant.Outlined" Color="Color.Default" Href="/Organization/Companies" Disabled="_saving">
+                Cancel
+            </MudButton>
+        </MudStack>
+    </MudPaper>
+}
+
+@code {
+    [Parameter] public int? Id { get; set; }
+
+    private MudForm? _form;
+    private CompanyFormModel _model = new();
+    private string? _errorMessage;
+    private string? _loadErrorMessage;
+    private bool _loading;
+    private bool _notFound;
+    private bool _saving;
+    private bool IsEdit => Id.HasValue;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        _model = new CompanyFormModel();
+        _notFound = false;
+        _errorMessage = null;
+        _loadErrorMessage = null;
+        if (Id is not int id)
+        {
+            _loading = false;
+            return;
+        }
+
+        await LoadCompanyAsync(id);
+    }
+
+    private Task RetryLoadAsync() => Id is int id ? LoadCompanyAsync(id) : Task.CompletedTask;
+
+    private async Task LoadCompanyAsync(int id)
+    {
+        _loading = true;
+        _loadErrorMessage = null;
+        try
+        {
+            var company = await OrganizationService.GetCompanyAsync(id);
+            if (company is null)
+            {
+                _notFound = true;
+                return;
+            }
+
+            _model = new CompanyFormModel
+            {
+                Code = company.Code,
+                LegalName = company.LegalName,
+                TradingName = company.TradingName,
+                RegistrationNumber = company.RegistrationNumber,
+                TaxIdentifier = company.TaxIdentifier,
+                BaseCurrency = company.BaseCurrency,
+                CountryCode = company.CountryCode,
+                IsActive = company.IsActive
+            };
+        }
+        catch (Exception exception)
+        {
+            Logger.LogError(exception, "Unable to load company {CompanyId} for editing.", id);
+            _loadErrorMessage = "Unable to load company details. Please retry.";
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task SaveAsync()
+    {
+        if (_form is null || _saving)
+            return;
+
+        await _form.ValidateAsync();
+        if (!_form.IsValid)
+        {
+            _errorMessage = "Review the highlighted fields and try again.";
+            return;
+        }
+
+        _saving = true;
+        _errorMessage = null;
+        try
+        {
+            if (Id is int id)
+            {
+                await OrganizationService.UpdateCompanyAsync(id, new UpdateCompanyRequest(
+                    _model.LegalName, _model.TradingName, _model.RegistrationNumber,
+                    _model.TaxIdentifier, _model.BaseCurrency, _model.CountryCode, _model.IsActive));
+                Snackbar.Add("Company updated.", Severity.Success);
+            }
+            else
+            {
+                await OrganizationService.CreateCompanyAsync(new CreateCompanyRequest(
+                    _model.Code, _model.LegalName, _model.TradingName, _model.RegistrationNumber,
+                    _model.TaxIdentifier, _model.BaseCurrency, _model.CountryCode));
+                Snackbar.Add("Company created.", Severity.Success);
+            }
+
+            Navigation.NavigateTo("/Organization/Companies");
+        }
+        catch (Exception exception)
+        {
+            Logger.LogWarning(exception, "Unable to save company changes.");
+            _errorMessage = exception is ArgumentException or InvalidOperationException
+                ? exception.Message
+                : "Unable to save company changes. Please retry.";
+            Snackbar.Add(_errorMessage, Severity.Error);
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private sealed class CompanyFormModel
+    {
+        public string Code { get; set; } = string.Empty;
+        public string LegalName { get; set; } = string.Empty;
+        public string? TradingName { get; set; }
+        public string? RegistrationNumber { get; set; }
+        public string? TaxIdentifier { get; set; }
+        public string BaseCurrency { get; set; } = string.Empty;
+        public string? CountryCode { get; set; }
+        public bool IsActive { get; set; } = true;
+    }
+}

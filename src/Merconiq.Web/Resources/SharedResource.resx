@@ -15,6 +15,7 @@
   <data name="Purchase Orders" xml:space="preserve"><value>Purchase Orders</value></data>
   <data name="Suppliers" xml:space="preserve"><value>Suppliers</value></data>
   <data name="Locations" xml:space="preserve"><value>Locations</value></data>
+  <data name="Organization" xml:space="preserve"><value>Organization</value></data>
   <data name="Merconiq" xml:space="preserve"><value>Merconiq</value></data>
   <data name="Login" xml:space="preserve"><value>Login</value></data>
   <data name="Logout" xml:space="preserve"><value>Logout</value></data>

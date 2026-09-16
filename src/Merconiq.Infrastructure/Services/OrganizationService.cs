@@ -1,6 +1,8 @@
+using System.Globalization;
 using Merconiq.Core.Entities;
 using Merconiq.Core.Interfaces;
 using Merconiq.Core.Models;
+using Merconiq.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 
 namespace Merconiq.Infrastructure.Services;
@@ -10,10 +12,13 @@ public sealed class OrganizationService(
     IRepository<Company> companies,
     IRepository<Branch> branches,
     IRepository<Location> locations,
-    IUnitOfWork unitOfWork) : IOrganizationService
+    IUnitOfWork unitOfWork,
+    ITenantContext tenantContext,
+    InventoryDbContext context) : IOrganizationService
 {
     public async Task<IReadOnlyList<Company>> GetCompaniesAsync(string? search = null)
     {
+        EnsureTenantResolved();
         IQueryable<Company> query = companies.Query().OrderBy(c => c.Code);
         if (!string.IsNullOrWhiteSpace(search))
         {
@@ -23,10 +28,15 @@ public sealed class OrganizationService(
         return await query.ToListAsync();
     }
 
-    public Task<Company?> GetCompanyAsync(int id) => companies.GetByIdAsync(id);
+    public Task<Company?> GetCompanyAsync(int id)
+    {
+        EnsureTenantResolved();
+        return GetTenantCompanyAsync(id);
+    }
 
     public async Task<Company> CreateCompanyAsync(CreateCompanyRequest request)
     {
+        EnsureTenantResolved();
         var code = NormalizeRequired(request.Code, "Company code", 32);
         var legalName = NormalizeRequired(request.LegalName, "Legal name", 200);
         var currency = NormalizeCurrency(request.BaseCurrency);
@@ -49,25 +59,30 @@ public sealed class OrganizationService(
 
     public async Task UpdateCompanyAsync(int id, UpdateCompanyRequest request)
     {
-        var company = await companies.GetByIdAsync(id)
-            ?? throw new KeyNotFoundException("Company not found.");
-        if (!request.IsActive && company.IsActive &&
-            await branches.Query().AnyAsync(b => b.CompanyId == id && b.IsActive))
-            throw new InvalidOperationException("Deactivate or reassign active branches before deactivating the company.");
-        company.LegalName = NormalizeRequired(request.LegalName, "Legal name", 200);
-        company.TradingName = NormalizeOptional(request.TradingName, 200);
-        company.RegistrationNumber = NormalizeOptional(request.RegistrationNumber, 100);
-        company.TaxIdentifier = NormalizeOptional(request.TaxIdentifier, 100);
-        company.BaseCurrency = NormalizeCurrency(request.BaseCurrency);
-        company.CountryCode = NormalizeOptional(request.CountryCode, 2)?.ToUpperInvariant();
-        company.IsActive = request.IsActive;
-        await companies.UpdateAsync(company);
-        await unitOfWork.SaveChangesAsync();
+        EnsureTenantResolved();
+        await ExecuteOrganizationWriteAsync(async () =>
+        {
+            var company = await GetTenantCompanyAsync(id)
+                ?? throw new KeyNotFoundException("Company not found.");
+            if (!request.IsActive && company.IsActive &&
+                await branches.Query().AnyAsync(b => b.CompanyId == id && b.IsActive))
+                throw new InvalidOperationException("Deactivate or reassign active branches before deactivating the company.");
+            company.LegalName = NormalizeRequired(request.LegalName, "Legal name", 200);
+            company.TradingName = NormalizeOptional(request.TradingName, 200);
+            company.RegistrationNumber = NormalizeOptional(request.RegistrationNumber, 100);
+            company.TaxIdentifier = NormalizeOptional(request.TaxIdentifier, 100);
+            company.BaseCurrency = NormalizeCurrency(request.BaseCurrency);
+            company.CountryCode = NormalizeOptional(request.CountryCode, 2)?.ToUpperInvariant();
+            company.IsActive = request.IsActive;
+            await companies.UpdateAsync(company);
+        });
     }
 
     public async Task<IReadOnlyList<Branch>> GetBranchesAsync(int companyId, string? search = null)
     {
-        _ = await GetActiveCompanyAsync(companyId);
+        EnsureTenantResolved();
+        _ = await GetTenantCompanyAsync(companyId)
+            ?? throw new KeyNotFoundException("Company not found.");
         IQueryable<Branch> query = branches.Query().Where(b => b.CompanyId == companyId).OrderBy(b => b.Code);
         if (!string.IsNullOrWhiteSpace(search))
         {
@@ -77,58 +92,130 @@ public sealed class OrganizationService(
         return await query.ToListAsync();
     }
 
-    public Task<Branch?> GetBranchAsync(int id) => branches.GetByIdAsync(id);
+    public Task<Branch?> GetBranchAsync(int id)
+    {
+        EnsureTenantResolved();
+        return GetTenantBranchAsync(id);
+    }
 
     public async Task<Branch> CreateBranchAsync(CreateBranchRequest request)
     {
-        _ = await GetActiveCompanyAsync(request.CompanyId);
-        var code = NormalizeRequired(request.Code, "Branch code", 32);
-        if (await branches.Query().AnyAsync(b => b.CompanyId == request.CompanyId && b.Code == code))
-            throw new InvalidOperationException("A branch with this code already exists in the company.");
-
-        var branch = await branches.AddAsync(new Branch
+        EnsureTenantResolved();
+        Branch? branch = null;
+        await ExecuteOrganizationWriteAsync(async () =>
         {
-            CompanyId = request.CompanyId,
-            Code = code,
-            Name = NormalizeRequired(request.Name, "Branch name", 200),
-            Address = NormalizeOptional(request.Address, 500),
-            TimeZoneId = NormalizeRequired(request.TimeZoneId, "Time zone", 100)
+            _ = await GetActiveCompanyAsync(request.CompanyId);
+            var code = NormalizeRequired(request.Code, "Branch code", 32);
+            if (await branches.Query().AnyAsync(b => b.CompanyId == request.CompanyId && b.Code == code))
+                throw new InvalidOperationException("A branch with this code already exists in the company.");
+
+            branch = await branches.AddAsync(new Branch
+            {
+                CompanyId = request.CompanyId,
+                Code = code,
+                Name = NormalizeRequired(request.Name, "Branch name", 200),
+                Address = NormalizeOptional(request.Address, 500),
+                TimeZoneId = NormalizeRequired(request.TimeZoneId, "Time zone", 100)
+            });
         });
-        await unitOfWork.SaveChangesAsync();
-        return branch;
+        return branch!;
     }
 
     public async Task UpdateBranchAsync(int id, UpdateBranchRequest request)
     {
-        var branch = await branches.GetByIdAsync(id)
+        EnsureTenantResolved();
+        var companyId = await branches.Query()
+            .Where(branch => branch.Id == id)
+            .Select(branch => (int?)branch.CompanyId)
+            .SingleOrDefaultAsync()
             ?? throw new KeyNotFoundException("Branch not found.");
-        if (!request.IsActive && branch.IsActive &&
-            await locations.Query().AnyAsync(location => location.BranchId == id))
-            throw new InvalidOperationException("Reassign locations before deactivating the branch.");
-        branch.Name = NormalizeRequired(request.Name, "Branch name", 200);
-        branch.Address = NormalizeOptional(request.Address, 500);
-        branch.TimeZoneId = NormalizeRequired(request.TimeZoneId, "Time zone", 100);
-        branch.IsActive = request.IsActive;
-        await branches.UpdateAsync(branch);
-        await unitOfWork.SaveChangesAsync();
+
+        await ExecuteOrganizationWriteAsync(async () =>
+        {
+            var branch = await GetTenantBranchAsync(id)
+                ?? throw new KeyNotFoundException("Branch not found.");
+            if (branch.CompanyId != companyId)
+                throw new InvalidOperationException("A branch's company ownership cannot be changed.");
+            if (request.IsActive && !branch.IsActive)
+                _ = await GetActiveCompanyAsync(branch.CompanyId);
+            if (!request.IsActive && branch.IsActive &&
+                await locations.Query().AnyAsync(location => location.BranchId == id))
+                throw new InvalidOperationException("Reassign locations before deactivating the branch.");
+            branch.Name = NormalizeRequired(request.Name, "Branch name", 200);
+            branch.Address = NormalizeOptional(request.Address, 500);
+            branch.TimeZoneId = NormalizeRequired(request.TimeZoneId, "Time zone", 100);
+            branch.IsActive = request.IsActive;
+            await branches.UpdateAsync(branch);
+        });
     }
 
     public async Task AssignLocationBranchAsync(int locationId, int branchId)
     {
-        var location = await locations.GetByIdAsync(locationId)
-            ?? throw new KeyNotFoundException("Location not found.");
-        var branch = await branches.GetByIdAsync(branchId)
-            ?? throw new KeyNotFoundException("Branch not found.");
-        if (!branch.IsActive)
-            throw new InvalidOperationException("An inactive branch cannot own a location.");
-        location.BranchId = branch.Id;
-        await locations.UpdateAsync(location);
-        await unitOfWork.SaveChangesAsync();
+        EnsureTenantResolved();
+        await ExecuteOrganizationWriteAsync(async () =>
+        {
+            var location = await locations.GetByIdAsync(locationId)
+                ?? throw new KeyNotFoundException("Location not found.");
+            if (location.IsDeleted ||
+                !string.Equals(location.TenantId, tenantContext.TenantId, StringComparison.Ordinal))
+                throw new KeyNotFoundException("Location not found.");
+            var branch = await GetTenantBranchAsync(branchId)
+                ?? throw new KeyNotFoundException("Branch not found.");
+            if (!branch.IsActive)
+                throw new InvalidOperationException("An inactive branch cannot own a location.");
+            _ = await GetActiveCompanyAsync(branch.CompanyId);
+            location.BranchId = branch.Id;
+            await locations.UpdateAsync(location);
+        });
     }
 
-    private async Task<Company> GetActiveCompanyAsync(int id) =>
-        await companies.Query().SingleOrDefaultAsync(c => c.Id == id && c.IsActive)
-        ?? throw new InvalidOperationException("The company does not exist in this tenant or is inactive.");
+    private async Task<Company?> GetTenantCompanyAsync(int id)
+    {
+        var company = await companies.GetByIdAsync(id);
+        return company is not null &&
+               string.Equals(company.TenantId, tenantContext.TenantId, StringComparison.Ordinal)
+            ? company
+            : null;
+    }
+
+    private async Task<Branch?> GetTenantBranchAsync(int id)
+    {
+        var branch = await branches.GetByIdAsync(id);
+        return branch is not null &&
+               string.Equals(branch.TenantId, tenantContext.TenantId, StringComparison.Ordinal)
+            ? branch
+            : null;
+    }
+
+    private async Task<Company> GetActiveCompanyAsync(int id)
+    {
+        var company = await GetTenantCompanyAsync(id);
+        return company is { IsActive: true }
+            ? company
+            : throw new InvalidOperationException("The company does not exist in this tenant or is inactive.");
+    }
+
+    private Task ExecuteOrganizationWriteAsync(Func<Task> operation) =>
+        unitOfWork.ExecuteInTransactionAsync(async () =>
+        {
+            if (context.Database.ProviderName == "Npgsql.EntityFrameworkCore.PostgreSQL")
+            {
+                // One tenant-scoped transaction lock serializes company, branch and location
+                // ownership transitions, including checks that span several rows.
+                var lockKey = string.Create(CultureInfo.InvariantCulture,
+                    $"organization-state:{tenantContext.TenantId}");
+                await context.Database.ExecuteSqlInterpolatedAsync(
+                    $"SELECT pg_advisory_xact_lock(hashtextextended({lockKey}, 0))");
+            }
+
+            await operation();
+        });
+
+    private void EnsureTenantResolved()
+    {
+        if (!tenantContext.IsResolved)
+            throw new InvalidOperationException("A resolved tenant is required for organization operations.");
+    }
 
     private static string NormalizeRequired(string? value, string name, int maxLength)
     {

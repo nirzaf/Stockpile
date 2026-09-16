@@ -1,0 +1,156 @@
+@page "/Organization/Companies"
+@using Microsoft.AspNetCore.Authorization
+@using Merconiq.Web.Security
+@attribute [Authorize(Policy = CapabilityPolicies.View)]
+@inject IOrganizationService OrganizationService
+@inject ILogger<CompanyIndex> Logger
+
+<PageTitle>Companies</PageTitle>
+
+<MudStack Spacing="1" Class="mb-4">
+    <MudText Typo="Typo.h4">Companies and branches</MudText>
+    <MudText Typo="Typo.body2" Color="Color.Secondary">
+        Manage this tenant's legal entities and their operating branches.
+    </MudText>
+</MudStack>
+
+<MudAlert Severity="Severity.Info" Variant="Variant.Outlined" Class="mb-4">
+    Company management is tenant-scoped. Selecting a company here does not change transaction access or authorization.
+</MudAlert>
+
+<MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="mb-4" Wrap="Wrap.Wrap">
+    <MudTextField T="string" Label="Search companies" Value="@_search"
+                  ValueChanged="SearchChangedAsync" Immediate="true" DebounceInterval="300"
+                  Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Search"
+                  Clearable="true" Class="flex-grow-1" />
+    <AuthorizeView Policy="@CapabilityPolicies.Edit">
+        <Authorized>
+            <MudButton Variant="Variant.Filled" Color="Color.Primary"
+                       StartIcon="@Icons.Material.Filled.Add"
+                       Href="/Organization/Companies/Create">
+                Add company
+            </MudButton>
+        </Authorized>
+    </AuthorizeView>
+</MudStack>
+
+@if (_loading)
+{
+    <MudProgressLinear Indeterminate="true" Color="Color.Primary" aria-label="Loading companies" />
+}
+else if (_errorMessage is not null)
+{
+    <MudAlert Severity="Severity.Error" Variant="Variant.Outlined">@_errorMessage</MudAlert>
+    <MudButton Color="Color.Primary" Variant="Variant.Text" Class="mt-3" OnClick="LoadCompaniesAsync">Retry</MudButton>
+}
+else if (_companies.Count == 0)
+{
+    <MudPaper Outlined="true" Class="pa-6 text-center">
+        <MudText Typo="Typo.h6">No companies found</MudText>
+        <MudText Typo="Typo.body2" Color="Color.Secondary" Class="mt-2">
+            @(_search.Length == 0 ? "Add the first legal entity for this tenant." : "Try another code or legal name.")
+        </MudText>
+    </MudPaper>
+}
+else
+{
+    <MudGrid Spacing="3">
+        @foreach (var company in _companies)
+        {
+            <MudItem xs="12" sm="6" lg="4" @key="company.Id">
+                <MudCard Outlined="true" Class="h-100">
+                    <MudCardContent>
+                        <MudStack Row="true" AlignItems="AlignItems.Start" Justify="Justify.SpaceBetween" Spacing="2">
+                            <div>
+                                <MudText Typo="Typo.overline">@company.Code</MudText>
+                                <MudText Typo="Typo.h6">@company.LegalName</MudText>
+                                @if (!string.IsNullOrWhiteSpace(company.TradingName))
+                                {
+                                    <MudText Typo="Typo.body2" Color="Color.Secondary">@company.TradingName</MudText>
+                                }
+                            </div>
+                            <MudChip T="string" Size="Size.Small"
+                                     Color="@(company.IsActive ? Color.Success : Color.Default)"
+                                     Variant="Variant.Outlined">
+                                @(company.IsActive ? "Active" : "Inactive")
+                            </MudChip>
+                        </MudStack>
+
+                        <MudDivider Class="my-3" />
+                        <MudGrid Spacing="1">
+                            <MudItem xs="6">
+                                <MudText Typo="Typo.caption" Color="Color.Secondary">Base currency</MudText>
+                                <MudText Typo="Typo.body1">@company.BaseCurrency</MudText>
+                            </MudItem>
+                            <MudItem xs="6">
+                                <MudText Typo="Typo.caption" Color="Color.Secondary">Country</MudText>
+                                <MudText Typo="Typo.body1">@(company.CountryCode ?? "Not set")</MudText>
+                            </MudItem>
+                        </MudGrid>
+                    </MudCardContent>
+                    <MudCardActions Class="px-4 pb-4">
+                        <MudButton Variant="Variant.Outlined" Color="Color.Primary"
+                                   Href="@($"/Organization/Companies/{company.Id}/Branches")">
+                            Manage branches
+                        </MudButton>
+                        <AuthorizeView Policy="@CapabilityPolicies.Edit">
+                            <Authorized>
+                                <MudButton Variant="Variant.Text" Color="Color.Primary"
+                                           Href="@($"/Organization/Companies/Edit/{company.Id}")">
+                                    Edit
+                                </MudButton>
+                            </Authorized>
+                        </AuthorizeView>
+                    </MudCardActions>
+                </MudCard>
+            </MudItem>
+        }
+    </MudGrid>
+}
+
+@code {
+    private IReadOnlyList<Company> _companies = Array.Empty<Company>();
+    private string _search = string.Empty;
+    private string? _errorMessage;
+    private bool _loading = true;
+    private long _loadVersion;
+
+    protected override async Task OnInitializedAsync() => await LoadCompaniesAsync();
+
+    private async Task SearchChangedAsync(string? value)
+    {
+        _search = value ?? string.Empty;
+        await LoadCompaniesAsync();
+    }
+
+    private async Task LoadCompaniesAsync()
+    {
+        var version = Interlocked.Increment(ref _loadVersion);
+        var search = _search;
+        _loading = true;
+        _errorMessage = null;
+        try
+        {
+            var companies = await OrganizationService.GetCompaniesAsync(search);
+            if (IsCurrentLoad(version, search))
+                _companies = companies;
+        }
+        catch (Exception exception)
+        {
+            if (IsCurrentLoad(version, search))
+            {
+                Logger.LogError(exception, "Unable to load the tenant's companies.");
+                _errorMessage = "Unable to load companies. Please retry.";
+            }
+        }
+        finally
+        {
+            if (IsCurrentLoad(version, search))
+                _loading = false;
+        }
+    }
+
+    private bool IsCurrentLoad(long version, string search) =>
+        version == Volatile.Read(ref _loadVersion) &&
+        string.Equals(search, _search, StringComparison.Ordinal);
+}

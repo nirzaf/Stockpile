@@ -1,0 +1,203 @@
+@page "/Organization/Companies/{CompanyId:int}/Branches"
+@using Microsoft.AspNetCore.Authorization
+@using Merconiq.Web.Security
+@attribute [Authorize(Policy = CapabilityPolicies.View)]
+@inject IOrganizationService OrganizationService
+@inject ILogger<BranchIndex> Logger
+
+<PageTitle>Branches</PageTitle>
+
+<MudBreadcrumbs Items="_breadcrumbs" Class="px-0" />
+<MudStack Spacing="1" Class="mb-4">
+    <MudText Typo="Typo.h4">Branches</MudText>
+    @if (_company is not null)
+    {
+        <MudText Typo="Typo.body2" Color="Color.Secondary">
+            @_company.LegalName <span aria-hidden="true">·</span> @_company.Code
+        </MudText>
+    }
+</MudStack>
+
+@if (_loading)
+{
+    <MudProgressLinear Indeterminate="true" Color="Color.Primary" aria-label="Loading branches" />
+}
+else if (_errorMessage is not null)
+{
+    <MudAlert Severity="Severity.Error" Variant="Variant.Outlined">@_errorMessage</MudAlert>
+    <MudButton Color="Color.Primary" Variant="Variant.Text" Class="mt-3" OnClick="LoadAsync">Retry</MudButton>
+}
+else if (_company is null)
+{
+    <MudAlert Severity="Severity.Warning" Variant="Variant.Outlined">Company not found in this tenant.</MudAlert>
+}
+else
+{
+    @if (!_company.IsActive)
+    {
+        <MudAlert Severity="Severity.Warning" Variant="Variant.Outlined" Class="mb-4">
+            This company is inactive. Existing branches can be reviewed, but new branches cannot be created or activated.
+        </MudAlert>
+    }
+
+    <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="mb-4" Wrap="Wrap.Wrap">
+        <MudTextField T="string" Label="Search branches" Value="@_search"
+                      ValueChanged="SearchChangedAsync" Immediate="true" DebounceInterval="300"
+                      Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Search"
+                      Clearable="true" Class="flex-grow-1" />
+        <AuthorizeView Policy="@CapabilityPolicies.Edit">
+            <Authorized>
+                <MudButton Variant="Variant.Filled" Color="Color.Primary"
+                           StartIcon="@Icons.Material.Filled.Add"
+                           Href="@($"/Organization/Companies/{CompanyId}/Branches/Create")"
+                           Disabled="@(!_company.IsActive)">
+                    Add branch
+                </MudButton>
+            </Authorized>
+        </AuthorizeView>
+    </MudStack>
+
+    @if (_branches.Count == 0)
+    {
+        <MudPaper Outlined="true" Class="pa-6 text-center">
+            <MudText Typo="Typo.h6">No branches found</MudText>
+            <MudText Typo="Typo.body2" Color="Color.Secondary" Class="mt-2">
+                @(_search.Length == 0 ? "Add an operating branch when the company details are approved." : "Try another code or branch name.")
+            </MudText>
+        </MudPaper>
+    }
+    else
+    {
+        <MudGrid Spacing="3">
+            @foreach (var branch in _branches)
+            {
+                <MudItem xs="12" sm="6" lg="4" @key="branch.Id">
+                    <MudCard Outlined="true" Class="h-100">
+                        <MudCardContent>
+                            <MudStack Row="true" AlignItems="AlignItems.Start" Justify="Justify.SpaceBetween" Spacing="2">
+                                <div>
+                                    <MudText Typo="Typo.overline">@branch.Code</MudText>
+                                    <MudText Typo="Typo.h6">@branch.Name</MudText>
+                                </div>
+                                <MudChip T="string" Size="Size.Small"
+                                         Color="@(branch.IsActive ? Color.Success : Color.Default)"
+                                         Variant="Variant.Outlined">
+                                    @(branch.IsActive ? "Active" : "Inactive")
+                                </MudChip>
+                            </MudStack>
+                            <MudDivider Class="my-3" />
+                            <MudText Typo="Typo.body2">@(string.IsNullOrWhiteSpace(branch.Address) ? "No address" : branch.Address)</MudText>
+                            <MudText Typo="Typo.caption" Color="Color.Secondary" Class="mt-2">Time zone: @branch.TimeZoneId</MudText>
+                        </MudCardContent>
+                        <MudCardActions Class="px-4 pb-4">
+                            <AuthorizeView Policy="@CapabilityPolicies.Edit">
+                                <Authorized>
+                                    <MudButton Variant="Variant.Outlined" Color="Color.Primary"
+                                               Href="@($"/Organization/Branches/Edit/{branch.Id}")">
+                                        Edit branch
+                                    </MudButton>
+                                </Authorized>
+                            </AuthorizeView>
+                        </MudCardActions>
+                    </MudCard>
+                </MudItem>
+            }
+        </MudGrid>
+    }
+}
+
+@code {
+    [Parameter] public int CompanyId { get; set; }
+
+    private Company? _company;
+    private IReadOnlyList<Branch> _branches = Array.Empty<Branch>();
+    private IReadOnlyList<BreadcrumbItem> _breadcrumbs = Array.Empty<BreadcrumbItem>();
+    private string _search = string.Empty;
+    private string? _errorMessage;
+    private bool _loading = true;
+    private long _loadVersion;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        _breadcrumbs = new[]
+        {
+            new BreadcrumbItem("Companies", "/Organization/Companies"),
+            new BreadcrumbItem("Branches", null, disabled: true)
+        };
+        await LoadAsync();
+    }
+
+    private async Task SearchChangedAsync(string? value)
+    {
+        _search = value ?? string.Empty;
+        await LoadBranchesAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        var version = Interlocked.Increment(ref _loadVersion);
+        var companyId = CompanyId;
+        _loading = true;
+        _errorMessage = null;
+        _company = null;
+        try
+        {
+            var company = await OrganizationService.GetCompanyAsync(companyId);
+            if (!IsCurrentLoad(version, companyId, _search))
+                return;
+            _company = company;
+            if (_company is not null)
+                await LoadBranchesAsync();
+        }
+        catch (Exception exception)
+        {
+            if (IsCurrentLoad(version, companyId, _search))
+            {
+                Logger.LogError(exception, "Unable to load branches for company {CompanyId}.", companyId);
+                _errorMessage = "Unable to load company branches. Please retry.";
+            }
+        }
+        finally
+        {
+            if (IsCurrentLoad(version, companyId, _search))
+                _loading = false;
+        }
+    }
+
+    private async Task LoadBranchesAsync()
+    {
+        if (_company is null)
+            return;
+        var version = Interlocked.Increment(ref _loadVersion);
+        var companyId = CompanyId;
+        var search = _search;
+        _loading = true;
+        try
+        {
+            var branches = await OrganizationService.GetBranchesAsync(companyId, search);
+            if (IsCurrentLoad(version, companyId, search))
+            {
+                _branches = branches;
+                _errorMessage = null;
+            }
+        }
+        catch (Exception exception)
+        {
+            if (IsCurrentLoad(version, companyId, search))
+            {
+                Logger.LogError(exception, "Unable to search branches for company {CompanyId}.", companyId);
+                _errorMessage = "Unable to load company branches. Please retry.";
+            }
+        }
+        finally
+        {
+            if (IsCurrentLoad(version, companyId, search))
+                _loading = false;
+        }
+    }
+
+    private bool IsCurrentLoad(long version, int companyId, string search) =>
+        version == Volatile.Read(ref _loadVersion) &&
+        companyId == CompanyId &&
+        string.Equals(search, _search, StringComparison.Ordinal);
+}
