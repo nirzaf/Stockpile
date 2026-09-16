@@ -20,6 +20,7 @@ env:
 
 permissions:
   contents: write
+  actions: read
   packages: read
 
 concurrency:
@@ -72,6 +73,12 @@ jobs:
             exit 1
           }
           git cat-file -e "$CANDIDATE_SHA^{commit}"
+
+      - name: Require successful validation for exact candidate
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CANDIDATE_SHA: ${{ steps.candidate.outputs.candidate_sha }}
+        run: scripts/wait-for-validated-sha.sh --repository "$GITHUB_REPOSITORY" --sha "$CANDIDATE_SHA"
 
       - name: Set up Docker Buildx
         if: inputs.dry_run != true

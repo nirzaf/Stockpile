@@ -51,6 +51,9 @@ metadata, and release notes. Docker publishes `sha-<full-commit>` as the
 immutable image reference; Release verifies that image and the matching semver
 image tag before creating a GitHub Release. Their manual `dry_run` inputs are
 safe validation paths and do not log in, push, or create a release.
+Both publication workflows also wait for successful CI and Security runs whose
+head SHA is the selected candidate. A missing, failed, cancelled, or still
+running validation cannot authorize publication.
 
 ## Owner-authorized publication checklist
 
