@@ -136,6 +136,12 @@ public static class IdentityExtensions
                 policy.AddAuthenticationSchemes(JwtBearerDefaults.AuthenticationScheme);
                 policy.RequireAuthenticatedUser();
             });
+            options.AddPolicy(CapabilityPolicies.View, policy => policy.RequireAuthenticatedUser());
+            options.AddPolicy(CapabilityPolicies.Edit, policy => policy.RequireRole("Admin", "Manager"));
+            options.AddPolicy(CapabilityPolicies.Approve, policy => policy.RequireRole("Admin"));
+            options.AddPolicy(CapabilityPolicies.Post, policy => policy.RequireRole("Admin", "Manager", "Staff"));
+            options.AddPolicy(CapabilityPolicies.Reverse, policy => policy.RequireRole("Admin"));
+            options.AddPolicy(CapabilityPolicies.Administer, policy => policy.RequireRole("Admin"));
         });
 
         return services;
