@@ -29,7 +29,8 @@ planned, untested, or owner-only work as delivered capability.
 - Full candidate SHA and `git diff` from the previous approved candidate.
 - CI restore/build/test results, PostgreSQL integration result, coverage report,
   CodeQL, container scan, Trivy, and GitGuardian results linked to that SHA.
-- Clean-install record using `docker compose config`, required non-empty secrets,
+- Clean-install record using `./scripts/validate-compose.sh production`,
+  required non-empty secrets,
   migrations, administrator provisioning, login, item/location creation, receive,
   sell, transfer, and fresh-context balance/history checks with synthetic data.
 - Restart/data-protection check and explicit local HTTP versus production
