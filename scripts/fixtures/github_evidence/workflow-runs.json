@@ -1,0 +1,7 @@
+{
+  "total_count": 2,
+  "workflow_runs": [
+    {"id": 1, "name": "CI", "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "status": "completed", "conclusion": "success", "html_url": "https://github.com/nirzaf/stockpile/actions/runs/1"},
+    {"id": 2, "name": "CI", "head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "status": "completed", "conclusion": "failure", "html_url": "https://github.com/nirzaf/stockpile/actions/runs/2"}
+  ]
+}
