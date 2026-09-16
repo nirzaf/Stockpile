@@ -1,4 +1,4 @@
-# Contributing to Inventory Management System
+# Contributing to Stockpile
 
 Thank you for your interest in contributing! This document outlines the process for contributing to this open-source project.
 
@@ -23,22 +23,52 @@ Please read and follow our [Code of Conduct](CODE_OF_CONDUCT.md).
 ### Pull Requests
 
 1. **Fork** the repository
-2. **Create a branch** from `main`:
+2. **Create a branch** from the current `master` branch:
    ```bash
-   git checkout -b feature/your-feature-name
+   git fetch origin master
+   git switch -c codex/issue-<number>-<short-description> origin/master
    ```
 3. **Make changes** following our coding conventions
 4. **Add tests** for new functionality
-5. **Run all tests** to verify nothing is broken:
+5. **Restore, build, and run all tests** to verify nothing is broken:
    ```bash
-   dotnet test
+   dotnet restore
+   dotnet build --no-restore --configuration Release
+   dotnet test --no-build --configuration Release
    ```
-6. **Build** the solution:
+6. **Run the PostgreSQL phase** when a change involves relational constraints, transactions, concurrency, persistence boundaries, migrations, or API behavior that depends on PostgreSQL:
    ```bash
-   dotnet build
+   RUN_POSTGRES_TESTS=true dotnet test InventoryManagementSystem.Tests/InventoryManagementSystem.Tests.csproj \
+     --no-build --configuration Release --filter "Category=PostgreSQL"
    ```
-7. **Commit** with descriptive messages
-8. **Push** and open a Pull Request against `main`
+   InMemory tests are useful for fast unit coverage, but a skipped or InMemory-only test does not prove PostgreSQL behavior. Confirm that the PostgreSQL phase actually ran.
+7. **Inspect** `git diff --check`, the changed-file list, and the complete diff. Do not commit secrets, dumps, coverage output, or transient logs.
+8. **Commit** with descriptive conventional-commit messages.
+9. **Push only the issue branch** and open a Pull Request against `master`.
+
+### Stockpile review and merge runbook
+
+For an engineering change, use one issue → one fresh `codex/issue-<number>-<short-description>` branch → one focused PR. Keep the PR linked to the real issue and record the tested commit, commands, and limitations. Do not bundle unrelated work or commit directly to `master`.
+
+After implementation and verification, mark the PR ready for review. Stockpile uses the existing native `chatgpt-codex-connector[bot]` integration. Request a review by commenting:
+
+```text
+@codex review
+
+Please review the current PR head <FULL_HEAD_SHA> against master.
+Check the linked issue's acceptance criteria, exact stock balances, tenant isolation,
+transaction/outbox consistency, retry/idempotency safety, compatibility, and tests.
+```
+
+An eyes reaction or a posted review request only means that a review may be running. A completed native Codex summary tied to the current full head, with all findings inspected (and the integration's no-findings signal where applicable), is the review completion evidence. It is distinct from a GitHub `APPROVED` review, required human or CODEOWNERS approval, and the actual `MERGED` state.
+
+For every material finding, inspect the full thread, reproduce or substantiate it, make the smallest valid fix, rerun relevant tests, push the new head, and request a fresh review for that new SHA. Record accepted and rejected dispositions with evidence; do not weaken tests or close a concern merely by resolving its thread.
+
+Before merging, verify the current head and base, acceptance criteria, complete diff, required checks, completed current-head Codex review, resolved actionable findings, required approvals, and a usable merge state. Use the repository's normal merge strategy with an expected-head guard. Never use an admin/bypass merge, disable checks, force-push, or lower an approval requirement. Preserve any applicable owner approval or confirmation-codeword rule; do not invent one.
+
+After merging, verify that GitHub reports `MERGED`, record the merge commit, fetch `master`, and check its post-merge CI health before starting the next issue. A queued merge, green check, or review reaction is not proof of completion.
+
+The normal workflows may have side effects: pushes to `master` publish the configured Docker image to GHCR, and changes under `docs/` can deploy GitHub Pages. Treat release publication, production deployment, user recruitment, and funding submission as separately authorized owner actions. Do not run `synthetic-history.sh`, rewrite history, or fabricate metrics.
 
 ### PR Guidelines
 
