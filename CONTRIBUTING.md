@@ -83,15 +83,23 @@ Before merging, verify the current head and base, acceptance criteria, complete 
 
 ```bash
 REVIEWED_HEAD="<FULL_REVIEWED_HEAD_SHA>"
+REVIEWED_BASE_BRANCH="<REVIEWED_BASE_BRANCH>"
+REVIEWED_BASE="<FULL_REVIEWED_BASE_SHA>"
 CURRENT_HEAD="$(gh pr view <PR_NUMBER> --repo nirzaf/stockpile --json headRefOid --jq '.headRefOid')"
+CURRENT_BASE_BRANCH="$(gh pr view <PR_NUMBER> --repo nirzaf/stockpile --json baseRefName --jq '.baseRefName')"
+CURRENT_BASE="$(gh pr view <PR_NUMBER> --repo nirzaf/stockpile --json baseRefOid --jq '.baseRefOid')"
 if test "$CURRENT_HEAD" != "$REVIEWED_HEAD"; then
   printf 'PR head changed: expected %s, found %s. Re-review before merging.\n' "$REVIEWED_HEAD" "$CURRENT_HEAD"
+  exit 1
+fi
+if test "$CURRENT_BASE_BRANCH" != "$REVIEWED_BASE_BRANCH" || test "$CURRENT_BASE" != "$REVIEWED_BASE"; then
+  printf 'PR base changed: expected %s at %s, found %s at %s. Re-review before merging.\n' "$REVIEWED_BASE_BRANCH" "$REVIEWED_BASE" "$CURRENT_BASE_BRANCH" "$CURRENT_BASE"
   exit 1
 fi
 gh pr merge <PR_NUMBER> --repo nirzaf/stockpile --squash --match-head-commit "$REVIEWED_HEAD"
 ```
 
-The `--match-head-commit` option makes the merge fail if the PR changed after review. Never use an admin/bypass merge, disable checks, force-push, or lower an approval requirement. Preserve any applicable owner approval or confirmation-codeword rule; do not invent one.
+The explicit head and base comparisons ensure the reviewed diff is still the diff being merged, while `--match-head-commit` makes the merge fail if the PR head changes during the final step. Never use an admin/bypass merge, disable checks, force-push, or lower an approval requirement. Preserve any applicable owner approval or confirmation-codeword rule; do not invent one.
 
 After merging, verify that GitHub reports `MERGED`, record the merge commit, fetch `master`, and check its post-merge CI health before starting the next issue. A queued merge, green check, or review reaction is not proof of completion.
 
