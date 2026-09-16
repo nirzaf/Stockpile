@@ -24,6 +24,9 @@ public class StockServiceTests
 
     public StockServiceTests()
     {
+        _uowMock
+            .Setup(u => u.ExecuteInTransactionAsync(It.IsAny<Func<Task>>(), It.IsAny<CancellationToken>()))
+            .Returns((Func<Task> operation, CancellationToken _) => operation());
         _sut = new StockService(
             _stockRepoMock.Object,
             _txRepoMock.Object,
@@ -309,7 +312,6 @@ public class StockServiceTests
         payload.GetType().GetProperty("ItemCode")!.GetValue(payload).Should().Be("LOW-001");
         payload.GetType().GetProperty("TotalStock")!.GetValue(payload).Should().Be(10);
         payload.GetType().GetProperty("ReorderLevel")!.GetValue(payload).Should().Be(10);
-        _uowMock.Verify(u => u.BeginTransactionAsync(default), Times.Once);
-        _uowMock.Verify(u => u.CommitTransactionAsync(default), Times.Once);
+        _uowMock.Verify(u => u.ExecuteInTransactionAsync(It.IsAny<Func<Task>>(), CancellationToken.None), Times.Once);
     }
 }

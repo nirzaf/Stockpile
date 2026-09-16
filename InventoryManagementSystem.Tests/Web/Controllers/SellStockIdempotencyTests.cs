@@ -21,6 +21,8 @@ public class SellStockIdempotencyTests
         controller.HttpContext.Request.Method = "POST";
         controller.HttpContext.Request.Path = "/api/v1/stock/sell";
         controller.HttpContext.Request.Headers["Idempotency-Key"] = "sale-1";
+        using var cancellation = new CancellationTokenSource();
+        controller.HttpContext.RequestAborted = cancellation.Token;
 
         var command = new SellStockCommand(7, 3, 2, "sale");
         var result = await controller.Sell(command, store.Object, new TestTenantContext("tenant-a"));
@@ -30,7 +32,8 @@ public class SellStockIdempotencyTests
             "tenant-a:POST:/api/v1/stock/sell",
             "sale-1",
             It.IsAny<string>(),
-            It.IsAny<Func<Task>>()), Times.Once);
+            It.IsAny<Func<Task>>(),
+            cancellation.Token), Times.Once);
         mediator.Verify(m => m.Send(It.IsAny<SellStockCommand>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 

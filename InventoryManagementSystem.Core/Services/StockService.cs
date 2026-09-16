@@ -76,17 +76,23 @@ public class StockService : IStockService
         int retries = 3;
         while (true)
         {
+            var ownsTransaction = !_unitOfWork.HasActiveTransaction;
             try
             {
-                await _unitOfWork.BeginTransactionAsync();
-                await action();
-                await CheckLowStockAsync(itemId);
-                await _unitOfWork.CommitTransactionAsync();
+                await _unitOfWork.ExecuteInTransactionAsync(async () =>
+                {
+                    await action();
+                    await CheckLowStockAsync(itemId);
+                }, CancellationToken.None);
                 break;
             }
             catch (InventoryManagementSystem.Core.Exceptions.ConcurrencyException ex)
             {
-                await _unitOfWork.RollbackTransactionAsync();
+                if (!ownsTransaction)
+                {
+                    throw;
+                }
+                await _unitOfWork.RollbackTransactionAsync(CancellationToken.None);
                 if (--retries <= 0)
                 {
                     _logger.LogError(ex, "Concurrency conflict could not be resolved after retries.");
@@ -106,7 +112,10 @@ public class StockService : IStockService
             }
             catch
             {
-                await _unitOfWork.RollbackTransactionAsync();
+                if (ownsTransaction)
+                {
+                    await _unitOfWork.RollbackTransactionAsync(CancellationToken.None);
+                }
                 throw;
             }
         }

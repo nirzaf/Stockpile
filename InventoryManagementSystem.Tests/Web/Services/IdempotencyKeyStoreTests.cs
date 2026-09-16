@@ -13,7 +13,7 @@ public class IdempotencyKeyStoreTests
     public async Task ExecuteAsync_WhenSameKeyIsRetried_ExecutesOperationOnce()
     {
         await using var context = CreateContext();
-        var store = new IdempotencyKeyStore(context, new TestTenantContext("test-tenant"));
+        var store = CreateStore(context);
         var executions = 0;
 
         for (var attempt = 0; attempt < 10; attempt++)
@@ -37,7 +37,7 @@ public class IdempotencyKeyStoreTests
     public async Task ExecuteAsync_WhenOperationFails_AllowsRetry()
     {
         await using var context = CreateContext();
-        var store = new IdempotencyKeyStore(context, new TestTenantContext("test-tenant"));
+        var store = CreateStore(context);
         var executions = 0;
 
         var firstAttempt = () => store.ExecuteAsync("POST:/stock/receive", "request-2", "hash-2", () =>
@@ -61,7 +61,7 @@ public class IdempotencyKeyStoreTests
     public async Task Rejects_reuse_with_a_different_request_hash()
     {
         await using var context = CreateContext();
-        var store = new IdempotencyKeyStore(context, new TestTenantContext("test-tenant"));
+        var store = CreateStore(context);
         await store.ExecuteAsync("POST:/stock/receive", "request-3", "hash-a", () => Task.CompletedTask);
 
         await FluentActions.Invoking(() => store.ExecuteAsync("POST:/stock/receive", "request-3", "hash-b", () => Task.CompletedTask))
@@ -83,7 +83,7 @@ public class IdempotencyKeyStoreTests
         });
         await context.SaveChangesAsync();
 
-        var store = new IdempotencyKeyStore(context, new TestTenantContext("test-tenant"));
+        var store = CreateStore(context);
         using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(25));
 
         await FluentActions.Invoking(() => store.ExecuteAsync(
@@ -95,7 +95,7 @@ public class IdempotencyKeyStoreTests
     public async Task ExecuteAsync_WhenOperationFails_DoesNotFlushPendingBusinessChanges()
     {
         await using var context = CreateContext();
-        var store = new IdempotencyKeyStore(context, new TestTenantContext("test-tenant"));
+        var store = CreateStore(context);
 
         await FluentActions.Invoking(() => store.ExecuteAsync(
                 "POST:/stock/failure", "request-failure", "hash-failure", () =>
@@ -113,6 +113,42 @@ public class IdempotencyKeyStoreTests
         (await context.Items.CountAsync(item => item.ItemCode == "UNCOMMITTED-FAILURE"))
             .Should().Be(0);
     }
+
+    [Fact]
+    public async Task ExecuteAsync_WhenOperationClearsTracker_PersistsCompletion()
+    {
+        await using var context = CreateContext();
+        var store = CreateStore(context);
+
+        await store.ExecuteAsync("POST:/stock/tracker", "request-tracker", "hash-tracker", () =>
+        {
+            context.ChangeTracker.Clear();
+            return Task.CompletedTask;
+        });
+
+        (await context.IdempotencyRecords.SingleAsync()).Status
+            .Should().Be(IdempotencyRecordStatus.Completed);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_FinalizesAfterRequestCancellation()
+    {
+        await using var context = CreateContext();
+        var store = CreateStore(context);
+        using var cancellation = new CancellationTokenSource();
+
+        await store.ExecuteAsync("POST:/stock/cancel", "request-cancel", "hash-cancel", () =>
+        {
+            cancellation.Cancel();
+            return Task.CompletedTask;
+        }, cancellation.Token);
+
+        (await context.IdempotencyRecords.SingleAsync()).Status
+            .Should().Be(IdempotencyRecordStatus.Completed);
+    }
+
+    private static IdempotencyKeyStore CreateStore(InventoryDbContext context) =>
+        new(context, new TestTenantContext("test-tenant"), new UnitOfWork(context));
 
     private static InventoryDbContext CreateContext() => new(
         new DbContextOptionsBuilder<InventoryDbContext>().UseInMemoryDatabase(Guid.NewGuid().ToString()).Options,
