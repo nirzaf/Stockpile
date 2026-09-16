@@ -148,6 +148,82 @@ public class DemandForecastServiceTests
         result.ForecastHorizonDays.Should().Be(14);
     }
 
+    [Theory]
+    [InlineData(0)]
+    [InlineData(8)]
+    public async Task ForecastDemandAsync_RejectsHorizonOutsideConfiguredLimit(int horizonDays)
+    {
+        using var cache = new MemoryCache(new MemoryCacheOptions());
+        var service = new DemandForecastService(
+            _txRepoMock.Object,
+            _itemRepoMock.Object,
+            NullLogger<DemandForecastService>.Instance,
+            cache,
+            new TestTenantContext("test-tenant"),
+            Options.Create(new ForecastingOptions { MaxForecastHorizonDays = 7 }));
+
+        var act = () => service.ForecastDemandAsync(1, horizonDays);
+
+        await act.Should().ThrowAsync<ArgumentOutOfRangeException>();
+        _itemRepoMock.Verify(repository => repository.FindAsync(It.IsAny<Expression<Func<Item, bool>>>()), Times.Never);
+        _txRepoMock.Verify(repository => repository.FindAsync(It.IsAny<Expression<Func<StockTransaction, bool>>>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ForecastDemandAsync_UsesBoundedUtcHistoryAndReportsLimitMetadata()
+    {
+        var asOf = new DateTimeOffset(2026, 1, 10, 12, 0, 0, TimeSpan.Zero);
+        var item = new Item { Id = 41, ItemCode = "BOUNDED-001" };
+        var transactions = new[]
+        {
+            new StockTransaction { ItemId = item.Id, TransactionType = TransactionType.Sell, TransactionDate = new DateTime(2026, 1, 5), Quantity = 1000 },
+            new StockTransaction { ItemId = item.Id, TransactionType = TransactionType.Sell, TransactionDate = new DateTime(2026, 1, 6), Quantity = 4 },
+            new StockTransaction { ItemId = item.Id, TransactionType = TransactionType.Receive, TransactionDate = new DateTime(2026, 1, 8), Quantity = 40 },
+            new StockTransaction { ItemId = item.Id, TransactionType = TransactionType.Transfer, TransactionDate = new DateTime(2026, 1, 8), Quantity = 50 },
+            new StockTransaction { ItemId = item.Id, TransactionType = TransactionType.Sell, TransactionDate = new DateTime(2026, 1, 9), Quantity = 8 },
+            new StockTransaction { ItemId = item.Id, TransactionType = TransactionType.Sell, TransactionDate = new DateTime(2026, 1, 10), Quantity = 8 },
+            new StockTransaction { ItemId = item.Id, TransactionType = TransactionType.Sell, TransactionDate = new DateTime(2026, 1, 11), Quantity = 2000 }
+        };
+
+        var itemRepository = new Mock<IRepository<Item>>();
+        itemRepository.Setup(repository => repository.FindAsync(It.IsAny<Expression<Func<Item, bool>>>() ))
+            .ReturnsAsync(new[] { item });
+        var transactionRepository = new Mock<IRepository<StockTransaction>>();
+        transactionRepository
+            .Setup(repository => repository.FindAsync(It.IsAny<Expression<Func<StockTransaction, bool>>>() ))
+            .Returns((Expression<Func<StockTransaction, bool>> filter) =>
+                Task.FromResult<IEnumerable<StockTransaction>>(transactions.Where(filter.Compile()).ToList()));
+
+        using var cache = new MemoryCache(new MemoryCacheOptions());
+        var service = new DemandForecastService(
+            transactionRepository.Object,
+            itemRepository.Object,
+            NullLogger<DemandForecastService>.Instance,
+            cache,
+            new TestTenantContext("test-tenant"),
+            Options.Create(new ForecastingOptions
+            {
+                MaxForecastHorizonDays = 7,
+                MaxHistoricalDays = 5
+            }),
+            new FixedTimeProvider(asOf));
+
+        var result = await service.ForecastDemandAsync(item.Id, 3);
+
+        result.ForecastingImplementation.Should().Be(ForecastingImplementations.ManagedMovingAverage);
+        result.ForecastingImplementationVersion.Should().Be(ForecastingImplementations.ManagedMovingAverageVersion);
+        result.MaxForecastHorizonDays.Should().Be(7);
+        result.MaxHistoricalDays.Should().Be(5);
+        result.DataWindowStartDate.Should().Be(new DateOnly(2026, 1, 6));
+        result.DataWindowEndDate.Should().Be(new DateOnly(2026, 1, 10));
+        result.TotalHistoricalDays.Should().Be(5);
+        result.AverageDailyDemand.Should().Be(4);
+        result.ForecastedValues.Should().Equal(4, 4, 4);
+        result.GeneratedAt.Should().Be(asOf.UtcDateTime);
+        result.KnownLimitations.Should().Contain(limitation => limitation.Contains("return", StringComparison.OrdinalIgnoreCase));
+        result.KnownLimitations.Should().Contain(limitation => limitation.Contains("stockout", StringComparison.OrdinalIgnoreCase));
+    }
+
     [Fact]
     public async Task ForecastDemandAsync_ItemNotFound_UsesFallbackName()
     {
@@ -292,13 +368,14 @@ public class DemandForecastServiceTests
         [
             new StockTransaction { TransactionType = TransactionType.Sell, TransactionDate = start, Quantity = 5 },
             new StockTransaction { TransactionType = TransactionType.Transfer, TransactionDate = start.AddDays(1), Quantity = 100 },
-            new StockTransaction { TransactionType = TransactionType.Sell, TransactionDate = start.AddDays(2), Quantity = 7 }
+            new StockTransaction { TransactionType = TransactionType.Receive, TransactionDate = start.AddDays(2), Quantity = 200 },
+            new StockTransaction { TransactionType = TransactionType.Sell, TransactionDate = start.AddDays(3), Quantity = 7 }
         ]);
 
         observations.Select(observation => observation.Date)
-            .Should().Equal(start, start.AddDays(1), start.AddDays(2));
+            .Should().Equal(start, start.AddDays(1), start.AddDays(2), start.AddDays(3));
         observations.Select(observation => observation.Quantity)
-            .Should().Equal(5, 0, 7);
+            .Should().Equal(5, 0, 0, 7);
     }
 
     [Fact]
@@ -394,5 +471,14 @@ public class DemandForecastServiceTests
         managedPrediction.Should().Be(8f);
         managedMae.Should().Be(8f);
         naiveMae.Should().Be(4f);
+    }
+
+    private sealed class FixedTimeProvider : TimeProvider
+    {
+        private readonly DateTimeOffset _utcNow;
+
+        public FixedTimeProvider(DateTimeOffset utcNow) => _utcNow = utcNow;
+
+        public override DateTimeOffset GetUtcNow() => _utcNow;
     }
 }

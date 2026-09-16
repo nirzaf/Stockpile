@@ -41,6 +41,8 @@ public static class ApplicationServiceExtensions
             .Bind(configuration.GetSection(ForecastingOptions.SectionName))
             .Validate(options => ForecastingImplementations.IsSupported(options.Implementation),
                 $"{ForecastingOptions.SectionName}:Implementation must be '{ForecastingImplementations.ManagedMovingAverage}' or '{ForecastingImplementations.Ssa}'.")
+            .Validate(ForecastingOptions.HasValidResourceLimits,
+                $"{ForecastingOptions.SectionName}:MaxForecastHorizonDays must be between 1 and {ForecastingOptions.AbsoluteMaxForecastHorizonDays}; MaxHistoricalDays must be between {ForecastingOptions.MinimumHistoricalDays} and {ForecastingOptions.AbsoluteMaxHistoricalDays}.")
             .ValidateOnStart();
         services.AddScoped<IDemandForecastService, DemandForecastService>();
         services.AddScoped<IAnomalyDetectionService, AnomalyDetectionService>();

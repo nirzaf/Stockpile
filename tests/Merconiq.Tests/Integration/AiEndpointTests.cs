@@ -1,4 +1,5 @@
 using System.Net;
+using System.Text.Json;
 using FluentAssertions;
 using Merconiq.Core.Entities;
 using Merconiq.Infrastructure.Data;
@@ -73,6 +74,27 @@ public class AiEndpointTests : IClassFixture<CustomWebApplicationFactory>
         var response = await client.GetAsync("/api/v1/forecast/99999?horizon=5");
 
         response.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        using var payload = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        var forecast = payload.RootElement.GetProperty("data");
+        forecast.GetProperty("forecastingImplementation").GetString()
+            .Should().Be("managed-moving-average");
+        forecast.GetProperty("forecastingImplementationVersion").GetString()
+            .Should().Be("1.0.0");
+        forecast.GetProperty("maxForecastHorizonDays").GetInt32().Should().Be(90);
+        forecast.GetProperty("maxHistoricalDays").GetInt32().Should().Be(365);
+        forecast.GetProperty("dataWindowStartDate").ValueKind.Should().Be(JsonValueKind.Null);
+        forecast.GetProperty("knownLimitations").GetArrayLength().Should().BeGreaterThan(0);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(91)]
+    public async Task ForecastDemand_HorizonOutsideConfiguredLimit_Returns400(int horizon)
+    {
+        var response = await AuthClient.GetAsync($"/api/v1/forecast/1?horizon={horizon}");
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
 
     [Fact]

@@ -24,8 +24,8 @@ public class DemandForecastService : IDemandForecastService
     private readonly IMemoryCache _cache;
     private readonly ITenantContext _tenantContext;
     private readonly ForecastingOptions _forecastingOptions;
+    private readonly TimeProvider _timeProvider;
 
-    private const int MinDataPoints = 5;
     private const int DefaultWindowSize = 7;
     private const float ConfidenceLevel = 0.95f;
     private static readonly TimeSpan ForecastCacheDuration = TimeSpan.FromHours(4);
@@ -36,7 +36,8 @@ public class DemandForecastService : IDemandForecastService
         ILogger<DemandForecastService> logger,
         IMemoryCache cache,
         ITenantContext tenantContext,
-        IOptions<ForecastingOptions> forecastingOptions)
+        IOptions<ForecastingOptions> forecastingOptions,
+        TimeProvider? timeProvider = null)
     {
         _txRepo = txRepo;
         _itemRepo = itemRepo;
@@ -44,6 +45,21 @@ public class DemandForecastService : IDemandForecastService
         _cache = cache;
         _tenantContext = tenantContext;
         _forecastingOptions = forecastingOptions.Value;
+        _timeProvider = timeProvider ?? TimeProvider.System;
+
+        if (!ForecastingOptions.HasValidResourceLimits(_forecastingOptions))
+        {
+            throw new ArgumentException(
+                $"Forecasting limits must set {nameof(ForecastingOptions.MaxForecastHorizonDays)} between 1 and {ForecastingOptions.AbsoluteMaxForecastHorizonDays}, and {nameof(ForecastingOptions.MaxHistoricalDays)} between {ForecastingOptions.MinimumHistoricalDays} and {ForecastingOptions.AbsoluteMaxHistoricalDays}.",
+                nameof(forecastingOptions));
+        }
+
+        if (!ForecastingImplementations.IsSupported(_forecastingOptions.Implementation))
+        {
+            throw new ArgumentException(
+                $"Unsupported forecasting implementation '{_forecastingOptions.Implementation}'.",
+                nameof(forecastingOptions));
+        }
     }
 
     /// <inheritdoc />
@@ -61,6 +77,7 @@ public class DemandForecastService : IDemandForecastService
         int horizonDays,
         IReadOnlyCollection<int>? companyIds)
     {
+        ValidateHorizon(horizonDays);
         var cacheKey = TenantCacheKeys.ForecastForItem(_tenantContext.TenantId, itemId, horizonDays, companyIds);
         if (_cache.TryGetValue(cacheKey, out DemandForecastResult? cachedResult) && cachedResult != null)
         {
@@ -86,6 +103,7 @@ public class DemandForecastService : IDemandForecastService
         int horizonDays,
         IReadOnlyCollection<int>? companyIds)
     {
+        ValidateHorizon(horizonDays);
         var cacheKey = TenantCacheKeys.ForecastForAllItems(_tenantContext.TenantId, horizonDays, companyIds);
         if (_cache.TryGetValue(cacheKey, out IReadOnlyList<DemandForecastResult>? cachedResult) && cachedResult != null)
         {
@@ -104,34 +122,56 @@ public class DemandForecastService : IDemandForecastService
         IReadOnlyCollection<int>? companyIds)
     {
         var item = (await _itemRepo.FindAsync(i => i.Id == itemId)).FirstOrDefault();
+        var generatedAt = _timeProvider.GetUtcNow().UtcDateTime;
+        var asOfDate = generatedAt.Date;
+        var dataWindowStart = asOfDate.AddDays(1 - _forecastingOptions.MaxHistoricalDays);
+        var dataWindowEndExclusive = asOfDate.AddDays(1);
+        var implementation = NormalizeImplementation(_forecastingOptions.Implementation);
 
         var result = new DemandForecastResult
         {
             ItemId = itemId,
             ItemName = item?.ItemCode ?? $"Item #{itemId}",
             ForecastHorizonDays = horizonDays,
-            ForecastingImplementation = _forecastingOptions.Implementation
+            ForecastingImplementation = implementation,
+            ForecastingImplementationVersion = GetImplementationVersion(implementation),
+            MaxForecastHorizonDays = _forecastingOptions.MaxForecastHorizonDays,
+            MaxHistoricalDays = _forecastingOptions.MaxHistoricalDays,
+            GeneratedAt = generatedAt,
+            KnownLimitations = GetKnownLimitations(implementation)
         };
 
         var transactions = await _txRepo.FindAsync(t =>
             t.ItemId == itemId &&
             t.TransactionType == TransactionType.Sell &&
+            t.TransactionDate >= dataWindowStart &&
+            t.TransactionDate < dataWindowEndExclusive &&
             (companyIds == null || (t.FromLocation.Branch != null &&
                 companyIds.Contains(t.FromLocation.Branch.CompanyId))));
 
-        var dailyDemand = DemandForecastDataPreparation.BuildDailyDemand(transactions);
+        // Keep the calendar series bounded even when a repository implementation or test
+        // double does not apply its predicate server-side.
+        var boundedTransactions = transactions.Where(transaction =>
+            transaction.TransactionDate >= dataWindowStart &&
+            transaction.TransactionDate < dataWindowEndExclusive);
+        var dailyDemand = DemandForecastDataPreparation.BuildDailyDemand(boundedTransactions);
+        result.TotalHistoricalDays = dailyDemand.Count;
+        if (dailyDemand.Count > 0)
+        {
+            result.DataWindowStartDate = DateOnly.FromDateTime(dailyDemand[0].Date);
+            result.DataWindowEndDate = DateOnly.FromDateTime(dailyDemand[^1].Date);
+        }
 
-        if (dailyDemand.Count < MinDataPoints)
+        if (dailyDemand.Count < ForecastingOptions.MinimumHistoricalDays)
         {
             _logger.LogWarning("Insufficient data for item {ItemId}: {Count} days (need {Min})",
-                itemId, dailyDemand.Count, MinDataPoints);
+                itemId, dailyDemand.Count, ForecastingOptions.MinimumHistoricalDays);
             return result;
         }
 
-        result.TotalHistoricalDays = dailyDemand.Count;
         result.AverageDailyDemand = dailyDemand.Average(d => d.Quantity);
 
-        if (string.Equals(_forecastingOptions.Implementation,
+        if (string.Equals(implementation,
                 ForecastingImplementations.ManagedMovingAverage,
                 StringComparison.OrdinalIgnoreCase))
         {
@@ -142,7 +182,7 @@ public class DemandForecastService : IDemandForecastService
             return result;
         }
 
-        if (string.Equals(_forecastingOptions.Implementation,
+        if (string.Equals(implementation,
                 ForecastingImplementations.Ssa,
                 StringComparison.OrdinalIgnoreCase))
         {
@@ -152,6 +192,49 @@ public class DemandForecastService : IDemandForecastService
 
         throw new InvalidOperationException(
             $"Unsupported forecasting implementation '{_forecastingOptions.Implementation}'.");
+    }
+
+    private void ValidateHorizon(int horizonDays)
+    {
+        if (horizonDays < 1 || horizonDays > _forecastingOptions.MaxForecastHorizonDays)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(horizonDays),
+                horizonDays,
+                $"Forecast horizon must be between 1 and {_forecastingOptions.MaxForecastHorizonDays} days.");
+        }
+    }
+
+    private static string NormalizeImplementation(string implementation) =>
+        string.Equals(implementation, ForecastingImplementations.ManagedMovingAverage, StringComparison.OrdinalIgnoreCase)
+            ? ForecastingImplementations.ManagedMovingAverage
+            : ForecastingImplementations.Ssa;
+
+    private static string GetImplementationVersion(string implementation) =>
+        string.Equals(implementation, ForecastingImplementations.ManagedMovingAverage, StringComparison.Ordinal)
+            ? ForecastingImplementations.ManagedMovingAverageVersion
+            : $"Microsoft.ML.TimeSeries {typeof(SsaForecastingEstimator).Assembly.GetName().Version?.ToString() ?? "unknown"}";
+
+    private static IReadOnlyList<string> GetKnownLimitations(string implementation)
+    {
+        var limitations = new List<string>
+        {
+            "Only recorded sell movements contribute to demand; the transaction model has no distinct return movement, so returns cannot be netted out.",
+            "Stockout and lost-sales observations are not recorded; zero recorded sales cannot distinguish no demand from unavailable stock.",
+            "Missing calendar dates between the first and latest recorded sale are filled with zero; dates after the latest sale are not added.",
+            "The bounded calendar window does not cap raw transaction rows within that window, and all-item forecast cost still scales with tenant item count."
+        };
+
+        if (string.Equals(implementation, ForecastingImplementations.ManagedMovingAverage, StringComparison.Ordinal))
+        {
+            limitations.Add("The managed moving average repeats the historical mean and does not model trend or seasonality.");
+        }
+        else
+        {
+            limitations.Add("SSA is an explicit opt-in and requires compatible native runtime dependencies; failures are returned without silently falling back to another model.");
+        }
+
+        return limitations;
     }
 
     private void GenerateSsaForecast(

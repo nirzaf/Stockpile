@@ -30,6 +30,24 @@ public class DemandForecastResult
     /// <summary>The configured model implementation that produced this result.</summary>
     public string ForecastingImplementation { get; set; } = string.Empty;
 
+    /// <summary>Version of the forecasting implementation that produced this result.</summary>
+    public string ForecastingImplementationVersion { get; set; } = string.Empty;
+
+    /// <summary>First calendar date with an observation in the bounded input series, when available.</summary>
+    public DateOnly? DataWindowStartDate { get; set; }
+
+    /// <summary>Last calendar date with an observation in the bounded input series, when available.</summary>
+    public DateOnly? DataWindowEndDate { get; set; }
+
+    /// <summary>Configured maximum lookback window, in inclusive UTC calendar days.</summary>
+    public int MaxHistoricalDays { get; set; }
+
+    /// <summary>Configured maximum forecast horizon, in calendar days.</summary>
+    public int MaxForecastHorizonDays { get; set; }
+
+    /// <summary>Known limitations relevant to interpreting this forecast.</summary>
+    public IReadOnlyList<string> KnownLimitations { get; set; } = [];
+
     /// <summary>UTC timestamp of when the forecast was generated.</summary>
     public DateTime GeneratedAt { get; set; } = DateTime.UtcNow;
 }
