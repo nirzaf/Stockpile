@@ -4,7 +4,6 @@ using FluentValidation;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.Mvc;
-using Npgsql;
 
 namespace InventoryManagementSystem.Web;
 
@@ -76,7 +75,7 @@ public class GlobalExceptionHandler : IExceptionHandler
         {
             ArgumentException => (HttpStatusCode.BadRequest, "Invalid argument"),
             InvalidOperationException => (HttpStatusCode.Conflict, "Operation failed"),
-            DbUpdateException databaseException when IsUniqueConstraintViolation(databaseException)
+            DbUpdateException databaseException when DatabaseExceptionClassifier.IsUniqueConstraintViolation(databaseException)
                 => (HttpStatusCode.Conflict, "Duplicate resource"),
             UnauthorizedAccessException => (HttpStatusCode.Forbidden, "Access denied"),
             KeyNotFoundException => (HttpStatusCode.NotFound, "Resource not found"),
@@ -107,17 +106,4 @@ public class GlobalExceptionHandler : IExceptionHandler
         return false;
     }
 
-    private static bool IsUniqueConstraintViolation(DbUpdateException exception)
-    {
-        for (Exception? current = exception; current is not null; current = current.InnerException)
-        {
-            if (current is PostgresException postgresException &&
-                postgresException.SqlState == PostgresErrorCodes.UniqueViolation)
-            {
-                return true;
-            }
-        }
-
-        return false;
-    }
 }
