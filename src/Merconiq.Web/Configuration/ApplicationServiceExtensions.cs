@@ -31,6 +31,7 @@ public static class ApplicationServiceExtensions
         services.AddScoped<ILocationService, LocationService>();
         services.AddScoped<IStockService, StockService>();
         services.AddScoped<IPurchaseOrderService, PurchaseOrderService>();
+        services.AddScoped<IOrganizationService, Merconiq.Infrastructure.Services.OrganizationService>();
 
         services.AddOptions<ForecastingOptions>()
             .Bind(configuration.GetSection(ForecastingOptions.SectionName))

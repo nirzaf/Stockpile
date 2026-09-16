@@ -62,6 +62,12 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
     /// <summary>Durable API idempotency claims and results.</summary>
     public DbSet<IdempotencyRecord> IdempotencyRecords { get; set; } = null!;
 
+    /// <summary>Tenant-owned legal and trading companies.</summary>
+    public DbSet<Company> Companies { get; set; } = null!;
+
+    /// <summary>Company-owned operating branches.</summary>
+    public DbSet<Branch> Branches { get; set; } = null!;
+
     /// <summary>
     /// Saves pending changes, stamping <see cref="AuditableEntity"/> timestamps, translating
     /// soft-delete <see cref="EntityState.Deleted"/> entries to a flag flip, and emitting
@@ -259,6 +265,44 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
             entity.HasIndex(e => e.TenantId);
             entity.Property(e => e.Name).HasMaxLength(200).IsRequired();
             entity.Property(e => e.Address).HasMaxLength(500);
+            entity.HasIndex(e => new { e.TenantId, e.BranchId });
+            entity.HasOne(e => e.Branch)
+                  .WithMany(b => b.Locations)
+                  .HasForeignKey(e => new { e.BranchId, e.TenantId })
+                  .HasPrincipalKey(b => new { b.Id, b.TenantId })
+                  .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        modelBuilder.Entity<Company>(entity =>
+        {
+            entity.HasQueryFilter(e => e.TenantId == CurrentTenantId);
+            entity.Property(e => e.TenantId).HasMaxLength(64).IsRequired();
+            entity.Property(e => e.Code).HasMaxLength(32).IsRequired();
+            entity.Property(e => e.LegalName).HasMaxLength(200).IsRequired();
+            entity.Property(e => e.TradingName).HasMaxLength(200);
+            entity.Property(e => e.RegistrationNumber).HasMaxLength(100);
+            entity.Property(e => e.TaxIdentifier).HasMaxLength(100);
+            entity.Property(e => e.BaseCurrency).HasMaxLength(3).IsRequired();
+            entity.Property(e => e.CountryCode).HasMaxLength(2);
+            entity.HasIndex(e => new { e.TenantId, e.Code }).IsUnique();
+            entity.HasIndex(e => new { e.Id, e.TenantId }).IsUnique();
+        });
+
+        modelBuilder.Entity<Branch>(entity =>
+        {
+            entity.HasQueryFilter(e => e.TenantId == CurrentTenantId);
+            entity.Property(e => e.TenantId).HasMaxLength(64).IsRequired();
+            entity.Property(e => e.Code).HasMaxLength(32).IsRequired();
+            entity.Property(e => e.Name).HasMaxLength(200).IsRequired();
+            entity.Property(e => e.Address).HasMaxLength(500);
+            entity.Property(e => e.TimeZoneId).HasMaxLength(100).IsRequired();
+            entity.HasIndex(e => new { e.TenantId, e.CompanyId, e.Code }).IsUnique();
+            entity.HasIndex(e => new { e.Id, e.TenantId }).IsUnique();
+            entity.HasOne(e => e.Company)
+                  .WithMany(c => c.Branches)
+                  .HasForeignKey(e => new { e.CompanyId, e.TenantId })
+                  .HasPrincipalKey(c => new { c.Id, c.TenantId })
+                  .OnDelete(DeleteBehavior.Restrict);
         });
 
         modelBuilder.Entity<StockInHand>(entity =>
