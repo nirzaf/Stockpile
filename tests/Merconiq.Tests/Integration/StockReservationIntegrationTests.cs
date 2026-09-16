@@ -146,6 +146,8 @@ public sealed class StockReservationIntegrationTests
         new Mock<IWebhookDispatcher>().Object,
         new TestTenantContext(tenant),
         NullLogger<StockService>.Instance,
+        new Repository<StockValuationBucket>(context),
+        new Repository<StockValuationEntry>(context),
         reservationRepo: new Repository<StockReservation>(context));
 }
 

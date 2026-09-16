@@ -106,6 +106,13 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
     /// <returns>The number of state entries written to the database.</returns>
     public override async Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
     {
+        ChangeTracker.DetectChanges();
+        if (ChangeTracker.Entries<StockValuationEntry>()
+            .Any(entry => entry.State is EntityState.Modified or EntityState.Deleted))
+        {
+            throw new InvalidOperationException("Stock valuation entries are append-only.");
+        }
+
         var currentUser = _httpContextAccessor?.HttpContext?.User?.Identity?.Name ?? "System";
         var utcNow = DateTime.UtcNow;
 
@@ -256,6 +263,7 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
             entity.HasIndex(e => new { e.TenantId, e.ItemCode }).IsUnique();
             entity.HasIndex(e => new { e.TenantId, e.Barcode }).IsUnique();
             entity.HasIndex(e => new { e.TenantId, e.ExternalId }).IsUnique();
+            entity.HasIndex(e => new { e.Id, e.TenantId }).IsUnique();
             entity.Property(e => e.ItemCode).HasMaxLength(50).IsRequired();
             entity.Property(e => e.ExternalId).HasMaxLength(128);
             entity.Property(e => e.Description).HasMaxLength(500);
@@ -443,7 +451,8 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
             entity.HasIndex(e => new { e.TenantId, e.ItemId, e.LocationId }).IsUnique();
             entity.HasOne(e => e.Item)
                 .WithMany()
-                .HasForeignKey(e => e.ItemId)
+                .HasForeignKey(e => new { e.ItemId, e.TenantId })
+                .HasPrincipalKey(e => new { e.Id, e.TenantId })
                 .OnDelete(DeleteBehavior.Restrict);
             entity.HasOne(e => e.Location)
                 .WithMany()
@@ -468,11 +477,13 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
             entity.HasIndex(e => new { e.TenantId, e.StockTransactionId }).IsUnique();
             entity.HasOne(e => e.StockTransaction)
                 .WithMany()
-                .HasForeignKey(e => e.StockTransactionId)
+                .HasForeignKey(e => new { e.StockTransactionId, e.TenantId })
+                .HasPrincipalKey(e => new { e.Id, e.TenantId })
                 .OnDelete(DeleteBehavior.Restrict);
             entity.HasOne(e => e.Item)
                 .WithMany()
-                .HasForeignKey(e => e.ItemId)
+                .HasForeignKey(e => new { e.ItemId, e.TenantId })
+                .HasPrincipalKey(e => new { e.Id, e.TenantId })
                 .OnDelete(DeleteBehavior.Restrict);
             entity.HasOne(e => e.Location)
                 .WithMany()
@@ -648,6 +659,7 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
             entity.Property(e => e.BatchNumber).HasMaxLength(100);
             entity.HasIndex(e => e.TransactionDate);
             entity.HasIndex(e => e.ItemId);
+            entity.HasIndex(e => new { e.Id, e.TenantId }).IsUnique();
             entity.HasIndex(e => new { e.ItemId, e.TransactionDate });
 
             entity.HasOne(st => st.Item)

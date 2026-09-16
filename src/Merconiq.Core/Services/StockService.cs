@@ -23,8 +23,8 @@ public class StockService : IStockService
     private readonly IWebhookDispatcher _webhookDispatcher;
     private readonly ITenantContext _tenantContext;
     private readonly ILogger<StockService> _logger;
-    private readonly IRepository<StockValuationBucket>? _valuationBucketRepo;
-    private readonly IRepository<StockValuationEntry>? _valuationEntryRepo;
+    private readonly IRepository<StockValuationBucket> _valuationBucketRepo;
+    private readonly IRepository<StockValuationEntry> _valuationEntryRepo;
     private readonly IRepository<StockReservation>? _reservationRepo;
 
     public StockService(
@@ -37,8 +37,8 @@ public class StockService : IStockService
         IWebhookDispatcher webhookDispatcher,
         ITenantContext tenantContext,
         ILogger<StockService> logger,
-        IRepository<StockValuationBucket>? valuationBucketRepo = null,
-        IRepository<StockValuationEntry>? valuationEntryRepo = null,
+        IRepository<StockValuationBucket> valuationBucketRepo,
+        IRepository<StockValuationEntry> valuationEntryRepo,
         IRepository<StockReservation>? reservationRepo = null)
     {
         _stockRepo = stockRepo;
@@ -726,8 +726,7 @@ public class StockService : IStockService
         decimal unitCost,
         StockTransaction source)
     {
-        EnsureValuationRepositories();
-        var existing = (await _valuationBucketRepo!.FindAsync(bucket =>
+        var existing = (await _valuationBucketRepo.FindAsync(bucket =>
             bucket.ItemId == itemId && bucket.LocationId == locationId)).FirstOrDefault();
         var totalValue = Round(quantity * unitCost);
 
@@ -750,7 +749,7 @@ public class StockService : IStockService
             await _valuationBucketRepo.UpdateAsync(bucket);
         }
 
-        await _valuationEntryRepo!.AddAsync(new StockValuationEntry
+        await _valuationEntryRepo.AddAsync(new StockValuationEntry
         {
             StockTransaction = source,
             ItemId = itemId,
@@ -768,14 +767,7 @@ public class StockService : IStockService
         int quantity,
         StockTransaction source)
     {
-        // Keep legacy quantity-only callers working when the service is used without
-        // valuation persistence (for example, isolated unit tests and old hosts).
-        if (_valuationBucketRepo is null || _valuationEntryRepo is null)
-        {
-            return;
-        }
-
-        var existing = (await _valuationBucketRepo!.FindAsync(bucket =>
+        var existing = (await _valuationBucketRepo.FindAsync(bucket =>
             bucket.ItemId == itemId && bucket.LocationId == locationId)).FirstOrDefault();
         if (existing is null || existing.Quantity == 0)
         {
@@ -796,7 +788,7 @@ public class StockService : IStockService
         bucket.Value = bucket.Quantity == 0 ? 0m : Round(bucket.Value - totalValue);
         await _valuationBucketRepo.UpdateAsync(bucket);
 
-        await _valuationEntryRepo!.AddAsync(new StockValuationEntry
+        await _valuationEntryRepo.AddAsync(new StockValuationEntry
         {
             StockTransaction = source,
             ItemId = itemId,
@@ -806,14 +798,6 @@ public class StockService : IStockService
             UnitCost = Round(totalValue / quantity),
             TotalValue = totalValue
         });
-    }
-
-    private void EnsureValuationRepositories()
-    {
-        if (_valuationBucketRepo is null || _valuationEntryRepo is null)
-        {
-            throw new InvalidOperationException("Stock valuation persistence is not configured.");
-        }
     }
 
     private static decimal Round(decimal value) => decimal.Round(value, 6, MidpointRounding.AwayFromZero);

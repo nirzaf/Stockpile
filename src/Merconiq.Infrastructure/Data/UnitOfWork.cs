@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using Merconiq.Core.Interfaces;
 using Merconiq.Core.Exceptions;
+using Npgsql;
 
 namespace Merconiq.Infrastructure.Data;
 
@@ -39,6 +40,10 @@ public class UnitOfWork : IUnitOfWork
 
             throw new ConcurrencyException("A concurrency conflict occurred while saving changes.", ex);
         }
+        catch (DbUpdateException ex) when (IsValuationBucketInsertRace(ex))
+        {
+            throw new ConcurrencyException("A concurrent valuation bucket insert conflicted.", ex);
+        }
     }
 
     public async Task BeginTransactionAsync(CancellationToken cancellationToken = default)
@@ -64,6 +69,11 @@ public class UnitOfWork : IUnitOfWork
         {
             await RollbackTransactionAsync(cancellationToken);
             throw new ConcurrencyException("A concurrency conflict occurred during commit.", ex);
+        }
+        catch (DbUpdateException ex) when (IsValuationBucketInsertRace(ex))
+        {
+            await RollbackTransactionAsync(cancellationToken);
+            throw new ConcurrencyException("A concurrent valuation bucket insert conflicted during commit.", ex);
         }
         catch
         {
@@ -139,6 +149,11 @@ public class UnitOfWork : IUnitOfWork
                             _context.ChangeTracker.Clear();
                             throw new ConcurrencyException("A concurrency conflict occurred during the transaction.", ex);
                         }
+                        catch (DbUpdateException ex) when (IsValuationBucketInsertRace(ex))
+                        {
+                            _context.ChangeTracker.Clear();
+                            throw new ConcurrencyException("A concurrent valuation bucket insert conflicted during the transaction.", ex);
+                        }
                         catch
                         {
                             _context.ChangeTracker.Clear();
@@ -168,5 +183,20 @@ public class UnitOfWork : IUnitOfWork
     public void ClearTracker()
     {
         _context.ChangeTracker.Clear();
+    }
+
+    private static bool IsValuationBucketInsertRace(DbUpdateException exception)
+    {
+        for (Exception? current = exception; current is not null; current = current.InnerException)
+        {
+            if (current is PostgresException postgresException &&
+                postgresException.SqlState == PostgresErrorCodes.UniqueViolation &&
+                postgresException.ConstraintName == "IX_StockValuationBuckets_TenantId_ItemId_LocationId")
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 }

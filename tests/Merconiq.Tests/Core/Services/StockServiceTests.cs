@@ -20,6 +20,8 @@ public class StockServiceTests
     private readonly Mock<IRepository<Item>> _itemRepoMock = new();
     private readonly Mock<IRepository<Location>> _locationRepoMock = new();
     private readonly Mock<IRepository<Branch>> _branchRepoMock = new();
+    private readonly Mock<IRepository<StockValuationBucket>> _valuationBucketRepoMock = new();
+    private readonly Mock<IRepository<StockValuationEntry>> _valuationEntryRepoMock = new();
     private readonly Mock<IUnitOfWork> _uowMock = new();
     private readonly Mock<IWebhookDispatcher> _webhookDispatcherMock = new();
     private readonly List<Location> _locations = Enumerable.Range(1, 100)
@@ -44,6 +46,9 @@ public class StockServiceTests
                     .Where(branch => branch.TenantId == "test-tenant")
                     .Where(predicate.Compile())
                     .ToArray()));
+        _valuationBucketRepoMock.Setup(r => r.FindAsync(
+                It.IsAny<Expression<Func<StockValuationBucket, bool>>>() ))
+            .ReturnsAsync(Array.Empty<StockValuationBucket>());
         _uowMock
             .Setup(u => u.ExecuteInTransactionAsync(
                 It.IsAny<Func<Task>>(),
@@ -59,7 +64,9 @@ public class StockServiceTests
             _uowMock.Object,
             _webhookDispatcherMock.Object,
             new TestTenantContext("test-tenant"),
-            NullLogger<StockService>.Instance);
+            NullLogger<StockService>.Instance,
+            _valuationBucketRepoMock.Object,
+            _valuationEntryRepoMock.Object);
     }
 
     // Helper: setup FindAsync single-parameter overload
