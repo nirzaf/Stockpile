@@ -1,5 +1,6 @@
 using FluentAssertions;
 using Merconiq.Core.Entities;
+using Merconiq.Core.Interfaces;
 using Merconiq.Core.Services;
 using Merconiq.Infrastructure.Data;
 using Merconiq.Infrastructure.Repositories;
@@ -50,6 +51,89 @@ public sealed class PostgreSqlIntegrationTests
         tenantB.Items.Add(new Item { ItemCode = itemCode, Description = "Tenant B", Rate = 30m });
         await tenantB.SaveChangesAsync();
         (await tenantB.Items.CountAsync()).Should().Be(1);
+    }
+
+    [PostgreSqlFact]
+    public async Task Stock_locations_enforce_tenant_and_company_ownership()
+    {
+        _fixture.EnsureEnabled();
+        var tenantA = Unique("stock-company-a");
+        var tenantB = Unique("stock-company-b");
+        int itemId;
+        int companyALocationId;
+        int companyBLocationId;
+        int otherTenantLocationId;
+
+        await using (var setup = _fixture.CreateContext(tenantA))
+        {
+            var companyA = new Company { Code = $"A-{Guid.NewGuid():N}"[..12], LegalName = "Company A" };
+            var companyB = new Company { Code = $"B-{Guid.NewGuid():N}"[..12], LegalName = "Company B" };
+            setup.Companies.AddRange(companyA, companyB);
+            await setup.SaveChangesAsync();
+
+            var branchA = new Branch { CompanyId = companyA.Id, Code = $"A-{Guid.NewGuid():N}"[..12], Name = "Branch A" };
+            var branchB = new Branch { CompanyId = companyB.Id, Code = $"B-{Guid.NewGuid():N}"[..12], Name = "Branch B" };
+            setup.Branches.AddRange(branchA, branchB);
+            await setup.SaveChangesAsync();
+
+            var item = new Item { ItemCode = Unique("STOCK-ITEM"), Description = "Ownership fixture", Rate = 1m };
+            var locationA = new Location { Name = Unique("location-a"), BranchId = branchA.Id };
+            var locationB = new Location { Name = Unique("location-b"), BranchId = branchB.Id };
+            setup.Items.Add(item);
+            setup.Locations.AddRange(locationA, locationB);
+            await setup.SaveChangesAsync();
+
+            setup.StockInHand.Add(new StockInHand { ItemId = item.Id, LocationId = locationA.Id, Quantity = 10 });
+            await setup.SaveChangesAsync();
+            itemId = item.Id;
+            companyALocationId = locationA.Id;
+            companyBLocationId = locationB.Id;
+        }
+
+        await using (var setup = _fixture.CreateContext(tenantB))
+        {
+            var location = new Location { Name = Unique("other-tenant-location") };
+            setup.Locations.Add(location);
+            await setup.SaveChangesAsync();
+            otherTenantLocationId = location.Id;
+        }
+
+        await using (var operation = _fixture.CreateContext(tenantA))
+        {
+            var dispatcher = new Mock<IWebhookDispatcher>();
+            var stockService = new StockService(
+                new Repository<StockInHand>(operation),
+                new Repository<StockTransaction>(operation),
+                new Repository<Item>(operation),
+                new Repository<Location>(operation),
+                new Repository<Branch>(operation),
+                new UnitOfWork(operation),
+                dispatcher.Object,
+                new TestTenantContext(tenantA),
+                NullLogger<StockService>.Instance);
+
+            var crossCompany = () => stockService.TransferStockAsync(
+                itemId, companyALocationId, companyBLocationId, 1, "cross-company");
+            await crossCompany.Should().ThrowAsync<InvalidOperationException>()
+                .WithMessage("Cross-company stock transfers are not supported.");
+
+            var crossTenant = () => stockService.ReceiveStockAsync(itemId, otherTenantLocationId, 1, "cross-tenant");
+            await crossTenant.Should().ThrowAsync<InvalidOperationException>()
+                .WithMessage("Location does not exist in the current tenant or is deleted.");
+        }
+
+        await using (var forged = _fixture.CreateContext(tenantA))
+        {
+            forged.StockInHand.Add(new StockInHand
+            {
+                ItemId = itemId,
+                LocationId = otherTenantLocationId,
+                Quantity = 1
+            });
+
+            var act = () => forged.SaveChangesAsync();
+            await act.Should().ThrowAsync<DbUpdateException>();
+        }
     }
 
     [PostgreSqlFact]
@@ -207,6 +291,8 @@ public sealed class PostgreSqlIntegrationTests
                 new Repository<StockInHand>(operation),
                 new Repository<StockTransaction>(operation),
                 new Repository<Item>(operation),
+                new Repository<Location>(operation),
+                new Repository<Branch>(operation),
                 new UnitOfWork(operation),
                 dispatcher,
                 tenant,

@@ -349,7 +349,8 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
 
             entity.HasOne(s => s.Location)
                   .WithMany(l => l.StockInHands)
-                  .HasForeignKey(s => s.LocationId)
+                  .HasForeignKey(s => new { s.LocationId, s.TenantId })
+                  .HasPrincipalKey(l => new { l.Id, l.TenantId })
                   .OnDelete(DeleteBehavior.Cascade);
 
             // PostgreSQL exposes the inserting transaction's xmin (xid) as a hidden
@@ -420,12 +421,14 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
 
             entity.HasOne(st => st.FromLocation)
                   .WithMany()
-                  .HasForeignKey(st => st.FromLocationId)
+                  .HasForeignKey(st => new { st.FromLocationId, st.TenantId })
+                  .HasPrincipalKey(l => new { l.Id, l.TenantId })
                   .OnDelete(DeleteBehavior.Restrict);
 
             entity.HasOne(st => st.ToLocation)
                   .WithMany()
-                  .HasForeignKey(st => st.ToLocationId)
+                  .HasForeignKey(st => new { st.ToLocationId, st.TenantId })
+                  .HasPrincipalKey(l => new { l.Id, l.TenantId })
                   .OnDelete(DeleteBehavior.SetNull);
         });
 

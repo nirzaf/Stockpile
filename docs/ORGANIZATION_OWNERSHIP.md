@@ -30,3 +30,10 @@ ID.
 The API surface is under `/api/v1/organization`: company and branch list,
 search, create, update/deactivate, plus controlled location-to-branch
 assignment. Mutations require the existing Admin or Manager role.
+
+Stock receive, sell, and transfer operations resolve every location through
+the current tenant scope. Transfers between two branch-owned locations are
+limited to one company; intentionally unmapped legacy locations remain usable
+until an owner-approved mapping is supplied. Stock/location foreign keys also
+carry `TenantId`, preserving existing integer IDs while making a tenant-mixed
+reference invalid at the database boundary.

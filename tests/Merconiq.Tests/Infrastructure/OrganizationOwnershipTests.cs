@@ -43,6 +43,19 @@ public class OrganizationOwnershipTests
         branchIndex.IsUnique.Should().BeTrue();
         branch.GetForeignKeys().Should().ContainSingle(fk =>
             fk.Properties.Select(p => p.Name).SequenceEqual(new[] { nameof(Branch.CompanyId), nameof(Branch.TenantId) }));
+
+        var stock = context.Model.FindEntityType(typeof(StockInHand))!;
+        stock.GetForeignKeys().Should().Contain(fk =>
+            fk.Properties.Select(p => p.Name).SequenceEqual(new[] { nameof(StockInHand.LocationId), nameof(StockInHand.TenantId) }) &&
+            fk.PrincipalEntityType.ClrType == typeof(Location));
+
+        var transaction = context.Model.FindEntityType(typeof(StockTransaction))!;
+        transaction.GetForeignKeys().Should().Contain(fk =>
+            fk.Properties.Select(p => p.Name).SequenceEqual(new[] { nameof(StockTransaction.FromLocationId), nameof(StockTransaction.TenantId) }) &&
+            fk.PrincipalEntityType.ClrType == typeof(Location));
+        transaction.GetForeignKeys().Should().Contain(fk =>
+            fk.Properties.Select(p => p.Name).SequenceEqual(new[] { nameof(StockTransaction.ToLocationId), nameof(StockTransaction.TenantId) }) &&
+            fk.PrincipalEntityType.ClrType == typeof(Location));
     }
 
     private static InventoryDbContext CreateContext(string databaseName, string tenantId)
