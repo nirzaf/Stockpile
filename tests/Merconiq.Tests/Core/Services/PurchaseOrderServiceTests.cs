@@ -252,11 +252,13 @@ public class PurchaseOrderServiceTests
             .WithMessage("Invalid status: InvalidStatus");
     }
 
-    [Fact]
-    public async Task DeleteAsync_WhenPurchaseOrderExists_RemovesPurchaseOrder()
+    [Theory]
+    [InlineData(PurchaseOrderStatus.Draft)]
+    [InlineData(PurchaseOrderStatus.Pending)]
+    public async Task DeleteAsync_WhenPurchaseOrderIsEditable_RemovesPurchaseOrder(PurchaseOrderStatus status)
     {
         // Arrange
-        var po = _fixture.Create<PurchaseOrder>();
+        var po = _fixture.Build<PurchaseOrder>().With(p => p.Status, status).Create();
         _poRepoMock.Setup(r => r.GetByIdAsync(po.Id)).ReturnsAsync(po);
 
         // Act
@@ -265,6 +267,24 @@ public class PurchaseOrderServiceTests
         // Assert
         _poRepoMock.Verify(r => r.DeleteAsync(po), Times.Once);
         _uowMock.Verify(u => u.SaveChangesAsync(default), Times.Once);
+    }
+
+    [Theory]
+    [InlineData(PurchaseOrderStatus.Submitted)]
+    [InlineData(PurchaseOrderStatus.Approved)]
+    [InlineData(PurchaseOrderStatus.Received)]
+    [InlineData(PurchaseOrderStatus.Cancelled)]
+    public async Task DeleteAsync_WhenPurchaseOrderIsProtected_RejectsWithoutMutation(PurchaseOrderStatus status)
+    {
+        var po = _fixture.Build<PurchaseOrder>().With(p => p.Status, status).Create();
+        _poRepoMock.Setup(r => r.GetByIdAsync(po.Id)).ReturnsAsync(po);
+
+        var act = async () => await _sut.DeleteAsync(po.Id);
+
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage($"Purchase order {po.Id} in status {status} cannot be deleted.");
+        _poRepoMock.Verify(r => r.DeleteAsync(It.IsAny<PurchaseOrder>()), Times.Never);
+        _uowMock.Verify(u => u.SaveChangesAsync(default), Times.Never);
     }
 
     [Fact]
