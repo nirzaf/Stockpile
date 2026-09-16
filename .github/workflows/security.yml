@@ -5,6 +5,8 @@ on:
     branches: [master]
   push:
     branches: [master]
+  schedule:
+    - cron: '17 3 * * 1'
   workflow_dispatch:
 
 permissions:
@@ -22,17 +24,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@v6
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
         with:
           dotnet-version: 10.0.300
 
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@v4
+        uses: github/codeql-action/init@311b4ee155dcdab395044f00946f664bd51ff173 # v4
         with:
           languages: csharp
           build-mode: manual
@@ -44,7 +46,7 @@ jobs:
         run: dotnet build InventoryManagementSystem.sln --configuration Release --no-restore
 
       - name: Analyze
-        uses: github/codeql-action/analyze@v4
+        uses: github/codeql-action/analyze@311b4ee155dcdab395044f00946f664bd51ff173 # v4
         with:
           category: /language:csharp
 
@@ -53,13 +55,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Build release image
         run: docker build --file Dockerfile --tag stockpile:security .
 
       - name: Generate Trivy SARIF report
-        uses: aquasecurity/trivy-action@v0.36.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: image
           scan-ref: stockpile:security
@@ -72,13 +74,13 @@ jobs:
 
       - name: Upload Trivy results
         if: always()
-        uses: github/codeql-action/upload-sarif@v4
+        uses: github/codeql-action/upload-sarif@311b4ee155dcdab395044f00946f664bd51ff173 # v4
         with:
           sarif_file: trivy-results.sarif
           category: trivy-container
 
       - name: Enforce container vulnerability policy
-        uses: aquasecurity/trivy-action@v0.36.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: image
           scan-ref: stockpile:security
@@ -87,3 +89,12 @@ jobs:
           ignore-unfixed: true
           exit-code: '1'
           skip-setup-trivy: true
+
+      - name: Upload container scan diagnostics
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: trivy-container-diagnostics
+          path: trivy-results.sarif
+          if-no-files-found: ignore
+          retention-days: 14
