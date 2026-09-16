@@ -63,7 +63,7 @@
             return;
         }
 
-        _isDarkMode = await JS.InvokeAsync<bool>("stockpileTheme.getDarkMode");
+        _isDarkMode = await JS.InvokeAsync<bool>("merconiqTheme.getDarkMode");
         _themeLoaded = true;
         await InvokeAsync(StateHasChanged);
     }
@@ -76,6 +76,6 @@
         }
 
         _isDarkMode = !_isDarkMode;
-        await JS.InvokeVoidAsync("stockpileTheme.setDarkMode", _isDarkMode);
+        await JS.InvokeVoidAsync("merconiqTheme.setDarkMode", _isDarkMode);
     }
 }
