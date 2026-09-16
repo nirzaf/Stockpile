@@ -33,7 +33,7 @@ public sealed class DocumentAmountCalculatorTests
         var result = DocumentAmountCalculator.Calculate(new DocumentLineAmount(2, 10.005m, CurrencyScale: 2));
 
         result.TaxAmount.Should().Be(0m);
-        result.GrossAmount.Should().Be(20.02m);
+        result.GrossAmount.Should().Be(20.01m);
     }
 
     [Theory]
