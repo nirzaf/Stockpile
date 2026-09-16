@@ -24,6 +24,8 @@ public class TransferStockIdempotencyTests
         controller.HttpContext.Request.Method = "POST";
         controller.HttpContext.Request.Path = "/api/v1/stock/transfer";
         controller.HttpContext.Request.Headers["Idempotency-Key"] = "transfer-1";
+        using var cancellation = new CancellationTokenSource();
+        controller.HttpContext.RequestAborted = cancellation.Token;
 
         var command = new TransferStockCommand(7, 3, 4, 2, "transfer");
         var result = await controller.Transfer(command, store.Object, new TestTenantContext("tenant-a"));
@@ -33,7 +35,8 @@ public class TransferStockIdempotencyTests
             "tenant-a:POST:/api/v1/stock/transfer",
             "transfer-1",
             It.IsAny<string>(),
-            It.IsAny<Func<Task>>()), Times.Once);
+            It.IsAny<Func<Task>>(),
+            cancellation.Token), Times.Once);
         mediator.Verify(m => m.Send(It.IsAny<TransferStockCommand>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
