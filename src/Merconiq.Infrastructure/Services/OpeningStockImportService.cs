@@ -32,8 +32,10 @@ public sealed class OpeningStockImportService(
             .AsNoTracking()
             .ToDictionaryAsync(location => location.Id, cancellationToken);
         var itemsByExternalId = items
-            .GroupBy(item => item.ExternalId!, StringComparer.OrdinalIgnoreCase)
-            .ToDictionary(group => group.Key, group => group.Single(), StringComparer.OrdinalIgnoreCase);
+            // ExternalId uniqueness is case-sensitive in the tenant-keyed database index.
+            // Keep lookup semantics aligned so permitted case variants remain distinct IDs.
+            .GroupBy(item => item.ExternalId!, StringComparer.Ordinal)
+            .ToDictionary(group => group.Key, group => group.Single(), StringComparer.Ordinal);
         var seenReferences = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var results = new List<OpeningStockRowResult>(rows.Count);
 
