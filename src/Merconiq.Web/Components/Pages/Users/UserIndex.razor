@@ -3,12 +3,13 @@
 @using Microsoft.AspNetCore.Components.Authorization
 @using Microsoft.AspNetCore.Identity
 @using Microsoft.EntityFrameworkCore
-@using Merconiq.Infrastructure.Data
+@using Merconiq.Core.Exceptions
+@using Merconiq.Core.Interfaces
 @attribute [Authorize(Roles = "Admin")]
 @inject UserManager<ApplicationUser> UserManager
 @inject RoleManager<IdentityRole> RoleManager
 @inject AuthenticationStateProvider AuthenticationStateProvider
-@inject InventoryDbContext DbContext
+@inject IUnitOfWork UnitOfWork
 @inject ISnackbar Snackbar
 @inject IDialogService DialogService
 @inject ILogger<UserIndex> Logger
@@ -147,47 +148,51 @@
             return;
         }
 
-        await using var transaction = DbContext.Database.IsRelational()
-            ? await DbContext.Database.BeginTransactionAsync()
-            : null;
+        string? identityError = null;
         try
         {
-            var currentRoles = await UserManager.GetRolesAsync(row.User);
-            var removeResult = await UserManager.RemoveFromRolesAsync(row.User, currentRoles);
-            if (!removeResult.Succeeded)
+            void EnsureSucceeded(IdentityResult result)
             {
-                if (transaction is not null)
-                    await transaction.RollbackAsync();
-                Snackbar.Add(string.Join(" ", removeResult.Errors.Select(error => error.Description)), Severity.Error);
-                return;
+                if (result.Succeeded)
+                    return;
+
+                identityError = string.Join(" ", result.Errors.Select(error => error.Description));
+                if (result.Errors.Any(error => error.Code == "ConcurrencyFailure"))
+                    throw new ConcurrencyException("Another update changed the user's access.");
+
+                throw new RoleMutationException();
             }
 
-            var addResult = await UserManager.AddToRoleAsync(row.User, row.Role);
-            if (!addResult.Succeeded)
+            await UnitOfWork.ExecuteInTransactionAsync(async () =>
             {
-                if (transaction is not null)
-                    await transaction.RollbackAsync();
-                Snackbar.Add(string.Join(" ", addResult.Errors.Select(error => error.Description)), Severity.Error);
-                return;
-            }
+                UnitOfWork.ClearTracker();
+                identityError = null;
+                var currentUser = await UserManager.FindByIdAsync(row.User.Id);
+                if (currentUser is null)
+                {
+                    identityError = "User not found.";
+                    throw new RoleMutationException();
+                }
 
-            var stampResult = await UserManager.UpdateSecurityStampAsync(row.User);
-            if (!stampResult.Succeeded)
-            {
-                if (transaction is not null)
-                    await transaction.RollbackAsync();
-                Snackbar.Add(string.Join(" ", stampResult.Errors.Select(error => error.Description)), Severity.Error);
-                return;
-            }
+                var currentRoles = await UserManager.GetRolesAsync(currentUser);
+                EnsureSucceeded(await UserManager.RemoveFromRolesAsync(currentUser, currentRoles));
+                EnsureSucceeded(await UserManager.AddToRoleAsync(currentUser, row.Role));
+                EnsureSucceeded(await UserManager.UpdateSecurityStampAsync(currentUser));
+            });
 
-            if (transaction is not null)
-                await transaction.CommitAsync();
             Snackbar.Add("Role updated successfully.", Severity.Success);
+        }
+        catch (ConcurrencyException exception)
+        {
+            Logger.LogWarning(exception, "A concurrent role update prevented changing user {UserId}.", row.User.Id);
+            Snackbar.Add("Another update changed this user's access. Refresh and retry.", Severity.Error);
+        }
+        catch (RoleMutationException)
+        {
+            Snackbar.Add(identityError ?? "Unable to update the role. Please retry.", Severity.Error);
         }
         catch (Exception exception)
         {
-            if (transaction is not null)
-                await transaction.RollbackAsync();
             Snackbar.Add("Unable to update the role. Please retry.", Severity.Error);
             Logger.LogError(exception, "Unable to update role {Role} for user {UserId}.", row.Role, row.User.Id);
         }
@@ -230,4 +235,6 @@
         public ApplicationUser User { get; }
         public string Role { get; set; }
     }
+
+    private sealed class RoleMutationException : Exception { }
 }
