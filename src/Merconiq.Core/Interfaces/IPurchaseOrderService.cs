@@ -30,8 +30,14 @@ public interface IPurchaseOrderService
     /// <summary>Creates a new purchase order with its line items.</summary>
     /// <param name="purchaseOrder">The purchase order header.</param>
     /// <param name="details">The purchase order line items.</param>
+    /// <param name="idempotencyKey">Stable key reused when the same create request is retried.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The created purchase order, including its assigned identifier and any computed totals.</returns>
-    Task<PurchaseOrder> CreateAsync(PurchaseOrder purchaseOrder, List<OrderDetail> details);
+    Task<PurchaseOrder> CreateAsync(
+        PurchaseOrder purchaseOrder,
+        List<OrderDetail> details,
+        string idempotencyKey,
+        CancellationToken cancellationToken = default);
 
     /// <summary>Transitions a purchase order to a new status.</summary>
     /// <param name="id">The purchase order identifier.</param>
@@ -39,7 +45,7 @@ public interface IPurchaseOrderService
     /// <exception cref="ArgumentException">Thrown when <paramref name="status"/> is not a known purchase order status.</exception>
     Task UpdateStatusAsync(int id, string status);
 
-    /// <summary>Soft-deletes a purchase order by its identifier.</summary>
-    /// <param name="id">The identifier of the purchase order to delete.</param>
+    /// <summary>Cancels an editable purchase order without deleting its identity or number.</summary>
+    /// <param name="id">The identifier of the purchase order to cancel.</param>
     Task DeleteAsync(int id);
 }

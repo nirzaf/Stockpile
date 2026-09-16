@@ -7,12 +7,13 @@ namespace Merconiq.Core.Services;
 
 /// <summary>
 /// Purchase order service. Manages the full purchase order lifecycle from creation through
-/// status transitions to deletion.
+/// status transitions while preserving numbered-document history.
 /// </summary>
 public class PurchaseOrderService : IPurchaseOrderService
 {
     private readonly IRepository<PurchaseOrder> _poRepo;
     private readonly IUnitOfWork _unitOfWork;
+    private readonly IDocumentIdentityService _documentIdentityService;
     private readonly IWebhookDispatcher _webhookDispatcher;
     private readonly ITenantContext _tenantContext;
     private readonly ILogger<PurchaseOrderService> _logger;
@@ -20,12 +21,14 @@ public class PurchaseOrderService : IPurchaseOrderService
     public PurchaseOrderService(
         IRepository<PurchaseOrder> poRepo,
         IUnitOfWork unitOfWork,
+        IDocumentIdentityService documentIdentityService,
         IWebhookDispatcher webhookDispatcher,
         ITenantContext tenantContext,
         ILogger<PurchaseOrderService> logger)
     {
         _poRepo = poRepo;
         _unitOfWork = unitOfWork;
+        _documentIdentityService = documentIdentityService;
         _webhookDispatcher = webhookDispatcher;
         _tenantContext = tenantContext;
         _logger = logger;
@@ -48,16 +51,28 @@ public class PurchaseOrderService : IPurchaseOrderService
     }
 
     /// <inheritdoc />
-    public async Task<PurchaseOrder> CreateAsync(PurchaseOrder purchaseOrder, List<OrderDetail> details)
+    public async Task<PurchaseOrder> CreateAsync(
+        PurchaseOrder purchaseOrder,
+        List<OrderDetail> details,
+        string idempotencyKey,
+        CancellationToken cancellationToken = default)
     {
+        ArgumentNullException.ThrowIfNull(purchaseOrder);
+        ArgumentNullException.ThrowIfNull(details);
+        ArgumentException.ThrowIfNullOrWhiteSpace(idempotencyKey);
+
         purchaseOrder.OrderDate = DateTime.UtcNow;
         purchaseOrder.Status = PurchaseOrderStatus.Pending;
+        purchaseOrder.PONumber = purchaseOrder.PONumber.Trim();
         purchaseOrder.TotalAmount = details.Sum(d => d.Quantity * d.UnitPrice);
         purchaseOrder.OrderDetails = details;
 
         _logger.LogInformation("Creating PO {PONumber}", purchaseOrder.PONumber);
-        var created = await _poRepo.AddAsync(purchaseOrder);
-        await _unitOfWork.SaveChangesAsync();
+        var created = await _documentIdentityService.CreatePurchaseOrderAsync(
+            purchaseOrder,
+            details,
+            idempotencyKey,
+            cancellationToken);
         return created;
     }
 
@@ -74,8 +89,10 @@ public class PurchaseOrderService : IPurchaseOrderService
         if (previousStatus != parsedStatus && !IsValidTransition(previousStatus, parsedStatus))
             throw new InvalidOperationException($"Invalid purchase order status transition: {previousStatus} -> {parsedStatus}");
 
+        await _documentIdentityService.TransitionLifecycleAsync(
+            po.DocumentId,
+            ToDocumentLifecycle(parsedStatus));
         po.Status = parsedStatus;
-        await _poRepo.UpdateAsync(po);
         if (previousStatus != parsedStatus)
         {
             await _webhookDispatcher.EnqueueAsync(WebhookEventFactory.Create(_tenantContext, "PurchaseOrder.StatusChanged", new
@@ -95,11 +112,19 @@ public class PurchaseOrderService : IPurchaseOrderService
         {
             PurchaseOrderStatus.Draft => next is PurchaseOrderStatus.Pending or PurchaseOrderStatus.Cancelled,
             PurchaseOrderStatus.Pending => next is PurchaseOrderStatus.Submitted or PurchaseOrderStatus.Approved or PurchaseOrderStatus.Cancelled,
-            PurchaseOrderStatus.Submitted => next is PurchaseOrderStatus.Approved or PurchaseOrderStatus.Cancelled,
-            PurchaseOrderStatus.Approved => next is PurchaseOrderStatus.Received or PurchaseOrderStatus.Cancelled,
-            PurchaseOrderStatus.Received or PurchaseOrderStatus.Cancelled => false,
+            PurchaseOrderStatus.Submitted => next is PurchaseOrderStatus.Approved or PurchaseOrderStatus.Cancelled or PurchaseOrderStatus.Voided,
+            PurchaseOrderStatus.Approved => next is PurchaseOrderStatus.Received or PurchaseOrderStatus.Cancelled or PurchaseOrderStatus.Voided,
+            PurchaseOrderStatus.Received or PurchaseOrderStatus.Cancelled or PurchaseOrderStatus.Voided => false,
             _ => false
         };
+
+    private static DocumentLifecycleStatus ToDocumentLifecycle(PurchaseOrderStatus status) => status switch
+    {
+        PurchaseOrderStatus.Draft => DocumentLifecycleStatus.Draft,
+        PurchaseOrderStatus.Cancelled => DocumentLifecycleStatus.Cancelled,
+        PurchaseOrderStatus.Voided => DocumentLifecycleStatus.Voided,
+        _ => DocumentLifecycleStatus.Active
+    };
 
     /// <inheritdoc />
     public async Task DeleteAsync(int id)
@@ -110,8 +135,9 @@ public class PurchaseOrderService : IPurchaseOrderService
             if (po.Status is not (PurchaseOrderStatus.Draft or PurchaseOrderStatus.Pending))
                 throw new InvalidOperationException($"Purchase order {id} in status {po.Status} cannot be deleted.");
 
-            _logger.LogInformation("Deleting PO {Id}", id);
-            await _poRepo.DeleteAsync(po);
+            _logger.LogInformation("Cancelling PO {Id} without releasing its document number", id);
+            await _documentIdentityService.TransitionLifecycleAsync(po.DocumentId, DocumentLifecycleStatus.Cancelled);
+            po.Status = PurchaseOrderStatus.Cancelled;
             await _unitOfWork.SaveChangesAsync();
         }
     }

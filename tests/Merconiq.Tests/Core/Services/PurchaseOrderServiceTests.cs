@@ -15,6 +15,7 @@ public class PurchaseOrderServiceTests
     private readonly Fixture _fixture = InventoryFixtureFactory.Create();
     private readonly Mock<IRepository<PurchaseOrder>> _poRepoMock = new();
     private readonly Mock<IUnitOfWork> _uowMock = new();
+    private readonly Mock<IDocumentIdentityService> _documentIdentityMock = new();
     private readonly Mock<IWebhookDispatcher> _webhookDispatcherMock = new();
     private readonly PurchaseOrderService _sut;
 
@@ -23,13 +24,28 @@ public class PurchaseOrderServiceTests
         _sut = new PurchaseOrderService(
             _poRepoMock.Object,
             _uowMock.Object,
+            _documentIdentityMock.Object,
             _webhookDispatcherMock.Object,
             new TestTenantContext("test-tenant"),
             NullLogger<PurchaseOrderService>.Instance);
+
+        _documentIdentityMock
+            .Setup(service => service.CreatePurchaseOrderAsync(
+                It.IsAny<PurchaseOrder>(),
+                It.IsAny<IReadOnlyCollection<OrderDetail>>(),
+                It.IsAny<string>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync((PurchaseOrder order, IReadOnlyCollection<OrderDetail> _, string _, CancellationToken _) => order);
+        _documentIdentityMock
+            .Setup(service => service.TransitionLifecycleAsync(
+                It.IsAny<DocumentIdentityId>(),
+                It.IsAny<DocumentLifecycleStatus>(),
+                It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
     }
 
     [Fact]
-    public async Task CreatePurchaseOrderAsync_WhenDetailsAreValid_AddsPurchaseOrderWithPendingStatus()
+    public async Task CreatePurchaseOrderAsync_WhenDetailsAreValid_RegistersPurchaseOrderIdentityAndLines()
     {
         // Arrange
         var po = _fixture.Create<PurchaseOrder>();
@@ -42,25 +58,23 @@ public class PurchaseOrderServiceTests
         };
 
         var expectedTotal = details.Sum(d => d.Quantity * d.UnitPrice);
-        _poRepoMock.Setup(r => r.AddAsync(It.IsAny<PurchaseOrder>()))
-            .ReturnsAsync((PurchaseOrder p) => p);
-
         // Act
-        var result = await _sut.CreateAsync(po, details);
+        var result = await _sut.CreateAsync(po, details, "purchase-order-create-1");
 
         // Assert
         result.Status.Should().Be(PurchaseOrderStatus.Pending);
         result.TotalAmount.Should().Be(expectedTotal);
         result.OrderDetails.Should().BeEquivalentTo(details);
-        _poRepoMock.Verify(r => r.AddAsync(It.Is<PurchaseOrder>(p =>
-            p.Status == PurchaseOrderStatus.Pending &&
-            p.TotalAmount == expectedTotal &&
-            p.OrderDetails.Count == details.Count)), Times.Once);
-        _uowMock.Verify(u => u.SaveChangesAsync(default), Times.Once);
+        _documentIdentityMock.Verify(service => service.CreatePurchaseOrderAsync(
+            It.Is<PurchaseOrder>(order => order.Status == PurchaseOrderStatus.Pending &&
+                order.TotalAmount == expectedTotal && order.OrderDetails.Count == details.Count),
+            It.Is<IReadOnlyCollection<OrderDetail>>(value => value.Count == details.Count),
+            "purchase-order-create-1",
+            default), Times.Once);
     }
 
     [Fact]
-    public async Task CreatePurchaseOrderAsync_WhenCalled_InvokesAddAsyncExactlyOnce()
+    public async Task CreatePurchaseOrderAsync_WhenCalled_UsesTheProvidedIdempotencyKeyExactlyOnce()
     {
         // Arrange
         var po = _fixture.Create<PurchaseOrder>();
@@ -68,15 +82,15 @@ public class PurchaseOrderServiceTests
         {
             new() { ItemId = 1, Quantity = 1, UnitPrice = 1.00m }
         };
-        _poRepoMock.Setup(r => r.AddAsync(It.IsAny<PurchaseOrder>()))
-            .ReturnsAsync((PurchaseOrder p) => p);
-
         // Act
-        await _sut.CreateAsync(po, details);
+        await _sut.CreateAsync(po, details, "purchase-order-create-2");
 
         // Assert
-        _poRepoMock.Verify(r => r.AddAsync(It.IsAny<PurchaseOrder>()), Times.Once);
-        _uowMock.Verify(u => u.SaveChangesAsync(default), Times.Once);
+        _documentIdentityMock.Verify(service => service.CreatePurchaseOrderAsync(
+            po,
+            It.IsAny<IReadOnlyCollection<OrderDetail>>(),
+            "purchase-order-create-2",
+            default), Times.Once);
     }
 
     [Fact]
@@ -85,11 +99,8 @@ public class PurchaseOrderServiceTests
         // Arrange
         var po = _fixture.Create<PurchaseOrder>();
         po.TotalAmount = 999m;
-        _poRepoMock.Setup(r => r.AddAsync(It.IsAny<PurchaseOrder>()))
-            .ReturnsAsync((PurchaseOrder p) => p);
-
         // Act
-        var result = await _sut.CreateAsync(po, new List<OrderDetail>());
+        var result = await _sut.CreateAsync(po, new List<OrderDetail>(), "purchase-order-create-3");
 
         // Assert
         result.TotalAmount.Should().Be(0m);
@@ -143,6 +154,7 @@ public class PurchaseOrderServiceTests
     {
         // Arrange
         var po = _fixture.Build<PurchaseOrder>()
+            .Without(p => p.DocumentIdentity)
             .With(p => p.Status, PurchaseOrderStatus.Pending)
             .Create();
         _poRepoMock.Setup(r => r.GetByIdAsync(po.Id)).ReturnsAsync(po);
@@ -152,7 +164,7 @@ public class PurchaseOrderServiceTests
 
         // Assert
         po.Status.Should().Be(PurchaseOrderStatus.Approved);
-        _poRepoMock.Verify(r => r.UpdateAsync(po), Times.Once);
+        _poRepoMock.Verify(r => r.UpdateAsync(It.IsAny<PurchaseOrder>()), Times.Never);
         _uowMock.Verify(u => u.SaveChangesAsync(default), Times.Once);
     }
 
@@ -160,6 +172,7 @@ public class PurchaseOrderServiceTests
     public async Task UpdateStatusAsync_WhenDraftMovesToPending_UpdatesOrderStatus()
     {
         var po = _fixture.Build<PurchaseOrder>()
+            .Without(p => p.DocumentIdentity)
             .With(p => p.Status, PurchaseOrderStatus.Draft)
             .Create();
         _poRepoMock.Setup(r => r.GetByIdAsync(po.Id)).ReturnsAsync(po);
@@ -167,7 +180,7 @@ public class PurchaseOrderServiceTests
         await _sut.UpdateStatusAsync(po.Id, nameof(PurchaseOrderStatus.Pending));
 
         po.Status.Should().Be(PurchaseOrderStatus.Pending);
-        _poRepoMock.Verify(r => r.UpdateAsync(po), Times.Once);
+        _poRepoMock.Verify(r => r.UpdateAsync(It.IsAny<PurchaseOrder>()), Times.Never);
     }
 
     [Theory]
@@ -179,7 +192,7 @@ public class PurchaseOrderServiceTests
         PurchaseOrderStatus current,
         PurchaseOrderStatus requested)
     {
-        var po = _fixture.Build<PurchaseOrder>().With(p => p.Status, current).Create();
+        var po = _fixture.Build<PurchaseOrder>().Without(p => p.DocumentIdentity).With(p => p.Status, current).Create();
         _poRepoMock.Setup(r => r.GetByIdAsync(po.Id)).ReturnsAsync(po);
 
         var act = async () => await _sut.UpdateStatusAsync(po.Id, requested.ToString());
@@ -197,6 +210,7 @@ public class PurchaseOrderServiceTests
     {
         // Arrange
         var po = _fixture.Build<PurchaseOrder>()
+            .Without(p => p.DocumentIdentity)
             .With(p => p.Status, PurchaseOrderStatus.Pending)
             .With(p => p.PONumber, "PO-1001")
             .Create();
@@ -226,6 +240,7 @@ public class PurchaseOrderServiceTests
     {
         // Arrange
         var po = _fixture.Build<PurchaseOrder>()
+            .Without(p => p.DocumentIdentity)
             .With(p => p.Status, PurchaseOrderStatus.Pending)
             .Create();
         _poRepoMock.Setup(r => r.GetByIdAsync(po.Id)).ReturnsAsync(po);
@@ -255,18 +270,59 @@ public class PurchaseOrderServiceTests
     [Theory]
     [InlineData(PurchaseOrderStatus.Draft)]
     [InlineData(PurchaseOrderStatus.Pending)]
-    public async Task DeleteAsync_WhenPurchaseOrderIsEditable_RemovesPurchaseOrder(PurchaseOrderStatus status)
+    public async Task DeleteAsync_WhenPurchaseOrderIsEditable_CancelsAndRetainsPurchaseOrder(PurchaseOrderStatus status)
     {
         // Arrange
-        var po = _fixture.Build<PurchaseOrder>().With(p => p.Status, status).Create();
+        var po = _fixture.Build<PurchaseOrder>().Without(p => p.DocumentIdentity).With(p => p.Status, status).Create();
         _poRepoMock.Setup(r => r.GetByIdAsync(po.Id)).ReturnsAsync(po);
 
         // Act
         await _sut.DeleteAsync(po.Id);
 
         // Assert
-        _poRepoMock.Verify(r => r.DeleteAsync(po), Times.Once);
+        po.Status.Should().Be(PurchaseOrderStatus.Cancelled);
+        _poRepoMock.Verify(r => r.DeleteAsync(It.IsAny<PurchaseOrder>()), Times.Never);
+        _poRepoMock.Verify(r => r.UpdateAsync(It.IsAny<PurchaseOrder>()), Times.Never);
+        _documentIdentityMock.Verify(service => service.TransitionLifecycleAsync(
+            po.DocumentId,
+            DocumentLifecycleStatus.Cancelled,
+            default), Times.Once);
         _uowMock.Verify(u => u.SaveChangesAsync(default), Times.Once);
+    }
+
+    [Theory]
+    [InlineData(PurchaseOrderStatus.Submitted)]
+    [InlineData(PurchaseOrderStatus.Approved)]
+    public async Task UpdateStatusAsync_WhenAnIssuedOrderIsVoided_RetainsItsDocumentIdentity(PurchaseOrderStatus current)
+    {
+        var po = _fixture.Build<PurchaseOrder>().Without(order => order.DocumentIdentity).With(order => order.Status, current).Create();
+        _poRepoMock.Setup(repository => repository.GetByIdAsync(po.Id)).ReturnsAsync(po);
+
+        await _sut.UpdateStatusAsync(po.Id, nameof(PurchaseOrderStatus.Voided));
+
+        po.Status.Should().Be(PurchaseOrderStatus.Voided);
+        _documentIdentityMock.Verify(service => service.TransitionLifecycleAsync(
+            po.DocumentId,
+            DocumentLifecycleStatus.Voided,
+            default), Times.Once);
+        _poRepoMock.Verify(repository => repository.DeleteAsync(It.IsAny<PurchaseOrder>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task UpdateStatusAsync_WhenReceivedOrderIsVoided_RejectsBecauseNoReversalExists()
+    {
+        var po = _fixture.Build<PurchaseOrder>().Without(order => order.DocumentIdentity).With(order => order.Status, PurchaseOrderStatus.Received).Create();
+        _poRepoMock.Setup(repository => repository.GetByIdAsync(po.Id)).ReturnsAsync(po);
+
+        var act = () => _sut.UpdateStatusAsync(po.Id, nameof(PurchaseOrderStatus.Voided));
+
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("Invalid purchase order status transition: Received -> Voided");
+        po.Status.Should().Be(PurchaseOrderStatus.Received);
+        _documentIdentityMock.Verify(service => service.TransitionLifecycleAsync(
+            It.IsAny<DocumentIdentityId>(),
+            It.IsAny<DocumentLifecycleStatus>(),
+            It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Theory]
@@ -276,7 +332,7 @@ public class PurchaseOrderServiceTests
     [InlineData(PurchaseOrderStatus.Cancelled)]
     public async Task DeleteAsync_WhenPurchaseOrderIsProtected_RejectsWithoutMutation(PurchaseOrderStatus status)
     {
-        var po = _fixture.Build<PurchaseOrder>().With(p => p.Status, status).Create();
+        var po = _fixture.Build<PurchaseOrder>().Without(p => p.DocumentIdentity).With(p => p.Status, status).Create();
         _poRepoMock.Setup(r => r.GetByIdAsync(po.Id)).ReturnsAsync(po);
 
         var act = async () => await _sut.DeleteAsync(po.Id);

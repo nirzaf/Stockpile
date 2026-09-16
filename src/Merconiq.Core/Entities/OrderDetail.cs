@@ -5,7 +5,15 @@ namespace Merconiq.Core.Entities;
 /// </summary>
 public class OrderDetail : AuditableEntity
 {
+    public OrderDetail()
+    {
+        DocumentLineId = DocumentLineIdentityId.New();
+    }
+
     public int Id { get; set; }
+    /// <summary>Immutable identity for this line, independent of its database row number.</summary>
+    public DocumentLineIdentityId DocumentLineId { get; private set; }
+    public DocumentLineIdentity? DocumentLineIdentity { get; set; }
     public int PurchaseOrderId { get; set; }
     public PurchaseOrder PurchaseOrder { get; set; } = null!;
     public int ItemId { get; set; }

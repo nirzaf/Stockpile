@@ -49,7 +49,10 @@
         <MudTd DataLabel="Total" Style="text-align:right">@context.TotalAmount.ToString("C")</MudTd>
         <MudTd DataLabel="Actions" Style="text-align:right">
             <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Info" Href="@($"/PurchaseOrders/Details/{context.Id}")" Class="mr-2">Details</MudButton>
-            <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Error" OnClick="@(() => DeletePO(context))">Delete</MudButton>
+            @if (context.Status is PurchaseOrderStatus.Draft or PurchaseOrderStatus.Pending)
+            {
+                <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Error" OnClick="@(() => DeletePO(context))">Cancel</MudButton>
+            }
         </MudTd>
     </RowTemplate>
     <PagerContent>
@@ -87,7 +90,7 @@
             PurchaseOrderStatus.Pending => Color.Warning,
             PurchaseOrderStatus.Approved => Color.Success,
             PurchaseOrderStatus.Received => Color.Info,
-            PurchaseOrderStatus.Cancelled => Color.Error,
+            PurchaseOrderStatus.Cancelled or PurchaseOrderStatus.Voided => Color.Error,
             _ => Color.Default
         };
     }
@@ -140,8 +143,8 @@
     {
         bool? result = await DialogService.ShowMessageBoxAsync(
             "Warning", 
-            $"Are you sure you want to delete {po.PONumber}?", 
-            yesText: "Delete!", cancelText: "Cancel");
+            $"Cancel purchase order {po.PONumber}? Its number and audit history will be retained.",
+            yesText: "Cancel PO", cancelText: "Keep PO");
 
         if (result == true)
         {
@@ -154,7 +157,7 @@
                 }
 
                 await POService.DeleteAsync(po.Id);
-                Snackbar.Add("Purchase Order deleted successfully", Severity.Success);
+                Snackbar.Add("Purchase order cancelled; its number and history were retained.", Severity.Success);
                 await LoadData();
             }
             catch (Exception ex)

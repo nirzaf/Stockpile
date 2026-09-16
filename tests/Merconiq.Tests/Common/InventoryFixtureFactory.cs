@@ -51,12 +51,14 @@ public static class InventoryFixtureFactory
             .With(x => x.Status, PurchaseOrderStatus.Pending)
             .With(x => x.TotalAmount, 0m)
             .Without(x => x.Supplier)
+            .Without(x => x.DocumentIdentity)
             .Without(x => x.OrderDetails));
 
         fixture.Customize<OrderDetail>(c => c
             .With(x => x.Quantity, 1)
             .With(x => x.UnitPrice, 10.00m)
             .Without(x => x.PurchaseOrder)
+            .Without(x => x.DocumentLineIdentity)
             .Without(x => x.Item));
 
         return fixture;
