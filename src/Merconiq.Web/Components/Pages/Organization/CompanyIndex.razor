@@ -113,6 +113,7 @@ else
     private string _search = string.Empty;
     private string? _errorMessage;
     private bool _loading = true;
+    private long _loadVersion;
 
     protected override async Task OnInitializedAsync() => await LoadCompaniesAsync();
 
@@ -124,20 +125,32 @@ else
 
     private async Task LoadCompaniesAsync()
     {
+        var version = Interlocked.Increment(ref _loadVersion);
+        var search = _search;
         _loading = true;
         _errorMessage = null;
         try
         {
-            _companies = await OrganizationService.GetCompaniesAsync(_search);
+            var companies = await OrganizationService.GetCompaniesAsync(search);
+            if (IsCurrentLoad(version, search))
+                _companies = companies;
         }
         catch (Exception exception)
         {
-            Logger.LogError(exception, "Unable to load the tenant's companies.");
-            _errorMessage = "Unable to load companies. Please retry.";
+            if (IsCurrentLoad(version, search))
+            {
+                Logger.LogError(exception, "Unable to load the tenant's companies.");
+                _errorMessage = "Unable to load companies. Please retry.";
+            }
         }
         finally
         {
-            _loading = false;
+            if (IsCurrentLoad(version, search))
+                _loading = false;
         }
     }
+
+    private bool IsCurrentLoad(long version, string search) =>
+        version == Volatile.Read(ref _loadVersion) &&
+        string.Equals(search, _search, StringComparison.Ordinal);
 }

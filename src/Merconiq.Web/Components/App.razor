@@ -1,3 +1,4 @@
+@using static Microsoft.AspNetCore.Components.Web.RenderMode
 <!DOCTYPE html>
 <html lang="@CultureInfo.CurrentUICulture.TwoLetterISOLanguageName" dir="@(CultureInfo.CurrentUICulture.TextInfo.IsRightToLeft ? "rtl" : "ltr")">
 
@@ -7,11 +8,11 @@
     <base href="/" />
     <link href="_content/MudBlazor/MudBlazor.min.css" rel="stylesheet" />
     <link href="css/site.css" rel="stylesheet" />
-    <HeadOutlet />
+    <HeadOutlet @rendermode="InteractiveServer" />
 </head>
 
 <body>
-    <Routes />
+    <Routes @rendermode="InteractiveServer" />
     <script src="_framework/blazor.web.js"></script>
     <script src="js/site.js"></script>
     <script src="_content/MudBlazor/MudBlazor.min.js"></script>

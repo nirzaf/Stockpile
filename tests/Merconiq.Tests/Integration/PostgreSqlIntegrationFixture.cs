@@ -3,6 +3,7 @@ using Merconiq.Infrastructure.Data;
 using Merconiq.Tests.Infrastructure;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
+using Npgsql;
 using Testcontainers.PostgreSql;
 using Xunit.Sdk;
 
@@ -56,12 +57,15 @@ public sealed class PostgreSqlIntegrationFixture : IAsyncLifetime
         }
     }
 
-    public InventoryDbContext CreateContext(string tenantId)
+    public InventoryDbContext CreateContext(string tenantId, string? applicationName = null)
     {
         EnsureEnabled();
 
+        var connectionString = applicationName is null
+            ? ConnectionString
+            : new NpgsqlConnectionStringBuilder(ConnectionString) { ApplicationName = applicationName }.ConnectionString;
         var options = new DbContextOptionsBuilder<InventoryDbContext>()
-            .UseNpgsql(ConnectionString)
+            .UseNpgsql(connectionString)
             .ConfigureWarnings(warnings => warnings.Ignore(RelationalEventId.PendingModelChangesWarning))
             .Options;
 

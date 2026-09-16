@@ -115,6 +115,7 @@ else
     private string _search = string.Empty;
     private string? _errorMessage;
     private bool _loading = true;
+    private long _loadVersion;
 
     protected override async Task OnParametersSetAsync()
     {
@@ -134,23 +135,32 @@ else
 
     private async Task LoadAsync()
     {
+        var version = Interlocked.Increment(ref _loadVersion);
+        var companyId = CompanyId;
         _loading = true;
         _errorMessage = null;
         _company = null;
         try
         {
-            _company = await OrganizationService.GetCompanyAsync(CompanyId);
+            var company = await OrganizationService.GetCompanyAsync(companyId);
+            if (!IsCurrentLoad(version, companyId, _search))
+                return;
+            _company = company;
             if (_company is not null)
                 await LoadBranchesAsync();
         }
         catch (Exception exception)
         {
-            Logger.LogError(exception, "Unable to load branches for company {CompanyId}.", CompanyId);
-            _errorMessage = "Unable to load company branches. Please retry.";
+            if (IsCurrentLoad(version, companyId, _search))
+            {
+                Logger.LogError(exception, "Unable to load branches for company {CompanyId}.", companyId);
+                _errorMessage = "Unable to load company branches. Please retry.";
+            }
         }
         finally
         {
-            _loading = false;
+            if (IsCurrentLoad(version, companyId, _search))
+                _loading = false;
         }
     }
 
@@ -158,15 +168,36 @@ else
     {
         if (_company is null)
             return;
+        var version = Interlocked.Increment(ref _loadVersion);
+        var companyId = CompanyId;
+        var search = _search;
+        _loading = true;
         try
         {
-            _branches = await OrganizationService.GetBranchesAsync(CompanyId, _search);
-            _errorMessage = null;
+            var branches = await OrganizationService.GetBranchesAsync(companyId, search);
+            if (IsCurrentLoad(version, companyId, search))
+            {
+                _branches = branches;
+                _errorMessage = null;
+            }
         }
         catch (Exception exception)
         {
-            Logger.LogError(exception, "Unable to search branches for company {CompanyId}.", CompanyId);
-            _errorMessage = "Unable to load company branches. Please retry.";
+            if (IsCurrentLoad(version, companyId, search))
+            {
+                Logger.LogError(exception, "Unable to search branches for company {CompanyId}.", companyId);
+                _errorMessage = "Unable to load company branches. Please retry.";
+            }
+        }
+        finally
+        {
+            if (IsCurrentLoad(version, companyId, search))
+                _loading = false;
         }
     }
+
+    private bool IsCurrentLoad(long version, int companyId, string search) =>
+        version == Volatile.Read(ref _loadVersion) &&
+        companyId == CompanyId &&
+        string.Equals(search, _search, StringComparison.Ordinal);
 }

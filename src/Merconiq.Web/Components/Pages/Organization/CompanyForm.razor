@@ -141,6 +141,7 @@ else
     private async Task LoadCompanyAsync(int id)
     {
         _loading = true;
+        _loadErrorMessage = null;
         try
         {
             var company = await OrganizationService.GetCompanyAsync(id);

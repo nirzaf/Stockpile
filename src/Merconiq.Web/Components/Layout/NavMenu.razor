@@ -17,7 +17,7 @@
     <MudNavLink Href="/Locations" Icon="@Icons.Material.Filled.LocationOn">@L["Locations"]</MudNavLink>
     <AuthorizeView Policy="@CapabilityPolicies.View">
         <Authorized>
-            <MudNavLink Href="/Organization/Companies" Icon="@Icons.Material.Filled.AccountBalance">Organization</MudNavLink>
+            <MudNavLink Href="/Organization/Companies" Icon="@Icons.Material.Filled.AccountBalance">@L["Organization"]</MudNavLink>
         </Authorized>
     </AuthorizeView>
     <AuthorizeView Roles="Admin">

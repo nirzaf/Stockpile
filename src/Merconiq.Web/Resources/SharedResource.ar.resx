@@ -15,6 +15,7 @@
   <data name="Purchase Orders" xml:space="preserve"><value>أوامر الشراء</value></data>
   <data name="Suppliers" xml:space="preserve"><value>الموردون</value></data>
   <data name="Locations" xml:space="preserve"><value>المواقع</value></data>
+  <data name="Organization" xml:space="preserve"><value>إدارة المؤسسة</value></data>
   <data name="Merconiq" xml:space="preserve"><value>Merconiq</value></data>
   <data name="Login" xml:space="preserve"><value>تسجيل الدخول</value></data>
   <data name="Logout" xml:space="preserve"><value>تسجيل الخروج</value></data>

@@ -110,7 +110,8 @@ public sealed class OrganizationServiceTests
         new Repository<Branch>(context),
         new Repository<Location>(context),
         new UnitOfWork(context),
-        new TestTenantContext(tenantId));
+        new TestTenantContext(tenantId),
+        context);
 
     private static InventoryDbContext CreateContext(string databaseName, string tenantId)
     {
