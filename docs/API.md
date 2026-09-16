@@ -100,6 +100,26 @@ mutations. Webhook administration is restricted to `Admin` and `Manager`.
 | GET | `/api/v1/forecast` | Any API JWT; AI limit | `200` |
 | GET | `/api/v1/anomalies` | Any API JWT; AI limit | `200` |
 
+## Outbound webhooks
+
+Webhook deliveries are at-least-once: a receiver can see the same delivery again
+after a timeout or worker restart, so it should deduplicate using the stable
+`X-Inventory-Event-Id` delivery identifier. The JSON body contains the event ID
+and tenant ID. When a subscription secret is configured, the sender adds
+`X-Inventory-Signature` as lower-case hexadecimal HMAC-SHA256 over the exact
+UTF-8 request body. Receivers should recompute the digest over the raw body and
+compare it in constant time; the subscription secret is not returned by the
+webhook administration responses.
+
+Webhook targets must be HTTPS on port 443 and resolve only to public addresses.
+The delivery worker retries transient failures with bounded exponential delay,
+up to five total attempts; permanent client errors are dead-lettered immediately.
+Operational response diagnostics are limited to 4 KiB and redact the configured
+secret and full target URL; transport errors are recorded without exception text
+or endpoint details.
+No remote endpoint is contacted unless an administrator explicitly configures
+the subscription.
+
 The item list validates `page >= 1` and `1 <= pageSize <= 100`. Item update
 also requires the route ID and body ID to match. Request validation failures
 are `400` responses.
