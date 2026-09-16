@@ -1,10 +1,13 @@
 @page "/Organization/Companies/{CompanyId:int}/Branches/Create"
 @page "/Organization/Branches/Edit/{Id:int}"
 @using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Components.Authorization
 @using Merconiq.Core.Models
 @using Merconiq.Web.Security
 @attribute [Authorize(Policy = CapabilityPolicies.Edit)]
 @inject IOrganizationService OrganizationService
+@inject AuthenticationStateProvider AuthenticationStateProvider
+@inject CurrentUserAuthorization CurrentUserAuthorization
 @inject NavigationManager Navigation
 @inject ISnackbar Snackbar
 @inject ILogger<BranchForm> Logger
@@ -209,6 +212,14 @@ else
         _errorMessage = null;
         try
         {
+            var authenticationState = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+            if (!await CurrentUserAuthorization.CanEditOrganizationAsync(authenticationState.User))
+            {
+                _errorMessage = "Your session or organization-management permissions changed. Sign in again or contact an administrator.";
+                Snackbar.Add(_errorMessage, Severity.Error);
+                return;
+            }
+
             if (Id is int id)
             {
                 await OrganizationService.UpdateBranchAsync(id, new UpdateBranchRequest(

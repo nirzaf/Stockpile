@@ -27,6 +27,7 @@ public static class IdentityExtensions
             serviceProvider.GetRequiredService<TenantContext>());
         services.AddSingleton<HostTenantResolver>();
         services.AddScoped<AdminBootstrapService>();
+        services.AddScoped<CurrentUserAuthorization>();
 
         services.AddIdentity<ApplicationUser, IdentityRole>(options =>
         {
@@ -66,6 +67,8 @@ public static class IdentityExtensions
                 return SecurityStampValidator.ValidatePrincipalAsync(context);
             };
         });
+        services.Configure<SecurityStampValidatorOptions>(options =>
+            options.ValidationInterval = TimeSpan.FromMinutes(1));
 
         var jwtSettings = configuration.GetSection("JwtSettings");
         var secretKey = jwtSettings["Secret"];

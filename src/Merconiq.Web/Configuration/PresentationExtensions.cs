@@ -3,6 +3,7 @@ using Asp.Versioning;
 using Merconiq.Core.Diagnostics;
 using Merconiq.Infrastructure.Data;
 using Merconiq.Web.Security;
+using Microsoft.AspNetCore.Components.Authorization;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.OpenApi;
 using MudBlazor.Services;
@@ -37,6 +38,7 @@ public static class PresentationExtensions
         services.AddControllersWithViews();
         services.AddRazorPages();
         services.AddRazorComponents().AddInteractiveServerComponents();
+        services.AddScoped<AuthenticationStateProvider, TenantAwareAuthenticationStateProvider>();
 
         services.AddApiVersioning(options =>
         {
