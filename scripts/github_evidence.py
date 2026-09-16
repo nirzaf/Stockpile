@@ -233,8 +233,16 @@ def collect_report(
     if not resolved_sha and default_branch:
         try:
             branch, _ = client.get("default-branch", f"{API_ROOT}{repo_path}/branches/{default_branch}")
-            resolved_sha = branch.get("commit", {}).get("sha")
-            sha_source = "public default-branch metadata"
+            commit = branch.get("commit") if isinstance(branch, dict) else None
+            candidate_sha = commit.get("sha") if isinstance(commit, dict) else None
+            if isinstance(candidate_sha, str) and SHA_PATTERN.fullmatch(candidate_sha):
+                resolved_sha = candidate_sha
+                sha_source = "public default-branch metadata"
+            else:
+                if client.queries and client.queries[-1]["name"] == "default-branch":
+                    client.queries[-1].update(
+                        {"status": "error", "error": "unusable default-branch metadata: missing full commit SHA"}
+                    )
         except GitHubRequestError:
             resolved_sha = None
 
@@ -247,7 +255,7 @@ def collect_report(
     commits, commits_error = client.paginate(
         "commits",
         f"{repo_path}/commits",
-        {"since": format_timestamp(start), "until": format_timestamp(end), "per_page": "100"},
+        {"per_page": "100"},
     )
 
     action_runs: list[dict[str, Any]] = []
