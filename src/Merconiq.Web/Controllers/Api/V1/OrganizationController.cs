@@ -5,6 +5,7 @@ using Merconiq.Core.Models;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
+using Merconiq.Web.Security;
 
 namespace Merconiq.Web.Controllers.Api.V1;
 
@@ -31,7 +32,7 @@ public sealed class OrganizationController(IOrganizationService organization) : 
     }
 
     [HttpPost("companies")]
-    [Authorize(Roles = "Admin,Manager")]
+    [Authorize(Policy = CapabilityPolicies.Edit)]
     public async Task<IActionResult> CreateCompany([FromBody] CreateCompanyRequest request)
     {
         var company = await organization.CreateCompanyAsync(request);
@@ -40,7 +41,7 @@ public sealed class OrganizationController(IOrganizationService organization) : 
     }
 
     [HttpPut("companies/{id:int}")]
-    [Authorize(Roles = "Admin,Manager")]
+    [Authorize(Policy = CapabilityPolicies.Edit)]
     public async Task<IActionResult> UpdateCompany(int id, [FromBody] UpdateCompanyRequest request)
     {
         await organization.UpdateCompanyAsync(id, request);
@@ -62,7 +63,7 @@ public sealed class OrganizationController(IOrganizationService organization) : 
     }
 
     [HttpPost("branches")]
-    [Authorize(Roles = "Admin,Manager")]
+    [Authorize(Policy = CapabilityPolicies.Edit)]
     public async Task<IActionResult> CreateBranch([FromBody] CreateBranchRequest request)
     {
         var branch = await organization.CreateBranchAsync(request);
@@ -71,7 +72,7 @@ public sealed class OrganizationController(IOrganizationService organization) : 
     }
 
     [HttpPut("branches/{id:int}")]
-    [Authorize(Roles = "Admin,Manager")]
+    [Authorize(Policy = CapabilityPolicies.Edit)]
     public async Task<IActionResult> UpdateBranch(int id, [FromBody] UpdateBranchRequest request)
     {
         await organization.UpdateBranchAsync(id, request);
@@ -79,7 +80,7 @@ public sealed class OrganizationController(IOrganizationService organization) : 
     }
 
     [HttpPut("locations/{locationId:int}/branch")]
-    [Authorize(Roles = "Admin,Manager")]
+    [Authorize(Policy = CapabilityPolicies.Edit)]
     public async Task<IActionResult> AssignLocationBranch(int locationId, [FromBody] AssignLocationBranchRequest request)
     {
         await organization.AssignLocationBranchAsync(locationId, request.BranchId);
