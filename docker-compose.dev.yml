@@ -11,18 +11,18 @@ services:
       - "127.0.0.1:8080:8080"
       - "127.0.0.1:5000:5000"
     volumes:
-      - ./Merconiq.Web:/src/Merconiq.Web:ro
-      - ./Merconiq.Core:/src/Merconiq.Core:ro
-      - ./Merconiq.Infrastructure:/src/Merconiq.Infrastructure:ro
+      - ./src/Merconiq.Web:/src/src/Merconiq.Web:ro
+      - ./src/Merconiq.Core:/src/src/Merconiq.Core:ro
+      - ./src/Merconiq.Infrastructure:/src/src/Merconiq.Infrastructure:ro
       - app-logs:/app/logs
     develop:
       watch:
         - action: rebuild
-          path: ./Merconiq.Web
+          path: ./src/Merconiq.Web
         - action: rebuild
-          path: ./Merconiq.Core
+          path: ./src/Merconiq.Core
         - action: rebuild
-          path: ./Merconiq.Infrastructure
+          path: ./src/Merconiq.Infrastructure
 
 volumes:
   app-logs:

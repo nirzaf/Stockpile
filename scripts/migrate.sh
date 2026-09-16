@@ -2,8 +2,8 @@
 set -euo pipefail
 
 MIGRATION_NAME="${1:-InitialCreate}"
-PROJECT_DIR="Merconiq.Infrastructure"
-STARTUP_DIR="Merconiq.Web"
+PROJECT_DIR="src/Merconiq.Infrastructure"
+STARTUP_DIR="src/Merconiq.Web"
 
 echo "=== Adding migration: $MIGRATION_NAME ==="
 dotnet ef migrations add "$MIGRATION_NAME" \

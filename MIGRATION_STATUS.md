@@ -70,18 +70,18 @@ and ongoing dependency updates.
 dotnet build
 
 # Run application
-cd Merconiq.Web
+cd src/Merconiq.Web
 dotnet run
 
 # Add migration
 dotnet ef migrations add MigrationName \
-  --project Merconiq.Infrastructure \
-  --startup-project Merconiq.Web
+  --project src/Merconiq.Infrastructure \
+  --startup-project src/Merconiq.Web
 
 # Update database
 dotnet ef database update \
-  --project Merconiq.Infrastructure \
-  --startup-project Merconiq.Web
+  --project src/Merconiq.Infrastructure \
+  --startup-project src/Merconiq.Web
 
 # Run tests
 dotnet test

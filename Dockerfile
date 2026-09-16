@@ -4,14 +4,14 @@ WORKDIR /src
 
 # Copy solution and project files for layer caching
 COPY Merconiq.sln .
-COPY Merconiq.Web/Merconiq.Web.csproj Merconiq.Web/
-COPY Merconiq.Core/Merconiq.Core.csproj Merconiq.Core/
-COPY Merconiq.Infrastructure/Merconiq.Infrastructure.csproj Merconiq.Infrastructure/
-COPY Merconiq.Tests/Merconiq.Tests.csproj Merconiq.Tests/
+COPY src/Merconiq.Web/Merconiq.Web.csproj src/Merconiq.Web/
+COPY src/Merconiq.Core/Merconiq.Core.csproj src/Merconiq.Core/
+COPY src/Merconiq.Infrastructure/Merconiq.Infrastructure.csproj src/Merconiq.Infrastructure/
+COPY tests/Merconiq.Tests/Merconiq.Tests.csproj tests/Merconiq.Tests/
 
 # Restore the production web graph and the forecast verification graph.
-RUN dotnet restore Merconiq.Web/Merconiq.Web.csproj
-RUN dotnet restore Merconiq.Tests/Merconiq.Tests.csproj
+RUN dotnet restore src/Merconiq.Web/Merconiq.Web.csproj
+RUN dotnet restore tests/Merconiq.Tests/Merconiq.Tests.csproj
 
 # Copy remaining source
 COPY . .
@@ -19,7 +19,7 @@ COPY . .
 # Verify the deployment-compatible forecast implementation inside the Linux build
 # container before producing the runtime image. This prevents a green image build
 # from masking a platform-specific forecast regression.
-RUN dotnet test Merconiq.Tests/Merconiq.Tests.csproj \
+RUN dotnet test tests/Merconiq.Tests/Merconiq.Tests.csproj \
     --configuration Release --no-restore \
     --filter "FullyQualifiedName~DemandForecastServiceTests"
 

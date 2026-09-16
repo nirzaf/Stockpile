@@ -2,14 +2,14 @@ FROM mcr.microsoft.com/dotnet/sdk:10.0.300 AS migrator
 WORKDIR /src
 
 COPY Merconiq.sln .
-COPY Merconiq.Web/Merconiq.Web.csproj Merconiq.Web/
-COPY Merconiq.Core/Merconiq.Core.csproj Merconiq.Core/
-COPY Merconiq.Infrastructure/Merconiq.Infrastructure.csproj Merconiq.Infrastructure/
+COPY src/Merconiq.Web/Merconiq.Web.csproj src/Merconiq.Web/
+COPY src/Merconiq.Core/Merconiq.Core.csproj src/Merconiq.Core/
+COPY src/Merconiq.Infrastructure/Merconiq.Infrastructure.csproj src/Merconiq.Infrastructure/
 
-RUN dotnet restore Merconiq.Web/Merconiq.Web.csproj
+RUN dotnet restore src/Merconiq.Web/Merconiq.Web.csproj
 RUN dotnet tool install --global dotnet-ef --version 10.0.9
 ENV PATH="/root/.dotnet/tools:${PATH}"
 
 COPY . .
 
-ENTRYPOINT ["dotnet", "ef", "database", "update", "--project", "Merconiq.Infrastructure", "--startup-project", "Merconiq.Web"]
+ENTRYPOINT ["dotnet", "ef", "database", "update", "--project", "src/Merconiq.Infrastructure", "--startup-project", "src/Merconiq.Web"]
