@@ -1,3 +1,4 @@
+using System.Globalization;
 using Merconiq.Core.Entities;
 using Merconiq.Core.Interfaces;
 using Merconiq.Infrastructure.Data;
@@ -19,6 +20,18 @@ public sealed class DocumentNumberService(InventoryDbContext context, IUnitOfWor
         string? allocated = null;
         await unitOfWork.ExecuteInTransactionAsync(async () =>
         {
+            if (context.Database.ProviderName == "Npgsql.EntityFrameworkCore.PostgreSQL")
+            {
+                // Row locks cannot protect the not-yet-created sequence row. A transaction-scoped
+                // advisory lock serializes the initial insert and all later allocations for this
+                // tenant/company/type/period tuple without holding a process-local lock.
+                var lockKey = string.Create(CultureInfo.InvariantCulture,
+                    $"{context.CurrentTenantId}\u001f{companyId}\u001f{documentType}\u001f{period}");
+                await context.Database.ExecuteSqlInterpolatedAsync(
+                    $"SELECT pg_advisory_xact_lock(hashtextextended({lockKey}, 0))",
+                    cancellationToken);
+            }
+
             var sequence = await context.DocumentNumberSequences
                 .SingleOrDefaultAsync(item => item.CompanyId == companyId &&
                     item.DocumentType == documentType && item.Period == period, cancellationToken);
