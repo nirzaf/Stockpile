@@ -15,7 +15,7 @@ namespace Merconiq.Web.Controllers.Api.V1;
 [Produces("application/json")]
 [Authorize(Policy = "Api")]
 [EnableRateLimiting("Api")]
-public sealed class OrganizationController(IOrganizationService organization) : ControllerBase
+public sealed class OrganizationController(IOrganizationService organization, IMasterDataImportService imports) : ControllerBase
 {
     [HttpGet("companies")]
     public async Task<IActionResult> GetCompanies([FromQuery] string? search) =>
@@ -85,6 +85,16 @@ public sealed class OrganizationController(IOrganizationService organization) : 
     {
         await organization.AssignLocationBranchAsync(locationId, request.BranchId);
         return NoContent();
+    }
+
+    [HttpPost("units/import")]
+    [Authorize(Policy = CapabilityPolicies.Edit)]
+    public async Task<IActionResult> ImportUnits([FromBody] ImportUnitsRequest request, CancellationToken cancellationToken)
+    {
+        var result = await imports.ImportUnitsAsync(request, cancellationToken);
+        return result.Rejected > 0
+            ? UnprocessableEntity(result)
+            : Ok(ApiResponse<ImportUnitsResult>.CreateSuccess(result));
     }
 
     private static CompanyResponse ToResponse(Company company) =>
