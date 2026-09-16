@@ -1,4 +1,4 @@
-# Stockpile pilot validation kit
+# Merconiq pilot validation kit
 
 This is a consent-aware synthetic walkthrough for an operator or first-time
 contributor. It is a test script and feedback form, not evidence that a real
@@ -11,7 +11,7 @@ sales records, or other private business data.
   synthetic data to show the workflow.
 - **Evaluation deployment:** an explicitly approved disposable or sandbox
   instance used to collect structured feedback.
-- **Sustained production use:** an owner-approved business uses Stockpile in
+- **Sustained production use:** an owner-approved business uses Merconiq in
   day-to-day operations and independently decides whether to continue.
 
 These are different outcomes. A demonstration or evaluation must not be called

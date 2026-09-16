@@ -1,15 +1,15 @@
 FROM mcr.microsoft.com/dotnet/sdk:10.0.300 AS migrator
 WORKDIR /src
 
-COPY InventoryManagementSystem.sln .
-COPY InventoryManagementSystem.Web/InventoryManagementSystem.Web.csproj InventoryManagementSystem.Web/
-COPY InventoryManagementSystem.Core/InventoryManagementSystem.Core.csproj InventoryManagementSystem.Core/
-COPY InventoryManagementSystem.Infrastructure/InventoryManagementSystem.Infrastructure.csproj InventoryManagementSystem.Infrastructure/
+COPY Merconiq.sln .
+COPY Merconiq.Web/Merconiq.Web.csproj Merconiq.Web/
+COPY Merconiq.Core/Merconiq.Core.csproj Merconiq.Core/
+COPY Merconiq.Infrastructure/Merconiq.Infrastructure.csproj Merconiq.Infrastructure/
 
-RUN dotnet restore InventoryManagementSystem.Web/InventoryManagementSystem.Web.csproj
+RUN dotnet restore Merconiq.Web/Merconiq.Web.csproj
 RUN dotnet tool install --global dotnet-ef --version 10.0.9
 ENV PATH="/root/.dotnet/tools:${PATH}"
 
 COPY . .
 
-ENTRYPOINT ["dotnet", "ef", "database", "update", "--project", "InventoryManagementSystem.Infrastructure", "--startup-project", "InventoryManagementSystem.Web"]
+ENTRYPOINT ["dotnet", "ef", "database", "update", "--project", "Merconiq.Infrastructure", "--startup-project", "Merconiq.Web"]

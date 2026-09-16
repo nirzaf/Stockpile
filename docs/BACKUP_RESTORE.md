@@ -1,6 +1,6 @@
 # Backup and restore runbook
 
-This runbook describes a disposable PostgreSQL recovery check for Stockpile. It
+This runbook describes a disposable PostgreSQL recovery check for Merconiq. It
 does not authorize a production restore. Always replace the example container
 and volume names with an explicitly disposable target before running a destructive
 command.
@@ -31,15 +31,15 @@ export PGPASSFILE="$(mktemp)"
 chmod 600 "$PGPASSFILE"
 printf '%s:%s:%s:%s:%s\n' "$PGHOST" "$PGPORT" "$PGDATABASE" "$PGUSER" "$DB_PASSWORD" > "$PGPASSFILE"
 BACKUP_DIR="$(mktemp -d)"
-pg_dump --format=custom --file="$BACKUP_DIR/stockpile.dump" "$PGDATABASE"
-pg_restore --list "$BACKUP_DIR/stockpile.dump" > "$BACKUP_DIR/manifest.txt"
+pg_dump --format=custom --file="$BACKUP_DIR/merconiq.dump" "$PGDATABASE"
+pg_restore --list "$BACKUP_DIR/merconiq.dump" > "$BACKUP_DIR/manifest.txt"
 ```
 
 Record the database commit/schema version, UTC timestamp, database name, dump
 format, and file checksum. Remove the temporary password file after the check:
 
 ```bash
-sha256sum "$BACKUP_DIR/stockpile.dump"
+sha256sum "$BACKUP_DIR/merconiq.dump"
 rm -f "$PGPASSFILE"
 ```
 
@@ -49,12 +49,12 @@ Create a fresh database with a name that cannot be mistaken for the live target.
 Do not use `--clean` or `--create` against a shared or production database:
 
 ```bash
-export PGDATABASE=stockpile_restore_check
+export PGDATABASE=merconiq_restore_check
 createdb "$PGDATABASE"
-pg_restore --exit-on-error --no-owner --dbname="$PGDATABASE" "$BACKUP_DIR/stockpile.dump"
+pg_restore --exit-on-error --no-owner --dbname="$PGDATABASE" "$BACKUP_DIR/merconiq.dump"
 ```
 
-Start a Stockpile instance configured to use this database, apply no destructive
+Start a Merconiq instance configured to use this database, apply no destructive
 cleanup to the source database, and verify representative data through a fresh
 application scope or the authenticated API:
 
@@ -75,7 +75,7 @@ After all assertions are captured, remove only the named disposable database and
 temporary files:
 
 ```bash
-dropdb --if-exists stockpile_restore_check
+dropdb --if-exists merconiq_restore_check
 rm -rf "$BACKUP_DIR"
 ```
 

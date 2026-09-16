@@ -1,0 +1,22 @@
+{
+  "ConnectionStrings": {
+    "DefaultConnection": ""
+  },
+  "Logging": {
+    "LogLevel": {
+      "Default": "Information",
+      "Microsoft.AspNetCore": "Warning"
+    }
+  },
+  "Cors": {
+    "AllowedOrigins": [
+      "https://localhost:7214",
+      "http://localhost:5069"
+    ]
+  },
+  "JwtSettings": {
+    "Secret": "",
+    "Issuer": "Merconiq",
+    "Audience": "Merconiq"
+  }
+}
