@@ -1,8 +1,14 @@
 using FluentAssertions;
 using InventoryManagementSystem.Core.Entities;
+using InventoryManagementSystem.Core.Services;
 using InventoryManagementSystem.Infrastructure.Data;
 using InventoryManagementSystem.Infrastructure.Repositories;
+using InventoryManagementSystem.Infrastructure.Services;
+using InventoryManagementSystem.Tests.Infrastructure;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
+using Moq;
 
 namespace InventoryManagementSystem.Tests.Integration;
 
@@ -146,6 +152,75 @@ public sealed class PostgreSqlIntegrationTests
 
         await using var verify = _fixture.CreateContext("transaction-tenant");
         (await verify.Items.CountAsync(item => item.ItemCode == itemCode)).Should().Be(0);
+    }
+
+    [PostgreSqlFact]
+    public async Task Low_stock_delivery_is_persisted_after_the_operation_scope_is_disposed()
+    {
+        _fixture.EnsureEnabled();
+        var tenantId = Unique("low-stock-tenant");
+        var tenant = new TestTenantContext(tenantId);
+        int itemId;
+        int locationId;
+
+        await using (var setup = _fixture.CreateContext(tenantId))
+        {
+            var item = new Item
+            {
+                ItemCode = Unique("LOW-STOCK"),
+                Description = "Low-stock integration fixture",
+                Rate = 10m,
+                ReorderLevel = 10
+            };
+            var location = new Location { Name = Unique("low-stock-location") };
+            setup.Items.Add(item);
+            setup.Locations.Add(location);
+            await setup.SaveChangesAsync();
+
+            setup.StockInHand.Add(new StockInHand
+            {
+                ItemId = item.Id,
+                LocationId = location.Id,
+                Quantity = 15
+            });
+            setup.WebhookSubscriptions.Add(new WebhookSubscription
+            {
+                TenantId = tenantId,
+                EventType = "Stock.Low",
+                Url = "https://hooks.example.test/low-stock"
+            });
+            await setup.SaveChangesAsync();
+            itemId = item.Id;
+            locationId = location.Id;
+        }
+
+        using var services = new ServiceCollection().BuildServiceProvider();
+        var httpClientFactory = new Mock<IHttpClientFactory>();
+        await using (var operation = _fixture.CreateContext(tenantId))
+        {
+            var dispatcher = new WebhookDispatcher(
+                services,
+                httpClientFactory.Object,
+                NullLogger<WebhookDispatcher>.Instance,
+                operation);
+            var stockService = new StockService(
+                new Repository<StockInHand>(operation),
+                new Repository<StockTransaction>(operation),
+                new Repository<Item>(operation),
+                new UnitOfWork(operation),
+                dispatcher,
+                tenant,
+                NullLogger<StockService>.Instance);
+
+            await stockService.SellStockAsync(itemId, locationId, 5, "reorder threshold");
+        }
+
+        await using var verify = _fixture.CreateContext(tenantId);
+        var delivery = await verify.WebhookDeliveries
+            .SingleAsync(item => item.EventType == "Stock.Low");
+        delivery.TenantId.Should().Be(tenantId);
+        delivery.Status.Should().Be(WebhookDeliveryStatus.Pending);
+        delivery.Payload.Should().Contain("\"TotalStock\":10");
     }
 
     [PostgreSqlFact]

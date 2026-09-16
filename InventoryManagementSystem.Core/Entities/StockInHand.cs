@@ -15,6 +15,9 @@ public class StockInHand : AuditableEntity
     /// <summary>The current quantity of this item at this location.</summary>
     public int Quantity { get; set; }
 
+    /// <summary>PostgreSQL xmin value used for optimistic concurrency checks.</summary>
+    public uint Version { get; set; }
+
     /// <summary>Optional batch or lot identifier for regulated inventory.</summary>
     public string? BatchNumber { get; set; }
 
