@@ -50,6 +50,9 @@ Configure the database password and JWT signing key in the untracked `.env` befo
 running the local development command. The development path does not provision an
 administrator; use the explicit production bootstrap path for that operation. No
 default credentials are committed.
+For production, set the explicit bootstrap administrator credentials in `.env` and follow
+the production migration and bootstrap commands in the README. Normal production web
+startup does not seed users or sample data.
 
 > For full installation, configuration, and deployment instructions, see the [README on GitHub](https://github.com/nirzaf/Stockpile/blob/master/README.md).
 
