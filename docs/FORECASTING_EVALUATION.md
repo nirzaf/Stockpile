@@ -1,6 +1,6 @@
 # Forecasting evaluation
 
-Stockpile reports the configured forecasting implementation in every forecast
+Merconiq reports the configured forecasting implementation in every forecast
 result. The default is `managed-moving-average`: it repeats the mean daily sell
 quantity across the requested horizon. ML.NET SSA is an explicit `ssa` opt-in and
 must not be described as the default or as validated business-impact evidence.
@@ -10,7 +10,7 @@ See [Forecasting runtime](FORECASTING_RUNTIME.md) for deployment prerequisites.
 
 The test
 `ForecastingEvaluation_UsesChronologicalHoldoutAndReportsBaseline` in
-`InventoryManagementSystem.Tests/Core/Services/DemandForecastServiceTests.cs`
+`Merconiq.Tests/Core/Services/DemandForecastServiceTests.cs`
 uses eight daily observations:
 
 | Split | Values | Count |
@@ -28,7 +28,7 @@ the fact that no holdout values are used to produce the prediction.
 Run the focused evaluation with the pinned SDK:
 
 ```bash
-dotnet test InventoryManagementSystem.Tests/InventoryManagementSystem.Tests.csproj \
+dotnet test Merconiq.Tests/Merconiq.Tests.csproj \
   --configuration Release --filter "FullyQualifiedName~ForecastingEvaluation_UsesChronologicalHoldoutAndReportsBaseline"
 ```
 

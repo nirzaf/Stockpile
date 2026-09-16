@@ -18,7 +18,7 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE: ghcr.io/nirzaf/inventorymanagementsystem
+  IMAGE: ghcr.io/nirzaf/merconiq
 
 permissions:
   contents: read
@@ -106,7 +106,7 @@ jobs:
             type=semver,pattern={{major}},value=${{ steps.candidate.outputs.candidate_tag }},enable=${{ steps.candidate.outputs.candidate_kind == 'tag' }}
             type=raw,value=latest,enable=${{ github.event_name != 'workflow_dispatch' && github.ref == 'refs/heads/master' }}
           labels: |
-            org.opencontainers.image.title=Inventory Management System
+            org.opencontainers.image.title=Merconiq
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.revision=${{ steps.candidate.outputs.candidate_sha }}
             org.opencontainers.image.licenses=MIT
