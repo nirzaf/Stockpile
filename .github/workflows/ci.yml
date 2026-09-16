@@ -48,6 +48,9 @@ jobs:
       - name: Restore
         run: dotnet restore
 
+      - name: Validate architecture boundaries
+        run: ./scripts/validate-architecture.sh
+
       - name: Build
         # Surface CS1591 (missing XML doc) warnings so any undocumented public API
         # is visible in the CI log. Warnings do not fail the build; a separate
