@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# === Inventory Management System — Production Deployment ===
+# === Merconiq — Production Deployment ===
 # Usage: ./scripts/deploy.sh [--build] [--migrate]
 # Prerequisites: Docker + Docker Compose installed on target host
 
@@ -25,7 +25,7 @@ for arg in "$@"; do
     esac
 done
 
-echo "=== Inventory Management System — Deployment ==="
+echo "=== Merconiq — Deployment ==="
 
 # Load .env if present
 if [ -f .env ]; then

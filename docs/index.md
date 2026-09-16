@@ -1,17 +1,17 @@
 ---
 layout: default
-title: Inventory Management System — Documentation
-description: End-user guide and documentation for the Inventory Management System.
+title: Merconiq — Documentation
+description: End-user guide and documentation for the Merconiq.
 ---
 
-# 📦 Stockpile — Documentation
+# 📦 Merconiq — Documentation
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://github.com/nirzaf/Stockpile/blob/master/LICENSE)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://github.com/nirzaf/merconiq/blob/master/LICENSE)
 [![.NET](https://img.shields.io/badge/.NET-10-purple.svg)](https://dotnet.microsoft.com/)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-blue.svg)](https://www.postgresql.org/)
 [![Docker](https://img.shields.io/badge/Docker-ready-2496ED.svg)](https://www.docker.com/)
 
-Welcome to the documentation site for **Stockpile** — a modern inventory management web app for tracking items, stock levels, purchase orders, suppliers, and locations.
+Welcome to the documentation site for **Merconiq** — a modern inventory management web app for tracking items, stock levels, purchase orders, suppliers, and locations.
 
 ---
 
@@ -20,21 +20,21 @@ Welcome to the documentation site for **Stockpile** — a modern inventory manag
 | Guide | Audience | Description |
 |-------|----------|-------------|
 | **[User Guide](USER_GUIDE.md)** | End users (Admin, Manager, Staff) | How to use the app day-to-day: login, items, stock operations, purchase orders, troubleshooting. |
-| **[README](https://github.com/nirzaf/Stockpile/blob/master/README.md)** | Developers & operators | Installation, architecture, API reference, deployment. |
-| **[CHANGELOG](https://github.com/nirzaf/Stockpile/blob/master/CHANGELOG.md)** | Everyone | Version history and release notes. |
-| **[Contributing](https://github.com/nirzaf/Stockpile/blob/master/CONTRIBUTING.md)** | Contributors | How to file issues, open PRs, and follow the project's coding standards. |
-| **[Security](https://github.com/nirzaf/Stockpile/blob/master/SECURITY.md)** | Operators | Security policy and how to report vulnerabilities. |
+| **[README](https://github.com/nirzaf/merconiq/blob/master/README.md)** | Developers & operators | Installation, architecture, API reference, deployment. |
+| **[CHANGELOG](https://github.com/nirzaf/merconiq/blob/master/CHANGELOG.md)** | Everyone | Version history and release notes. |
+| **[Contributing](https://github.com/nirzaf/merconiq/blob/master/CONTRIBUTING.md)** | Contributors | How to file issues, open PRs, and follow the project's coding standards. |
+| **[Security](https://github.com/nirzaf/merconiq/blob/master/SECURITY.md)** | Operators | Security policy and how to report vulnerabilities. |
 | **[Funding and OSS Eligibility](FUNDING_ELIGIBILITY.md)** | Maintainers | Source-dated public ledger for OSS programs, owner gates, and provider confirmation status. |
 
 ---
 
 ## 🚀 Quick start
 
-The fastest way to try IMS is with Docker:
+The fastest way to try Merconiq is with Docker:
 
 ```bash
-git clone https://github.com/nirzaf/Stockpile.git
-cd stockpile
+git clone https://github.com/nirzaf/merconiq.git
+cd merconiq
 cp .env.example .env        # set database and JWT values for local evaluation
 ./scripts/validate-compose.sh development
 docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --wait
@@ -55,11 +55,11 @@ For production, set the explicit bootstrap administrator credentials in `.env` a
 the production migration and bootstrap commands in the README. Normal production web
 startup does not seed users or sample data.
 
-> For full installation, configuration, and deployment instructions, see the [README on GitHub](https://github.com/nirzaf/Stockpile/blob/master/README.md).
+> For full installation, configuration, and deployment instructions, see the [README on GitHub](https://github.com/nirzaf/merconiq/blob/master/README.md).
 
 ---
 
-## ✨ What can IMS do?
+## ✨ What can Merconiq do today?
 
 - **Items** — full CRUD with codes, barcodes, prices, and suppliers.
 - **Stock** — receive, transfer, and sell with a complete transaction history.
@@ -82,7 +82,7 @@ This site is a **GitHub Pages** site served from the `/docs` folder of the repos
 4. Select the branch (`master` or `main`) and the **`/docs`** folder.
 5. Click **Save**. Your site will be live at:
    ```
-   https://<your-username>.github.io/InventoryManagementSystem/
+   https://<your-username>.github.io/merconiq/
    ```
    within a minute or two.
 
@@ -93,11 +93,11 @@ For a custom domain, see [the GitHub Pages docs](https://docs.github.com/en/page
 ## 🧭 Where to next?
 
 - **I'm using the app for the first time** → start with the [User Guide](USER_GUIDE.md).
-- **I'm installing or operating the app** → read the [README](https://github.com/nirzaf/Stockpile/blob/master/README.md).
-- **I want to integrate with the API** → see the [API Reference](https://github.com/nirzaf/Stockpile/blob/master/README.md#api-reference).
-- **I want to report a bug or suggest a feature** → open an [issue](https://github.com/nirzaf/Stockpile/issues/new).
-- **I want to contribute code** → read [CONTRIBUTING.md](https://github.com/nirzaf/Stockpile/blob/master/CONTRIBUTING.md).
+- **I'm installing or operating the app** → read the [README](https://github.com/nirzaf/merconiq/blob/master/README.md).
+- **I want to integrate with the API** → see the [API Reference](https://github.com/nirzaf/merconiq/blob/master/README.md#api-reference).
+- **I want to report a bug or suggest a feature** → open an [issue](https://github.com/nirzaf/merconiq/issues/new).
+- **I want to contribute code** → read [CONTRIBUTING.md](https://github.com/nirzaf/merconiq/blob/master/CONTRIBUTING.md).
 
 ---
 
-*Built with .NET 10, ASP.NET Core, MudBlazor, PostgreSQL, MediatR, and ML.NET. Released under the [MIT License](https://github.com/nirzaf/Stockpile/blob/master/LICENSE).*
+*Built with .NET 10, ASP.NET Core, MudBlazor, PostgreSQL, MediatR, and ML.NET. Released under the [MIT License](https://github.com/nirzaf/merconiq/blob/master/LICENSE).*
