@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using FluentAssertions;
 using InventoryManagementSystem.Core.Entities;
+using InventoryManagementSystem.Core.Interfaces;
 using InventoryManagementSystem.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -231,20 +232,22 @@ public class PurchaseOrderWorkflowTests : IClassFixture<CustomWebApplicationFact
             item = new Item { ItemCode = "PO-ITEM", Description = "PO item", Rate = 25m, SupplierId = supplier.Id };
             db.Items.Add(item);
 
-            var po = new PurchaseOrder
+            var poService = scope.ServiceProvider.GetRequiredService<IPurchaseOrderService>();
+            var po = await poService.CreateAsync(new PurchaseOrder
             {
                 PONumber = $"PO-{Guid.NewGuid():N}".Substring(0, 15),
                 SupplierId = supplier.Id,
-                Status = PurchaseOrderStatus.Pending,
-                OrderDate = DateTime.UtcNow,
-                TotalAmount = 250m
-            };
-            db.PurchaseOrders.Add(po);
-            await db.SaveChangesAsync();
+            },
+            [new OrderDetail { ItemId = item.Id, Quantity = 10, UnitPrice = 25m }]);
 
-            // Verify PO exists with correct status
-            var savedPo = await db.PurchaseOrders.FirstAsync(p => p.SupplierId == supplier.Id);
+            // Verify the service-computed PO exists with correct status
+            var savedPo = await db.PurchaseOrders
+                .Include(p => p.OrderDetails)
+                .AsNoTracking()
+                .FirstAsync(p => p.Id == po.Id);
             savedPo.Status.Should().Be(PurchaseOrderStatus.Pending);
+            savedPo.TotalAmount.Should().Be(250m);
+            savedPo.OrderDetails.Should().ContainSingle(detail => detail.Quantity == 10 && detail.UnitPrice == 25m);
         }
     }
 
@@ -257,23 +260,49 @@ public class PurchaseOrderWorkflowTests : IClassFixture<CustomWebApplicationFact
         db.Suppliers.Add(supplier);
         await db.SaveChangesAsync();
 
-        var po = new PurchaseOrder
+        var poService = scope.ServiceProvider.GetRequiredService<IPurchaseOrderService>();
+        var po = await poService.CreateAsync(new PurchaseOrder
         {
             PONumber = $"PO-{Guid.NewGuid():N}".Substring(0, 15),
             SupplierId = supplier.Id,
-            Status = PurchaseOrderStatus.Pending,
-            OrderDate = DateTime.UtcNow,
-            TotalAmount = 100m
-        };
-        db.PurchaseOrders.Add(po);
-        await db.SaveChangesAsync();
+        }, []);
 
         // Update status
-        po.Status = PurchaseOrderStatus.Approved;
+        await poService.UpdateStatusAsync(po.Id, nameof(PurchaseOrderStatus.Approved));
+
+        var updated = await db.PurchaseOrders.AsNoTracking().FirstAsync(p => p.Id == po.Id);
+        updated.Status.Should().Be(PurchaseOrderStatus.Approved);
+    }
+
+    [Fact]
+    public async Task POStatusTransitions_InvalidStatus_IsRejectedByTheService()
+    {
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<InventoryDbContext>();
+        var supplier = new Supplier { Name = $"PO-SUP-INVALID-{Guid.NewGuid():N}"[..20] };
+        db.Suppliers.Add(supplier);
         await db.SaveChangesAsync();
 
-        var updated = await db.PurchaseOrders.FirstAsync(p => p.Id == po.Id);
-        updated.Status.Should().Be(PurchaseOrderStatus.Approved);
+        var poService = scope.ServiceProvider.GetRequiredService<IPurchaseOrderService>();
+        var po = await poService.CreateAsync(new PurchaseOrder
+        {
+            PONumber = $"PO-{Guid.NewGuid():N}"[..15],
+            SupplierId = supplier.Id
+        }, []);
+
+        await FluentActions.Invoking(() => poService.UpdateStatusAsync(po.Id, "NotAStatus"))
+            .Should().ThrowAsync<ArgumentException>();
+    }
+
+    [Fact]
+    public async Task POStatusTransitions_MissingOrder_IsRejectedByTheService()
+    {
+        using var scope = _factory.Services.CreateScope();
+        var poService = scope.ServiceProvider.GetRequiredService<IPurchaseOrderService>();
+
+        await FluentActions.Invoking(() => poService.UpdateStatusAsync(int.MaxValue, nameof(PurchaseOrderStatus.Approved)))
+            .Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("Purchase order not found");
     }
 
     [Fact]
@@ -290,23 +319,21 @@ public class PurchaseOrderWorkflowTests : IClassFixture<CustomWebApplicationFact
         db.Items.AddRange(item1, item2);
         await db.SaveChangesAsync();
 
-        var po = new PurchaseOrder
+        var poService = scope.ServiceProvider.GetRequiredService<IPurchaseOrderService>();
+        var po = await poService.CreateAsync(new PurchaseOrder
         {
             PONumber = $"PO-{Guid.NewGuid():N}".Substring(0, 15),
             SupplierId = supplier.Id,
-            Status = PurchaseOrderStatus.Pending,
-            OrderDate = DateTime.UtcNow,
-            TotalAmount = 0m
-        };
-        db.PurchaseOrders.Add(po);
-        await db.SaveChangesAsync();
+        },
+        [
+            new OrderDetail { ItemId = item1.Id, Quantity = 5, UnitPrice = 10m },
+            new OrderDetail { ItemId = item2.Id, Quantity = 3, UnitPrice = 20m }
+        ]);
 
-        po.OrderDetails.Add(new OrderDetail { PurchaseOrderId = po.Id, ItemId = item1.Id, Quantity = 5, UnitPrice = 10m });
-        po.OrderDetails.Add(new OrderDetail { PurchaseOrderId = po.Id, ItemId = item2.Id, Quantity = 3, UnitPrice = 20m });
-        po.TotalAmount = 5 * 10m + 3 * 20m; // 110
-        await db.SaveChangesAsync();
-
-        var saved = await db.PurchaseOrders.FirstAsync(p => p.Id == po.Id);
+        var saved = await db.PurchaseOrders
+            .Include(p => p.OrderDetails)
+            .AsNoTracking()
+            .FirstAsync(p => p.Id == po.Id);
         saved.TotalAmount.Should().Be(110m);
         saved.OrderDetails.Should().HaveCount(2);
     }
@@ -320,21 +347,16 @@ public class PurchaseOrderWorkflowTests : IClassFixture<CustomWebApplicationFact
         db.Suppliers.Add(supplier);
         await db.SaveChangesAsync();
 
-        var po = new PurchaseOrder
+        var poService = scope.ServiceProvider.GetRequiredService<IPurchaseOrderService>();
+        var po = await poService.CreateAsync(new PurchaseOrder
         {
             PONumber = $"PO-{Guid.NewGuid():N}".Substring(0, 15),
             SupplierId = supplier.Id,
-            Status = PurchaseOrderStatus.Draft,
-            OrderDate = DateTime.UtcNow,
-            TotalAmount = 0m
-        };
-        db.PurchaseOrders.Add(po);
-        await db.SaveChangesAsync();
+        }, []);
 
-        db.PurchaseOrders.Remove(po);
-        await db.SaveChangesAsync();
+        await poService.DeleteAsync(po.Id);
 
-        var deleted = await db.PurchaseOrders.AnyAsync(p => p.Id == po.Id);
+        var deleted = await db.PurchaseOrders.AsNoTracking().AnyAsync(p => p.Id == po.Id);
         deleted.Should().BeFalse();
     }
 }
