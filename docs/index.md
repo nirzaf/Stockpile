@@ -27,6 +27,7 @@ Welcome to the documentation site for **Merconiq** — a modern inventory manage
 | **[Funding and OSS Eligibility](FUNDING_ELIGIBILITY.md)** | Maintainers | Source-dated public ledger for OSS programs, owner gates, and provider confirmation status. |
 | **[Public GitHub evidence](GITHUB_EVIDENCE.md)** | Maintainers | Export dated, query-traceable maintenance signals with explicit unknowns. |
 | **[Readiness baseline](READINESS_BASELINE.md)** | Maintainers | Current SHA, SPF/SFR reconciliation, source checks, and milestone dependencies. |
+| **[Architecture boundaries](ARCHITECTURE.md)** | Developers | Modular-monolith ownership, dependency direction, and extension rules. |
 
 ---
 
