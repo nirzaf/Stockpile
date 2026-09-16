@@ -9,8 +9,6 @@ services:
       POSTGRES_PASSWORD: ${DB_PASSWORD}
     volumes:
       - pgdata:/var/lib/postgresql/data
-    ports:
-      - "${DB_PORT:-5432}:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres}"]
       interval: 5s
@@ -24,7 +22,7 @@ services:
     container_name: inventory-app
     restart: unless-stopped
     environment:
-      - ASPNETCORE_ENVIRONMENT=${ASPNETCORE_ENVIRONMENT:-Production}
+      - ASPNETCORE_ENVIRONMENT=Production
       - DISABLE_HTTPS=true
       - ConnectionStrings__DefaultConnection=Host=db;Database=${DB_NAME:-InventoryDB};Username=${DB_USER:-postgres};Password=${DB_PASSWORD}
       - JwtSettings__Secret=${JWT_SECRET:?Set JWT_SECRET in .env}
