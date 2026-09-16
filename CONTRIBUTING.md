@@ -38,15 +38,24 @@ Please read and follow our [Code of Conduct](CODE_OF_CONDUCT.md).
    dotnet build --no-restore --configuration Release
    dotnet test --no-build --configuration Release
    ```
+   The repository pins the SDK to exactly **.NET 10.0.300** in `global.json` (`rollForward` is disabled); install that SDK before running these commands. A generic .NET 10 installation is not sufficient.
 6. **Run the PostgreSQL phase** when a change involves relational constraints, transactions, concurrency, persistence boundaries, migrations, or API behavior that depends on PostgreSQL:
    ```bash
    RUN_POSTGRES_TESTS=true dotnet test InventoryManagementSystem.Tests/InventoryManagementSystem.Tests.csproj \
      --no-build --configuration Release --filter "Category=PostgreSQL"
    ```
-   The PostgreSQL phase uses Testcontainers to create a disposable PostgreSQL instance, so a working Docker-compatible daemon is required; a locally installed PostgreSQL server alone is not sufficient for this command. InMemory tests are useful for fast unit coverage, but a skipped or InMemory-only test does not prove PostgreSQL behavior. Confirm that the PostgreSQL phase actually ran.
+   The PostgreSQL phase uses Testcontainers to create a disposable `postgres:16-alpine` instance, so Docker must be installed and running in Linux-container mode; a locally installed PostgreSQL server alone is not sufficient for this command. InMemory tests are useful for fast unit coverage, but a skipped or InMemory-only test does not prove PostgreSQL behavior. Confirm that the PostgreSQL phase actually ran.
    The command above uses POSIX shell syntax. In PowerShell, set the environment variable for the command explicitly:
    ```powershell
-   $env:RUN_POSTGRES_TESTS = "true"; dotnet test InventoryManagementSystem.Tests/InventoryManagementSystem.Tests.csproj --no-build --configuration Release --filter "Category=PostgreSQL"
+   $previousRunPostgresTests = $env:RUN_POSTGRES_TESTS
+   try {
+     $env:RUN_POSTGRES_TESTS = "true"
+     dotnet test InventoryManagementSystem.Tests/InventoryManagementSystem.Tests.csproj --no-build --configuration Release --filter "Category=PostgreSQL"
+   }
+   finally {
+     if ($null -eq $previousRunPostgresTests) { Remove-Item Env:RUN_POSTGRES_TESTS -ErrorAction SilentlyContinue }
+     else { $env:RUN_POSTGRES_TESTS = $previousRunPostgresTests }
+   }
    ```
 7. **Inspect** `git diff --check`, the changed-file list, and the complete diff. Do not commit secrets, dumps, coverage output, or transient logs.
 8. **Commit** with descriptive conventional-commit messages.
@@ -70,7 +79,16 @@ An eyes reaction or a posted review request only means that a review may be runn
 
 For every material finding, inspect the full thread, reproduce or substantiate it, make the smallest valid fix, rerun relevant tests, push the new head, and request a fresh review for that new SHA. Record accepted and rejected dispositions with evidence; do not weaken tests or close a concern merely by resolving its thread.
 
-Before merging, verify the current head and base, acceptance criteria, complete diff, required checks, completed current-head Codex review, resolved actionable findings, required approvals, and a usable merge state. Use the repository's normal merge strategy with an expected-head guard. Never use an admin/bypass merge, disable checks, force-push, or lower an approval requirement. Preserve any applicable owner approval or confirmation-codeword rule; do not invent one.
+Before merging, verify the current head and base, acceptance criteria, complete diff, required checks, completed current-head Codex review, resolved actionable findings, required approvals, and a usable merge state. Use the repository's normal merge strategy with GitHub's expected-head guard:
+
+```bash
+REVIEWED_HEAD="<FULL_REVIEWED_HEAD_SHA>"
+CURRENT_HEAD="$(gh pr view <PR_NUMBER> --repo nirzaf/stockpile --json headRefOid --jq '.headRefOid')"
+test "$CURRENT_HEAD" = "$REVIEWED_HEAD" || exit 1
+gh pr merge <PR_NUMBER> --repo nirzaf/stockpile --squash --match-head-commit "$REVIEWED_HEAD"
+```
+
+The `--match-head-commit` option makes the merge fail if the PR changed after review. Never use an admin/bypass merge, disable checks, force-push, or lower an approval requirement. Preserve any applicable owner approval or confirmation-codeword rule; do not invent one.
 
 After merging, verify that GitHub reports `MERGED`, record the merge commit, fetch `master`, and check its post-merge CI health before starting the next issue. A queued merge, green check, or review reaction is not proof of completion.
 
