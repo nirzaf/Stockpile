@@ -2,61 +2,145 @@ name: Release
 
 on:
   push:
-    tags: ["v[0-9]+.[0-9]+.[0-9]+*"]
+    tags: ["v*"]
   workflow_dispatch:
     inputs:
       tag:
-        description: "Existing tag to release (e.g. v1.2.3)"
+        description: "Existing semver tag to release (e.g. v1.2.3)"
         required: true
+      dry_run:
+        description: "Validate the candidate without creating a GitHub Release"
+        required: false
+        type: boolean
+        default: false
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE: ghcr.io/nirzaf/inventorymanagementsystem
 
 permissions:
   contents: write
+  actions: read
   packages: read
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-${{ inputs.tag || github.ref }}
   cancel-in-progress: false
 
 jobs:
   release:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
+      - name: Checkout workflow revision
         uses: actions/checkout@v7
         with:
+          ref: ${{ github.sha }}
           fetch-depth: 0
 
-      - name: Resolve tag
-        id: tag
+      - name: Resolve exact release candidate SHA
+        id: candidate
+        env:
+          CANDIDATE_REF: ${{ inputs.tag || github.ref }}
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_SHA: ${{ github.sha }}
         run: |
-          TAG="${{ github.event.inputs.tag || github.ref_name }}"
-          VERSION="${TAG#v}"
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          if echo "$TAG" | grep -q -- '-'; then
-            echo "is_prerelease=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "is_prerelease=false" >> "$GITHUB_OUTPUT"
-          fi
+          git fetch --force --prune origin \
+            '+refs/heads/*:refs/remotes/origin/*' \
+            '+refs/tags/*:refs/tags/*'
+          scripts/resolve-release-candidate.sh \
+            --remote origin \
+            --ref "$CANDIDATE_REF" \
+            --mode release \
+            --event-name "$EVENT_NAME" \
+            --event-sha "$EVENT_SHA" \
+            --github-output "$GITHUB_OUTPUT"
+
+      - name: Checkout exact release candidate
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ steps.candidate.outputs.candidate_sha }}
+          fetch-depth: 0
+
+      - name: Revalidate tag before release checks
+        env:
+          CANDIDATE_REF: ${{ steps.candidate.outputs.candidate_ref }}
+          CANDIDATE_SHA: ${{ steps.candidate.outputs.candidate_sha }}
+        run: |
+          remote_sha="$(git ls-remote origin "$CANDIDATE_REF" "$CANDIDATE_REF^{}" \
+            | awk -v ref="$CANDIDATE_REF" '$2 == ref { direct = $1 } $2 == ref "^{}" { peeled = $1 } END { print peeled ? peeled : direct }')"
+          [[ "$remote_sha" == "$CANDIDATE_SHA" ]] || {
+            echo "release tag moved during validation: expected $CANDIDATE_SHA, found $remote_sha" >&2
+            exit 1
+          }
+          git cat-file -e "$CANDIDATE_SHA^{commit}"
+
+      - name: Require successful validation for exact candidate
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CANDIDATE_SHA: ${{ steps.candidate.outputs.candidate_sha }}
+        run: scripts/wait-for-validated-sha.sh --repository "$GITHUB_REPOSITORY" --sha "$CANDIDATE_SHA"
+
+      - name: Set up Docker Buildx
+        if: inputs.dry_run != true
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GitHub Container Registry
+        if: inputs.dry_run != true
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify Docker candidate images
+        if: inputs.dry_run != true
+        env:
+          CANDIDATE_SHA: ${{ steps.candidate.outputs.candidate_sha }}
+          CANDIDATE_TAG: ${{ steps.candidate.outputs.candidate_tag }}
+        run: |
+          for image in \
+            "${IMAGE}:sha-${CANDIDATE_SHA}" \
+            "${IMAGE}:${CANDIDATE_TAG}"; do
+            verified=false
+            for attempt in $(seq 1 18); do
+              if docker buildx imagetools inspect "$image" >/dev/null 2>&1; then
+                verified=true
+                break
+              fi
+              sleep 10
+            done
+            [[ "$verified" == "true" ]] || {
+              echo "Docker candidate image is not available: $image" >&2
+              exit 1
+            }
+          done
 
       - name: Generate changelog
         id: changelog
         uses: actions/github-script@v9
+        env:
+          RELEASE_TAG: ${{ steps.candidate.outputs.candidate_tag }}
+          RELEASE_SHA: ${{ steps.candidate.outputs.candidate_sha }}
+          IMAGE: ${{ env.IMAGE }}
         with:
           script: |
-            const { execSync } = require('child_process');
-            const tag = '${{ steps.tag.outputs.tag }}';
-            const tags = execSync('git tag --sort=-v:refname', { encoding: 'utf8' })
+            const { execFileSync } = require('child_process');
+            const tag = process.env.RELEASE_TAG;
+            const sha = process.env.RELEASE_SHA;
+            const image = process.env.IMAGE;
+            const tags = execFileSync('git', ['tag', '--sort=-v:refname'], { encoding: 'utf8' })
               .split('\n').filter(t => /^v\d+\.\d+\.\d+/.test(t));
             const idx = tags.indexOf(tag);
             const prev = idx >= 0 && idx + 1 < tags.length ? tags[idx + 1] : null;
             const range = prev ? `${prev}..${tag}` : tag;
-            const log = execSync(
-              `git log ${range} --pretty=format:"- %s (%h) by %an" --no-merges`,
+            const log = execFileSync(
+              'git', ['log', range, '--pretty=format:- %s (%h) by %an', '--no-merges'],
               { encoding: 'utf8' }
             );
             const body = [
               `## What's changed in ${tag}`,
+              '',
+              `Candidate commit: \`${sha}\``,
               '',
               prev ? `Full diff: \`${prev}..${tag}\`` : 'Initial release.',
               '',
@@ -65,19 +149,46 @@ jobs:
               '',
               '### Docker image',
               '```',
-              `docker pull ghcr.io/nirzaf/inventorymanagementsystem:${tag}`,
-              `docker pull ghcr.io/nirzaf/inventorymanagementsystem:latest`,
+              `docker pull ${image}:sha-${sha}`,
+              `docker pull ${image}:${tag}`,
               '```',
               '',
-              '_Auto-generated by the Release workflow._',
+              '_Auto-generated by the Release workflow after exact-candidate validation._',
             ].join('\n');
             core.setOutput('body', body);
 
+      - name: Final exact tag gate
+        env:
+          CANDIDATE_REF: ${{ steps.candidate.outputs.candidate_ref }}
+          CANDIDATE_SHA: ${{ steps.candidate.outputs.candidate_sha }}
+        run: |
+          remote_sha="$(git ls-remote origin "$CANDIDATE_REF" "$CANDIDATE_REF^{}" \
+            | awk -v ref="$CANDIDATE_REF" '$2 == ref { direct = $1 } $2 == ref "^{}" { peeled = $1 } END { print peeled ? peeled : direct }')"
+          [[ "$remote_sha" == "$CANDIDATE_SHA" ]] || {
+            echo "release tag moved before publication: expected $CANDIDATE_SHA, found $remote_sha" >&2
+            exit 1
+          }
+
       - name: Create GitHub Release
+        if: inputs.dry_run != true
         uses: softprops/action-gh-release@v3
         with:
-          tag_name: ${{ steps.tag.outputs.tag }}
-          name: ${{ steps.tag.outputs.tag }}
+          tag_name: ${{ steps.candidate.outputs.candidate_tag }}
+          name: ${{ steps.candidate.outputs.candidate_tag }}
           body: ${{ steps.changelog.outputs.body }}
           fail_on_unmatched_files: true
-          prerelease: ${{ steps.tag.outputs.is_prerelease == 'true' }}
+          prerelease: ${{ steps.candidate.outputs.candidate_prerelease == 'true' }}
+
+      - name: Expose result
+        run: |
+          {
+            if [[ "${{ inputs.dry_run }}" == "true" ]]; then
+              echo "## Release dry run"
+              echo "No registry login or GitHub Release was created."
+            else
+              echo "## GitHub Release created"
+            fi
+            echo "Candidate: ${{ steps.candidate.outputs.candidate_sha }}"
+            echo "Tag: ${{ steps.candidate.outputs.candidate_tag }}"
+            echo "Immutable image: ${{ env.IMAGE }}:sha-${{ steps.candidate.outputs.candidate_sha }}"
+          } >> "$GITHUB_STEP_SUMMARY"
