@@ -33,19 +33,23 @@ The fastest way to try IMS is with Docker:
 
 ```bash
 git clone https://github.com/nirzaf/Stockpile.git
-cd InventoryManagementSystem
-cp .env.example .env        # edit credentials if desired
+cd stockpile
+cp .env.example .env        # set database and JWT values for local evaluation
 ./scripts/validate-compose.sh development
 docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --wait
 ```
 
 The app will be available at **http://localhost:8080**.
 The development Compose file is selected explicitly; it enables Development
-mode and publishes PostgreSQL only for local tooling. Set `DB_PASSWORD`,
-`JWT_SECRET` before running the quiet configuration check; set `ADMIN_EMAIL`
-and `ADMIN_PASSWORD` as well when using the Development seed administrator.
+mode and publishes PostgreSQL only for local tooling. Set `DB_PASSWORD` and
+`JWT_SECRET` before running the configuration check. Development startup does
+not provision an administrator; use the explicit production bootstrap path for
+that operation.
 
-Configure the administrator credentials and JWT signing key in `.env` before starting. No default credentials are committed.
+Configure the database password and JWT signing key in the untracked `.env` before
+running the local development command. The development path does not provision an
+administrator; use the explicit production bootstrap path for that operation. No
+default credentials are committed.
 
 > For full installation, configuration, and deployment instructions, see the [README on GitHub](https://github.com/nirzaf/Stockpile/blob/master/README.md).
 
