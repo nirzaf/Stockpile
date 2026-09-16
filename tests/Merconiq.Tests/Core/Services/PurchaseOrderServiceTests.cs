@@ -157,6 +157,42 @@ public class PurchaseOrderServiceTests
     }
 
     [Fact]
+    public async Task UpdateStatusAsync_WhenDraftMovesToPending_UpdatesOrderStatus()
+    {
+        var po = _fixture.Build<PurchaseOrder>()
+            .With(p => p.Status, PurchaseOrderStatus.Draft)
+            .Create();
+        _poRepoMock.Setup(r => r.GetByIdAsync(po.Id)).ReturnsAsync(po);
+
+        await _sut.UpdateStatusAsync(po.Id, nameof(PurchaseOrderStatus.Pending));
+
+        po.Status.Should().Be(PurchaseOrderStatus.Pending);
+        _poRepoMock.Verify(r => r.UpdateAsync(po), Times.Once);
+    }
+
+    [Theory]
+    [InlineData(PurchaseOrderStatus.Pending, PurchaseOrderStatus.Received)]
+    [InlineData(PurchaseOrderStatus.Approved, PurchaseOrderStatus.Submitted)]
+    [InlineData(PurchaseOrderStatus.Received, PurchaseOrderStatus.Cancelled)]
+    [InlineData(PurchaseOrderStatus.Cancelled, PurchaseOrderStatus.Pending)]
+    public async Task UpdateStatusAsync_WhenTransitionIsNotAllowed_RejectsWithoutMutation(
+        PurchaseOrderStatus current,
+        PurchaseOrderStatus requested)
+    {
+        var po = _fixture.Build<PurchaseOrder>().With(p => p.Status, current).Create();
+        _poRepoMock.Setup(r => r.GetByIdAsync(po.Id)).ReturnsAsync(po);
+
+        var act = async () => await _sut.UpdateStatusAsync(po.Id, requested.ToString());
+
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage($"Invalid purchase order status transition: {current} -> {requested}");
+        po.Status.Should().Be(current);
+        _poRepoMock.Verify(r => r.UpdateAsync(It.IsAny<PurchaseOrder>()), Times.Never);
+        _uowMock.Verify(u => u.SaveChangesAsync(default), Times.Never);
+        _webhookDispatcherMock.Invocations.Should().BeEmpty();
+    }
+
+    [Fact]
     public async Task UpdateStatusAsync_WhenStatusChanges_QueuesNotification()
     {
         // Arrange
