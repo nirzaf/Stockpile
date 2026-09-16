@@ -13,6 +13,8 @@ using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
@@ -68,6 +70,10 @@ internal sealed class PostgreSqlItemApiFactory(PostgreSqlIntegrationFixture fixt
         builder.UseSetting("JwtSettings:Secret", TestJwtSecret);
         builder.ConfigureTestServices(services =>
         {
+            // This factory exercises the item API only. Do not let unrelated hosted workers
+            // claim shared PostgreSQL deliveries and stop the TestServer during the test.
+            services.RemoveAll<IHostedService>();
+
             services.AddDbContext<InventoryDbContext>(options => options.UseNpgsql(fixture.ConnectionString));
             services.AddScoped<TenantContext>(_ =>
             {
