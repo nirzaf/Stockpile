@@ -54,6 +54,14 @@ jobs:
         # effort (TreatWarningsAsErrors on CS1591) can be enabled later.
         run: dotnet build --no-restore --configuration Release /warnaserror:-
 
+      - name: Validate Compose contracts
+        env:
+          DB_PASSWORD: ci-compose-db-password
+          JWT_SECRET: ci-compose-jwt-secret-with-at-least-32-bytes
+          ADMIN_EMAIL: ci-admin@example.com
+          ADMIN_PASSWORD: ci-compose-admin-password
+        run: ./scripts/validate-compose.sh
+
       - name: Test with coverage
         run: |
           dotnet test --no-build --configuration Release \
