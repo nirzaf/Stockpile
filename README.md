@@ -1,17 +1,17 @@
-# Stockpile
+# Merconiq
 
-> Inventory Management System for Supermarkets and Small Shops
+> Open-source business management platform evolving from inventory and procurement into a modular ERP.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![.NET](https://img.shields.io/badge/.NET-10-purple.svg)](https://dotnet.microsoft.com/)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-blue.svg)](https://www.postgresql.org/)
 [![Docker](https://img.shields.io/badge/Docker-ready-2496ED.svg)](https://www.docker.com/)
 
-A modern inventory management web application for tracking items, stock levels, purchase orders, suppliers, and locations. Built with Clean Architecture, CQRS, and a mobile-first UI — runs anywhere.
+Merconiq is an open-source business management platform built with .NET and PostgreSQL. It is evolving from a robust inventory and procurement foundation toward a modular ERP platform for small and growing businesses.
 
 ## Documentation
 
-- **🌐 [Live docs site](https://nirzaf.github.io/stockpile/)** — published via GitHub Pages from the `docs/` folder. The recommended place for end users.
+- **🌐 [Live docs site](https://nirzaf.github.io/merconiq/)** — published via GitHub Pages from the `docs/` folder. The recommended place for end users.
 - **[User Guide](docs/USER_GUIDE.md)** — for the people who will *use* the application day-to-day (login, items, stock operations, purchase orders, troubleshooting).
 - **README.md** (this file) — for developers and operators: installation, architecture, API, deployment.
 
@@ -34,16 +34,18 @@ A modern inventory management web application for tracking items, stock levels, 
 | Testing | xUnit, Moq, FluentAssertions, AutoFixture, EF Core InMemory |
 | CI/CD | GitHub Actions + GHCR |
 
+## Available today
+
 ## Repository Layout
 
 The repository contains only the maintained web application and its supporting projects:
 
-- `InventoryManagementSystem.Core` — domain entities, services, validators, and CQRS handlers
-- `InventoryManagementSystem.Infrastructure` — EF Core persistence, migrations and integrations
-- `InventoryManagementSystem.Web` — ASP.NET Core API and Blazor UI
-- `InventoryManagementSystem.Tests` — unit and integration tests
+- `Merconiq.Core` — domain entities, services, validators, and CQRS handlers
+- `Merconiq.Infrastructure` — EF Core persistence and integrations
+- `Merconiq.Web` — ASP.NET Core API and Blazor UI
+- `Merconiq.Tests` — unit and integration tests
 
-The former `InventoryManagementSystem/` WinForms source tree was removed from the repository;
+The former `Merconiq/` WinForms source tree was removed from the repository;
 it is not part of the supported build or deployment path.
 
 **Inventory Management**
@@ -72,13 +74,20 @@ it is not part of the supported build or deployment path.
 **PDF Reports**
 - QuestPDF for generating purchase orders and stock reports
 
+## ERP roadmap
+
+Merconiq's planned platform domains include Accounting, CRM, Sales, Human
+Resources, Payroll, Manufacturing, Assets, Projects, Point of Sale, and
+Integrations. These are roadmap areas, not claims of currently implemented
+functionality.
+
 ## Quick Start
 
 ### Docker local development
 
 ```bash
-git clone https://github.com/nirzaf/stockpile.git
-cd stockpile
+git clone https://github.com/nirzaf/merconiq.git
+cd merconiq
 cp .env.example .env        # edit credentials if desired
 ./scripts/validate-compose.sh development
 docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --wait
@@ -91,10 +100,6 @@ watch configuration. Set `DB_PASSWORD`, `JWT_SECRET`, `ADMIN_EMAIL`, and
 `ADMIN_PASSWORD` in `.env` when using the Development seed administrator;
 `validate-compose.sh` validates required database/JWT values without printing
 the resolved secrets.
-
-This is the local Development path. The override is selected explicitly and publishes
-development ports for local tooling; it is not a production deployment. Normal startup
-does not create an administrator; use the explicit production bootstrap path below.
 
 Swagger UI is available at **http://localhost:8080/swagger** in the Development environment for interactive API exploration.
 
@@ -113,8 +118,8 @@ export ConnectionStrings__DefaultConnection="Host=localhost;Database=InventoryDB
 export JwtSettings__Secret="$JWT_SECRET"
 
 # 3. Apply migrations and start the development application
-dotnet ef database update --project InventoryManagementSystem.Infrastructure --startup-project InventoryManagementSystem.Web
-cd InventoryManagementSystem.Web
+dotnet ef database update --project Merconiq.Infrastructure --startup-project Merconiq.Web
+cd Merconiq.Web
 dotnet run
 ```
 
@@ -123,19 +128,19 @@ Open the HTTP URL printed by `dotnet run` (this repository's launch profile uses
 For local Development runs, configure the database connection and JWT secret with ASP.NET User Secrets instead of committing them:
 
 ```bash
-dotnet user-secrets init --project InventoryManagementSystem.Web
-dotnet user-secrets set "ConnectionStrings:DefaultConnection" "Host=localhost;Database=InventoryDB;Username=postgres;Password=<local-password>" --project InventoryManagementSystem.Web
-dotnet user-secrets set "JwtSettings:Secret" "<at-least-32-byte-local-secret>" --project InventoryManagementSystem.Web
-dotnet user-secrets set "BootstrapAdmin:TenantId" "default" --project InventoryManagementSystem.Web
-dotnet user-secrets set "BootstrapAdmin:Email" "<admin-email>" --project InventoryManagementSystem.Web
-dotnet user-secrets set "BootstrapAdmin:Password" "<admin-password>" --project InventoryManagementSystem.Web
+dotnet user-secrets init --project Merconiq.Web
+dotnet user-secrets set "ConnectionStrings:DefaultConnection" "Host=localhost;Database=InventoryDB;Username=postgres;Password=<local-password>" --project Merconiq.Web
+dotnet user-secrets set "JwtSettings:Secret" "<at-least-32-byte-local-secret>" --project Merconiq.Web
+dotnet user-secrets set "BootstrapAdmin:TenantId" "default" --project Merconiq.Web
+dotnet user-secrets set "BootstrapAdmin:Email" "<admin-email>" --project Merconiq.Web
+dotnet user-secrets set "BootstrapAdmin:Password" "<admin-password>" --project Merconiq.Web
 ```
 
 Run the one-shot bootstrap before the first login, then start the web application normally:
 
 ```bash
-dotnet run --project InventoryManagementSystem.Web -- --bootstrap-admin
-dotnet run --project InventoryManagementSystem.Web
+dotnet run --project Merconiq.Web -- --bootstrap-admin
+dotnet run --project Merconiq.Web
 ```
 
 ## API Reference
@@ -146,12 +151,8 @@ All endpoints are prefixed with `/api/v1`.
 |--------|----------|-------------|
 | `GET` | `/items` | List all items |
 | `GET` | `/items/{id}` | Get item by ID |
-| `GET` | `/items/search?q=...` | Search items |
-| `GET` | `/stock/in-hand` | List all stock in hand |
-| `GET` | `/stock/transactions` | List stock transactions |
+| `GET` | `/stock` | List all stock in hand |
 | `POST` | `/stock/receive` | Receive stock |
-| `POST` | `/stock/transfer` | Transfer stock |
-| `POST` | `/stock/sell` | Sell stock |
 | `GET` | `/forecast/{itemId}` | Demand forecast for an item |
 | `GET` | `/forecast` | Forecast all items |
 | `GET` | `/anomalies` | Detect stock anomalies |
@@ -159,24 +160,24 @@ All endpoints are prefixed with `/api/v1`.
 ## Project Structure
 
 ```
-InventoryManagementSystem.Web/          # ASP.NET Core MVC + API
+Merconiq.Web/          # ASP.NET Core MVC + API
 ├── Controllers/                        # MVC controllers (Items, Stock, Suppliers, etc.)
 │   └── Api/V1/                         # Versioned API controllers
 ├── Views/                              # MudBlazor Razor views
 ├── Program.cs                          # App entry point + DI configuration
 
-InventoryManagementSystem.Core/         # Domain layer
+Merconiq.Core/         # Domain layer
 ├── Entities/                           # Item, StockTransaction, Supplier, Location, etc.
 ├── Interfaces/                         # IItemService, IStockService, IUnitOfWork, etc.
 ├── Services/                           # Business logic + ML.NET AI services
 ├── Features/                           # MediatR CQRS (Commands, Queries, Handlers)
 └── Models/                             # DTOs (DemandForecastResult, StockAnomaly)
 
-InventoryManagementSystem.Infrastructure/ # Data access
-├── Data/                               # DbContext, migrations and tenant bootstrap
+Merconiq.Infrastructure/ # Data access
+├── Data/                               # DbContext, migrations, seed data
 └── Repositories/                       # Generic Repository<T> implementation
 
-InventoryManagementSystem.Tests/        # xUnit test suite
+Merconiq.Tests/        # xUnit test suite
 ├── Core/Services/                      # Service unit tests
 ├── Core/Handlers/                      # MediatR handler tests
 ├── Web/Controllers/                    # Controller tests
@@ -189,8 +190,8 @@ InventoryManagementSystem.Tests/        # xUnit test suite
 dotnet build                              # build solution
 dotnet test                               # run all tests
 dotnet ef migrations add MigrationName    # add migration
-  --project InventoryManagementSystem.Infrastructure
-  --startup-project InventoryManagementSystem.Web
+  --project Merconiq.Infrastructure
+  --startup-project Merconiq.Web
 ```
 
 ### Multi-operation transactions
@@ -263,8 +264,8 @@ Every push and pull request to `master` runs an automated pipeline, and tagged r
 | Workflow | File | Trigger | Purpose |
 |----------|------|---------|---------|
 | **CI** | [`.github/workflows/ci.yml`](.github/workflows/ci.yml) | PR + push to `master` | Restore → build → run xUnit tests with coverage → upload `coverage-report` artifact. |
-| **Docker** | [`.github/workflows/docker.yml`](.github/workflows/docker.yml) | Push to `master` & `v*.*.*` tags; manual candidate validation | Resolves and revalidates one exact commit, then builds the multi-arch image (`linux/amd64`, `linux/arm64`) → `ghcr.io/nirzaf/inventorymanagementsystem` with an immutable `sha-<full-commit>` tag plus branch/semver aliases. Manual dry runs do not log in or push. |
-| **GitHub Pages** | [`.github/workflows/pages.yml`](.github/workflows/pages.yml) | Push to `master` (when `docs/**` changes) | Deploys the `/docs` folder to `https://nirzaf.github.io/Stockpile/`. |
+| **Docker** | [`.github/workflows/docker.yml`](.github/workflows/docker.yml) | Push to `master` & `v*.*.*` tags; manual candidate validation | Resolves and revalidates one exact commit, then builds the multi-arch image (`linux/amd64`, `linux/arm64`) → `ghcr.io/nirzaf/merconiq` with an immutable `sha-<full-commit>` tag plus branch/semver aliases. Manual dry runs do not log in or push. |
+| **GitHub Pages** | [`.github/workflows/pages.yml`](.github/workflows/pages.yml) | Push to `master` (when `docs/**` changes) | Deploys the `/docs` folder to `https://nirzaf.github.io/merconiq/`. |
 | **Release** | [`.github/workflows/release.yml`](.github/workflows/release.yml) | Push of `v*.*.*` tag; manual existing-tag validation | Revalidates the exact tag commit, waits for both the immutable SHA image and semver image to exist, then cuts a GitHub Release. Manual dry runs do not create a release. |
 | **Dependabot** | [`.github/dependabot.yml`](.github/dependabot.yml) | Weekly (Mon) | Opens grouped PRs for NuGet, GitHub Actions, and Docker base-image updates. |
 
@@ -282,7 +283,7 @@ To exercise either workflow without publication, use its manual `dry_run` input.
 
 ### GitHub Pages
 
-The Pages site is built automatically from the `docs/` folder. **One-time setup on a fresh repo:** go to **Settings → Pages → Source: GitHub Actions** and save. After that, every change under `docs/**` (or to `pages.yml`) is deployed within ~1 minute. The site is available at `https://nirzaf.github.io/Stockpile/`.
+The Pages site is built automatically from the `docs/` folder. **One-time setup on a fresh repo:** go to **Settings → Pages → Source: GitHub Actions** and save. After that, every change under `docs/**` (or to `pages.yml`) is deployed within ~1 minute. The site is available at `https://nirzaf.github.io/merconiq/`.
 
 ### Coverage
 

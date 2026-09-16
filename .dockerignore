@@ -10,10 +10,9 @@
 **/packages
 **/Tests/
 **/*.Tests/
-!InventoryManagementSystem.Tests/
-!InventoryManagementSystem.Tests/**
+!Merconiq.Tests/
+!Merconiq.Tests/**
 **/TestResults
 **/*.md
 **/*.log
-InventoryManagementSystem/
 !README.md

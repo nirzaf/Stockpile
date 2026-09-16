@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <resheader name="resmimetype"><value>text/microsoft-resx</value></resheader>
+  <resheader name="version"><value>2.0</value></resheader>
+  <resheader name="reader"><value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value></resheader>
+  <resheader name="writer"><value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value></resheader>
+  <data name="Dashboard" xml:space="preserve"><value>Dashboard</value></data>
+  <data name="Items" xml:space="preserve"><value>Items</value></data>
+  <data name="Stock" xml:space="preserve"><value>Stock</value></data>
+  <data name="View Stock" xml:space="preserve"><value>View Stock</value></data>
+  <data name="Receive Stock" xml:space="preserve"><value>Receive Stock</value></data>
+  <data name="Transfer Stock" xml:space="preserve"><value>Transfer Stock</value></data>
+  <data name="Sell Stock" xml:space="preserve"><value>Sell Stock</value></data>
+  <data name="Transactions" xml:space="preserve"><value>Transactions</value></data>
+  <data name="Purchase Orders" xml:space="preserve"><value>Purchase Orders</value></data>
+  <data name="Suppliers" xml:space="preserve"><value>Suppliers</value></data>
+  <data name="Locations" xml:space="preserve"><value>Locations</value></data>
+  <data name="Merconiq" xml:space="preserve"><value>Merconiq</value></data>
+  <data name="Login" xml:space="preserve"><value>Login</value></data>
+  <data name="Logout" xml:space="preserve"><value>Logout</value></data>
+  <data name="Language" xml:space="preserve"><value>Language</value></data>
+  <data name="English" xml:space="preserve"><value>English</value></data>
+  <data name="Arabic" xml:space="preserve"><value>Arabic</value></data>
+  <data name="An unhandled error has occurred." xml:space="preserve"><value>An unhandled error has occurred.</value></data>
+  <data name="Reload" xml:space="preserve"><value>Reload</value></data>
+  <data name="Dismiss" xml:space="preserve"><value>Dismiss</value></data>
+</root>
