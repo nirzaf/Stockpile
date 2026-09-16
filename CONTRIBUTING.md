@@ -108,7 +108,12 @@ if QUEUE_RULE_RESULT="$(printf '%s' "$ACTIVE_RULESETS" | jq -e --arg base_ref "r
   def selector_matches($selector; $ref; $default):
     if $selector == "~ALL" then true
     elif $selector == "~DEFAULT_BRANCH" then $ref == ("refs/heads/" + $default)
-    elif ($selector | endswith("*")) then $ref | startswith($selector[0:-1])
+    elif ($selector | contains("*")) then
+      ($selector
+        | gsub("([\\\\.^$+?()\\[\\]{}|])"; "\\\\\\1")
+        | gsub("\\\\*"; ".*")
+        | "^" + . + "$") as $pattern
+      | $ref | test($pattern)
     else $selector == $ref
     end;
   def applies_to_base($ruleset; $ref; $default):
