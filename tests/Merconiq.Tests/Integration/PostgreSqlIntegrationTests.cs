@@ -361,7 +361,9 @@ public sealed class PostgreSqlIntegrationTests
                 new UnitOfWork(operation),
                 dispatcher,
                 tenant,
-                NullLogger<StockService>.Instance);
+                NullLogger<StockService>.Instance,
+                new Repository<StockValuationBucket>(operation),
+                new Repository<StockValuationEntry>(operation));
 
             await stockService.SellStockAsync(itemId, locationId, 5, "reorder threshold");
         }
@@ -445,7 +447,9 @@ public sealed class PostgreSqlIntegrationTests
             new UnitOfWork(context),
             new Mock<IWebhookDispatcher>().Object,
             new TestTenantContext(tenantId),
-            NullLogger<StockService>.Instance);
+            NullLogger<StockService>.Instance,
+            new Repository<StockValuationBucket>(context),
+            new Repository<StockValuationEntry>(context));
     }
 
     private static string Unique(string prefix) => $"{prefix}-{Guid.NewGuid():N}";

@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using Merconiq.Core.Interfaces;
 using Merconiq.Core.Exceptions;
+using Npgsql;
 
 namespace Merconiq.Infrastructure.Data;
 
@@ -139,6 +140,11 @@ public class UnitOfWork : IUnitOfWork
                             _context.ChangeTracker.Clear();
                             throw new ConcurrencyException("A concurrency conflict occurred during the transaction.", ex);
                         }
+                        catch (DbUpdateException ex) when (IsValuationBucketInsertConflict(ex))
+                        {
+                            _context.ChangeTracker.Clear();
+                            throw new ConcurrencyException("A concurrent transaction created the stock valuation bucket.", ex);
+                        }
                         catch
                         {
                             _context.ChangeTracker.Clear();
@@ -168,5 +174,12 @@ public class UnitOfWork : IUnitOfWork
     public void ClearTracker()
     {
         _context.ChangeTracker.Clear();
+    }
+
+    private static bool IsValuationBucketInsertConflict(DbUpdateException exception)
+    {
+        var postgresException = exception.InnerException as PostgresException;
+        return postgresException?.SqlState == PostgresErrorCodes.UniqueViolation
+            && postgresException.ConstraintName == "IX_StockValuationBuckets_TenantId_ItemId_LocationId";
     }
 }
