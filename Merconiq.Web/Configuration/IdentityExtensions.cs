@@ -39,6 +39,13 @@ public static class IdentityExtensions
         .AddEntityFrameworkStores<InventoryDbContext>()
         .AddDefaultTokenProviders();
 
+        services.Configure<IdentityOptions>(options =>
+        {
+            options.Lockout.AllowedForNewUsers = true;
+            options.Lockout.MaxFailedAccessAttempts = 5;
+            options.Lockout.DefaultLockoutTimeSpan = TimeSpan.FromMinutes(5);
+        });
+
         services.AddScoped<IUserClaimsPrincipalFactory<ApplicationUser>, TenantClaimsPrincipalFactory>();
 
         services.ConfigureApplicationCookie(options =>
