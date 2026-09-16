@@ -32,7 +32,7 @@ class FixtureTransport:
         query = parse_qs(parsed.query)
         if self.error_name and path.endswith("/contributors"):
             return 503, {"Content-Type": "application/json"}, fixture_bytes("error.json")
-        if path == "/repos/nirzaf/stockpile":
+        if path == "/repos/nirzaf/merconiq":
             return 200, {}, json.dumps(fixture("repository.json")).encode()
         if path.endswith("/branches/master"):
             return 200, {}, json.dumps({"name": "master", "commit": {"sha": SHA}}).encode()

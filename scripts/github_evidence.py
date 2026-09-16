@@ -96,7 +96,7 @@ class GitHubClient:
             method="GET",
             headers={
                 "Accept": "application/vnd.github+json",
-                "User-Agent": "stockpile-public-evidence-exporter",
+                "User-Agent": "merconiq-public-evidence-exporter",
                 "X-GitHub-Api-Version": "2022-11-28",
             },
         )
@@ -198,7 +198,7 @@ def _metric_unknowns(report: dict[str, Any]) -> list[str]:
 
 
 def collect_report(
-    repo: str = "nirzaf/stockpile",
+    repo: str = "nirzaf/merconiq",
     *,
     as_of: datetime | None = None,
     days: int = 30,
@@ -442,7 +442,7 @@ def render_markdown(report: dict[str, Any]) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--repo", default="nirzaf/stockpile", help="public repository in OWNER/NAME form")
+    parser.add_argument("--repo", default="nirzaf/merconiq", help="public repository in OWNER/NAME form")
     parser.add_argument("--as-of", help="UTC ISO date or timestamp used as the exclusive window end")
     parser.add_argument("--days", type=int, default=30, help="length of the UTC observation window")
     parser.add_argument("--head-sha", help="full commit SHA for exact CI matching; defaults to the public default branch head")
