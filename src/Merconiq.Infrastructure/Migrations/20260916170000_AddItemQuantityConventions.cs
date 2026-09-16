@@ -40,9 +40,9 @@ public partial class AddItemQuantityConventions : Migration
         migrationBuilder.CreateIndex("IX_Items_BaseUnitId", "Items", "BaseUnitId");
         migrationBuilder.CreateIndex("IX_Items_PurchaseUnitId", "Items", "PurchaseUnitId");
         migrationBuilder.CreateIndex("IX_Items_SalesUnitId", "Items", "SalesUnitId");
-        migrationBuilder.AddForeignKey("FK_Items_UnitsOfMeasure_BaseUnitId", "Items", "BaseUnitId", "UnitsOfMeasure", "Id", onDelete: ReferentialAction.Restrict);
-        migrationBuilder.AddForeignKey("FK_Items_UnitsOfMeasure_PurchaseUnitId", "Items", "PurchaseUnitId", "UnitsOfMeasure", "Id", onDelete: ReferentialAction.Restrict);
-        migrationBuilder.AddForeignKey("FK_Items_UnitsOfMeasure_SalesUnitId", "Items", "SalesUnitId", "UnitsOfMeasure", "Id", onDelete: ReferentialAction.Restrict);
+        migrationBuilder.AddForeignKey(name: "FK_Items_UnitsOfMeasure_BaseUnitId", table: "Items", column: "BaseUnitId", principalTable: "UnitsOfMeasure", principalColumn: "Id", onDelete: ReferentialAction.Restrict);
+        migrationBuilder.AddForeignKey(name: "FK_Items_UnitsOfMeasure_PurchaseUnitId", table: "Items", column: "PurchaseUnitId", principalTable: "UnitsOfMeasure", principalColumn: "Id", onDelete: ReferentialAction.Restrict);
+        migrationBuilder.AddForeignKey(name: "FK_Items_UnitsOfMeasure_SalesUnitId", table: "Items", column: "SalesUnitId", principalTable: "UnitsOfMeasure", principalColumn: "Id", onDelete: ReferentialAction.Restrict);
     }
 
     protected override void Down(MigrationBuilder migrationBuilder)
