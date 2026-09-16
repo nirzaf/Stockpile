@@ -120,32 +120,49 @@ public class UnitOfWork : IUnitOfWork
         }
 
         var strategy = _context.Database.CreateExecutionStrategy();
-        await strategy.ExecuteInTransactionAsync(
-            async transactionCancellationToken =>
+        var concurrencyRetries = 3;
+        while (true)
+        {
+            try
             {
-                _executionStrategyTransactionActive = true;
-                try
-                {
-                    await operation();
-                    await _context.SaveChangesAsync(transactionCancellationToken);
-                }
-                catch (DbUpdateConcurrencyException ex)
-                {
-                    _context.ChangeTracker.Clear();
-                    throw new ConcurrencyException("A concurrency conflict occurred during the transaction.", ex);
-                }
-                catch
-                {
-                    _context.ChangeTracker.Clear();
-                    throw;
-                }
-                finally
-                {
-                    _executionStrategyTransactionActive = false;
-                }
-            },
-            async _ => verifySucceeded is null || await verifySucceeded(),
-            cancellationToken);
+                await strategy.ExecuteInTransactionAsync(
+                    async transactionCancellationToken =>
+                    {
+                        _executionStrategyTransactionActive = true;
+                        try
+                        {
+                            await operation();
+                            await _context.SaveChangesAsync(transactionCancellationToken);
+                        }
+                        catch (DbUpdateConcurrencyException ex)
+                        {
+                            _context.ChangeTracker.Clear();
+                            throw new ConcurrencyException("A concurrency conflict occurred during the transaction.", ex);
+                        }
+                        catch
+                        {
+                            _context.ChangeTracker.Clear();
+                            throw;
+                        }
+                        finally
+                        {
+                            _executionStrategyTransactionActive = false;
+                        }
+                    },
+                    async _ => verifySucceeded is null || await verifySucceeded(),
+                    cancellationToken);
+                return;
+            }
+            catch (ConcurrencyException) when (--concurrencyRetries > 0)
+            {
+                // A concurrency failure invalidates the current attempt. Retry the
+                // complete operation in a fresh execution-strategy transaction so
+                // callers such as IdempotencyKeyStore never replay inside a failed
+                // transaction boundary.
+                _context.ChangeTracker.Clear();
+                await Task.Delay(100, cancellationToken);
+            }
+        }
     }
 
     public void ClearTracker()
