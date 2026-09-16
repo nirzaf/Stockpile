@@ -92,6 +92,7 @@ public class StockController : ControllerBase
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [Authorize(Roles = "Admin,Manager,Staff")]
+    [ValidateAntiForgeryToken]
     public async Task<IActionResult> Transfer(
         [FromBody] TransferStockCommand command,
         [FromServices] IIdempotencyKeyStore idempotencyKeyStore,
