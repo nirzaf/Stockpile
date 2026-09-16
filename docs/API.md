@@ -1,6 +1,6 @@
 # Public API conventions
 
-Stockpile exposes its public resource HTTP API through versioned MVC controllers at
+Merconiq exposes its public resource HTTP API through versioned MVC controllers at
 `/api/v1`. Resource routes, authentication, validation, response envelopes, rate
 limits, and OpenAPI metadata are defined on the controllers. Auth, webhook, and AI
 operations remain minimal endpoints because they are not duplicate resource routes.
