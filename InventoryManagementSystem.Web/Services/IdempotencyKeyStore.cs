@@ -2,7 +2,6 @@ using InventoryManagementSystem.Core.Entities;
 using InventoryManagementSystem.Core.Interfaces;
 using InventoryManagementSystem.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
-using Npgsql;
 
 namespace InventoryManagementSystem.Web.Services;
 
@@ -196,7 +195,7 @@ public sealed class IdempotencyKeyStore(
                 await context.SaveChangesAsync(cancellationToken);
                 return record;
             }
-            catch (DbUpdateException ex) when (IsUniqueConstraintViolation(ex))
+            catch (DbUpdateException ex) when (DatabaseExceptionClassifier.IsUniqueConstraintViolation(ex))
             {
                 context.ChangeTracker.Clear();
                 await Task.Delay(TimeSpan.FromMilliseconds(25), cancellationToken);
@@ -204,17 +203,4 @@ public sealed class IdempotencyKeyStore(
         }
     }
 
-    private static bool IsUniqueConstraintViolation(DbUpdateException exception)
-    {
-        for (Exception? current = exception; current is not null; current = current.InnerException)
-        {
-            if (current is PostgresException postgresException &&
-                postgresException.SqlState == PostgresErrorCodes.UniqueViolation)
-            {
-                return true;
-            }
-        }
-
-        return false;
-    }
 }
