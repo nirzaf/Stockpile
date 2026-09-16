@@ -236,9 +236,9 @@ Every push and pull request to `master` runs an automated pipeline, and tagged r
 | Workflow | File | Trigger | Purpose |
 |----------|------|---------|---------|
 | **CI** | [`.github/workflows/ci.yml`](.github/workflows/ci.yml) | PR + push to `master` | Restore → build → run xUnit tests with coverage → upload `coverage-report` artifact. |
-| **Docker** | [`.github/workflows/docker.yml`](.github/workflows/docker.yml) | Push to `master` & `v*.*.*` tags | Multi-arch build (`linux/amd64`, `linux/arm64`) → push to `ghcr.io/nirzaf/inventorymanagementsystem` with `latest`, `sha-…`, and semver tags. |
+| **Docker** | [`.github/workflows/docker.yml`](.github/workflows/docker.yml) | Push to `master` & `v*.*.*` tags; manual candidate validation | Resolves and revalidates one exact commit, then builds the multi-arch image (`linux/amd64`, `linux/arm64`) → `ghcr.io/nirzaf/inventorymanagementsystem` with an immutable `sha-<full-commit>` tag plus branch/semver aliases. Manual dry runs do not log in or push. |
 | **GitHub Pages** | [`.github/workflows/pages.yml`](.github/workflows/pages.yml) | Push to `master` (when `docs/**` changes) | Deploys the `/docs` folder to `https://nirzaf.github.io/Stockpile/`. |
-| **Release** | [`.github/workflows/release.yml`](.github/workflows/release.yml) | Push of `v*.*.*` tag | Cuts a GitHub Release with auto-generated changelog and Docker pull instructions. |
+| **Release** | [`.github/workflows/release.yml`](.github/workflows/release.yml) | Push of `v*.*.*` tag; manual existing-tag validation | Revalidates the exact tag commit, waits for both the immutable SHA image and semver image to exist, then cuts a GitHub Release. Manual dry runs do not create a release. |
 | **Dependabot** | [`.github/dependabot.yml`](.github/dependabot.yml) | Weekly (Mon) | Opens grouped PRs for NuGet, GitHub Actions, and Docker base-image updates. |
 
 ### Release flow
@@ -249,7 +249,9 @@ Every push and pull request to `master` runs an automated pipeline, and tagged r
    git tag v1.2.3
    git push origin v1.2.3
    ```
-3. The **Release** workflow creates a GitHub Release with a changelog derived from commits since the last tag, and the **Docker** workflow publishes the multi-arch image with tags `v1.2.3`, `1.2`, `1`, and `latest`.
+3. The **Release** workflow revalidates the tag’s exact commit and verifies the Docker workflow’s immutable `sha-<full-commit>` and `v1.2.3` image tags before creating a GitHub Release. The Docker workflow publishes the multi-arch image with `sha-<full-commit>`, `v1.2.3`, `1.2`, and `1`; `latest` is reserved for `master`.
+
+To exercise either workflow without publication, use its manual `dry_run` input. A manual Docker candidate may be a branch or existing tag; a manual Release candidate must be an existing `vMAJOR.MINOR.PATCH` tag. Both reject malformed refs and stale remote candidates.
 
 ### GitHub Pages
 
