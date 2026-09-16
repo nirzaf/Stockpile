@@ -96,6 +96,22 @@ if test "$CURRENT_BASE_BRANCH" != "$REVIEWED_BASE_BRANCH" || test "$CURRENT_BASE
   printf 'PR base changed: expected %s at %s, found %s at %s. Re-review before merging.\n' "$REVIEWED_BASE_BRANCH" "$REVIEWED_BASE" "$CURRENT_BASE_BRANCH" "$CURRENT_BASE"
   exit 1
 fi
+if ! ACTIVE_RULESETS="$(gh api "repos/nirzaf/stockpile/rulesets" --paginate --slurp)"; then
+  printf 'Could not inspect repository rulesets; do not merge until the target branch policy is known.\n'
+  exit 1
+fi
+if printf '%s' "$ACTIVE_RULESETS" | jq -e --arg base_ref "refs/heads/$REVIEWED_BASE_BRANCH" '
+  flatten
+  | any(.[]?;
+      .enforcement == "active"
+      and (((.conditions.ref_name.include // []) | length) == 0
+        or ((.conditions.ref_name.include // []) | index($base_ref)) != null)
+      and any(.rules[]?; .type == "merge_queue")
+    )
+' >/dev/null; then
+  printf 'The target branch requires a merge queue; stop before invoking gh pr merge.\n'
+  exit 1
+fi
 gh pr merge <PR_NUMBER> --repo nirzaf/stockpile --squash --match-head-commit "$REVIEWED_HEAD"
 ```
 
