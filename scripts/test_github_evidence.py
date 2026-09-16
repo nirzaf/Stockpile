@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import datetime
 import sys
 import unittest
 from pathlib import Path
@@ -22,9 +23,12 @@ def fixture(name: str):
 
 
 class FixtureTransport:
-    def __init__(self, *, error_name: str | None = None, empty: bool = False):
+    def __init__(self, *, error_name: str | None = None, empty: bool = False, malformed_branch: bool = False, commits=None):
         self.error_name = error_name
         self.empty = empty
+        self.malformed_branch = malformed_branch
+        self.commits = commits
+        self.commit_queries = []
 
     def __call__(self, url: str):
         parsed = urlparse(url)
@@ -35,6 +39,8 @@ class FixtureTransport:
         if path == "/repos/nirzaf/merconiq":
             return 200, {}, json.dumps(fixture("repository.json")).encode()
         if path.endswith("/branches/master"):
+            if self.malformed_branch:
+                return 200, {}, json.dumps({"name": "master", "commit": {}}).encode()
             return 200, {}, json.dumps({"name": "master", "commit": {"sha": SHA}}).encode()
         if path.endswith("/contributors"):
             if self.empty:
@@ -42,8 +48,11 @@ class FixtureTransport:
             page = query.get("page", ["1"])[0]
             headers = {"Link": f'<{API_ROOT}{path}?page=2>; rel="next"'} if page == "1" else {}
             return 200, headers, fixture_bytes(f"contributors-page-{page}.json")
-        if path.endswith("/issues") or path.endswith("/commits"):
+        if path.endswith("/issues"):
             return 200, {}, fixture_bytes("empty.json" if self.empty else "empty.json")
+        if path.endswith("/commits"):
+            self.commit_queries.append(query)
+            return 200, {}, json.dumps(self.commits or []).encode()
         if path.endswith("/actions/runs"):
             return 200, {}, fixture_bytes("workflow-runs.json" if not self.empty else "empty-runs.json")
         raise AssertionError(f"unhandled fixture URL: {url}")
@@ -56,7 +65,7 @@ def fixture_bytes(name: str) -> bytes:
 class GithubEvidenceTests(unittest.TestCase):
     def test_paginates_and_collapses_bots_and_duplicate_identities(self):
         report = collect_report(
-            as_of=__import__("datetime").datetime.fromisoformat("2026-09-16T00:00:00+00:00"),
+            as_of=datetime.datetime.fromisoformat("2026-09-16T00:00:00+00:00"),
             days=30,
             client=GitHubClient(FixtureTransport()),
         )
@@ -70,7 +79,7 @@ class GithubEvidenceTests(unittest.TestCase):
 
     def test_successful_empty_data_is_observed_zero(self):
         report = collect_report(
-            as_of=__import__("datetime").datetime.fromisoformat("2026-09-16T00:00:00+00:00"),
+            as_of=datetime.datetime.fromisoformat("2026-09-16T00:00:00+00:00"),
             client=GitHubClient(FixtureTransport(empty=True)),
         )
 
@@ -87,6 +96,39 @@ class GithubEvidenceTests(unittest.TestCase):
         self.assertIsNone(contributors["value"])
         self.assertIn("HTTP 503", contributors["reason"])
         self.assertTrue(any(item.startswith("metrics.human_contributors:") for item in report["unknowns"]))
+
+    def test_unusable_default_branch_metadata_leaves_exact_sha_unknown(self):
+        client = GitHubClient(FixtureTransport(malformed_branch=True))
+
+        report = collect_report(client=client)
+
+        self.assertEqual(report["ci"]["head_sha"]["status"], "unknown")
+        branch_query = next(query for query in report["queries"] if query["name"] == "default-branch")
+        self.assertEqual(branch_query["status"], "error")
+        self.assertIn("unusable default-branch metadata", branch_query["error"])
+
+    def test_commit_window_uses_author_date_from_unbounded_commit_query(self):
+        transport = FixtureTransport(
+            commits=[
+                {
+                    "sha": "c" * 40,
+                    "commit": {
+                        "author": {"date": "2026-09-15T12:00:00Z"},
+                        "committer": {"date": "2020-01-01T12:00:00Z"},
+                    },
+                }
+            ]
+        )
+
+        report = collect_report(
+            as_of=datetime.datetime.fromisoformat("2026-09-16T00:00:00+00:00"),
+            days=30,
+            client=GitHubClient(transport),
+        )
+
+        self.assertEqual(report["metrics"]["commits_in_window"]["value"], 1)
+        self.assertNotIn("since", transport.commit_queries[0])
+        self.assertNotIn("until", transport.commit_queries[0])
 
 
 if __name__ == "__main__":
