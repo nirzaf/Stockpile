@@ -13,8 +13,8 @@ All API endpoints first require the existing `Api` policy, which validates an au
 
 The current role-to-capability mapping is intentionally conservative and additive. Company membership and per-company capability grants remain the next authorization layer; endpoints must not infer company access from a tenant ID.
 
-Current API capability assignments include `View` for stock reads and webhook
-listing, `Post` for stock receive/transfer/sell, and `Edit` for webhook
+Current API capability assignments include `View` for item, stock and webhook
+reads, `Post` for stock receive/transfer/sell, and `Edit` for item and webhook
 create/update/delete. These named policies preserve the existing role mapping
 while keeping endpoint authorization centralized for later company-membership
 checks.

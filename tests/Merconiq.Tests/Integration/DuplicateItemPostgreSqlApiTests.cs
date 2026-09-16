@@ -95,7 +95,10 @@ internal sealed class PostgreSqlItemApiFactory(PostgreSqlIntegrationFixture fixt
         var tokenHandler = new JwtSecurityTokenHandler();
         var token = tokenHandler.CreateToken(new SecurityTokenDescriptor
         {
-            Subject = new ClaimsIdentity([new Claim("tenant_id", "test-tenant")]),
+            Subject = new ClaimsIdentity([
+                new Claim("tenant_id", "test-tenant"),
+                new Claim(ClaimTypes.Role, "Admin")
+            ]),
             Expires = DateTime.UtcNow.AddMinutes(5),
             Issuer = "Merconiq",
             Audience = "Merconiq",
