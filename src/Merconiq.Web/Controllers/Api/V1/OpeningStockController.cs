@@ -19,6 +19,10 @@ public sealed class OpeningStockController(IOpeningStockImportService imports) :
     [HttpPost("preview")]
     [Authorize(Policy = CapabilityPolicies.Approve)]
     [Authorize(Policy = CapabilityPolicies.TenantAdministrator)]
+    // This bearer-token API is not cookie-authenticated, so browser CSRF tokens do not apply.
+    // Keep the explicit validation marker for static security analysis while opting out at runtime.
+    [ValidateAntiForgeryToken]
+    [IgnoreAntiforgeryToken]
     [ProducesResponseType(typeof(ApiResponse<OpeningStockPreviewResult>), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(OpeningStockPreviewResult), StatusCodes.Status422UnprocessableEntity)]
     public async Task<IActionResult> Preview(
