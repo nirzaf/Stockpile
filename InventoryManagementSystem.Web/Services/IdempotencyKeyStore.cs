@@ -2,6 +2,7 @@ using InventoryManagementSystem.Core.Entities;
 using InventoryManagementSystem.Core.Interfaces;
 using InventoryManagementSystem.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
+using Npgsql;
 
 namespace InventoryManagementSystem.Web.Services;
 
@@ -12,8 +13,14 @@ public sealed class IdempotencyKeyStore(
 {
     private static readonly TimeSpan Retention = TimeSpan.FromHours(1);
     private static readonly TimeSpan ClaimLease = TimeSpan.FromMinutes(2);
+    private static readonly TimeSpan MaxClaimWait = TimeSpan.FromSeconds(30);
 
-    public async Task ExecuteAsync(string scope, string key, string requestHash, Func<Task> operation)
+    public async Task ExecuteAsync(
+        string scope,
+        string key,
+        string requestHash,
+        Func<Task> operation,
+        CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(scope);
         ArgumentException.ThrowIfNullOrWhiteSpace(key);
@@ -24,7 +31,7 @@ public sealed class IdempotencyKeyStore(
             throw new InvalidOperationException("A tenant context is required for idempotency.");
         }
 
-        var record = await ClaimAsync(scope, key, requestHash);
+        var record = await ClaimAsync(scope, key, requestHash, cancellationToken);
         if (record is null)
         {
             return;
@@ -38,35 +45,54 @@ public sealed class IdempotencyKeyStore(
             record.CompletedAt = DateTimeOffset.UtcNow;
             record.LeaseUntil = null;
             record.LastError = null;
-            await context.SaveChangesAsync();
+            await context.SaveChangesAsync(cancellationToken);
         }
         catch (Exception ex)
         {
+            // An operation can leave unrelated entities in the tracker before failing.
+            // Detach those changes before recording the failed claim so the failure path
+            // cannot accidentally commit a partial business mutation.
+            var recordId = record.Id;
+            context.ChangeTracker.Clear();
+            record = await context.IdempotencyRecords
+                .SingleAsync(item => item.Id == recordId, cancellationToken);
             record.Status = IdempotencyRecordStatus.Failed;
             record.LeaseUntil = null;
             record.LastError = ex.Message[..Math.Min(ex.Message.Length, 4096)];
-            await context.SaveChangesAsync();
+            await context.SaveChangesAsync(cancellationToken);
             throw;
         }
     }
 
-    private async Task<IdempotencyRecord?> ClaimAsync(string scope, string key, string requestHash)
+    private async Task<IdempotencyRecord?> ClaimAsync(
+        string scope,
+        string key,
+        string requestHash,
+        CancellationToken cancellationToken)
     {
         var now = DateTimeOffset.UtcNow;
+        var deadline = now.Add(MaxClaimWait);
         var expired = await context.IdempotencyRecords
             .Where(record => record.ExpiresAt <= now)
             .Take(100)
-            .ToListAsync();
+            .ToListAsync(cancellationToken);
         if (expired.Count > 0)
         {
             context.IdempotencyRecords.RemoveRange(expired);
-            await context.SaveChangesAsync();
+            await context.SaveChangesAsync(cancellationToken);
         }
 
         while (true)
         {
+            cancellationToken.ThrowIfCancellationRequested();
+            now = DateTimeOffset.UtcNow;
+            if (now >= deadline)
+            {
+                throw new TimeoutException("The idempotency key claim could not be acquired within the allowed wait time.");
+            }
+
             var record = await context.IdempotencyRecords
-                .SingleOrDefaultAsync(item => item.Scope == scope && item.Key == key);
+                .SingleOrDefaultAsync(item => item.Scope == scope && item.Key == key, cancellationToken);
             if (record is not null)
             {
                 if (!string.Equals(record.RequestHash, requestHash, StringComparison.Ordinal))
@@ -81,9 +107,8 @@ public sealed class IdempotencyKeyStore(
 
                 if (record.Status == IdempotencyRecordStatus.InProgress && record.LeaseUntil > now)
                 {
-                    await Task.Delay(TimeSpan.FromMilliseconds(100));
+                    await Task.Delay(TimeSpan.FromMilliseconds(100), cancellationToken);
                     context.Entry(record).State = EntityState.Detached;
-                    now = DateTimeOffset.UtcNow;
                     continue;
                 }
 
@@ -91,7 +116,7 @@ public sealed class IdempotencyKeyStore(
                 record.AttemptCount++;
                 record.LeaseUntil = now.Add(ClaimLease);
                 record.LastError = null;
-                await context.SaveChangesAsync();
+                await context.SaveChangesAsync(cancellationToken);
                 return record;
             }
 
@@ -109,14 +134,28 @@ public sealed class IdempotencyKeyStore(
             context.IdempotencyRecords.Add(record);
             try
             {
-                await context.SaveChangesAsync();
+                await context.SaveChangesAsync(cancellationToken);
                 return record;
             }
-            catch (DbUpdateException)
+            catch (DbUpdateException ex) when (IsUniqueConstraintViolation(ex))
             {
                 context.ChangeTracker.Clear();
-                now = DateTimeOffset.UtcNow;
+                await Task.Delay(TimeSpan.FromMilliseconds(25), cancellationToken);
             }
         }
+    }
+
+    private static bool IsUniqueConstraintViolation(DbUpdateException exception)
+    {
+        for (Exception? current = exception; current is not null; current = current.InnerException)
+        {
+            if (current is PostgresException postgresException &&
+                postgresException.SqlState == PostgresErrorCodes.UniqueViolation)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 }
