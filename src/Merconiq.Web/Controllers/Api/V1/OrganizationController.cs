@@ -89,6 +89,7 @@ public sealed class OrganizationController(IOrganizationService organization, IM
 
     [HttpPost("units/import")]
     [Authorize(Policy = CapabilityPolicies.Edit)]
+    [ValidateAntiForgeryToken]
     public async Task<IActionResult> ImportUnits([FromBody] ImportUnitsRequest request, CancellationToken cancellationToken)
     {
         var result = await imports.ImportUnitsAsync(request, cancellationToken);
