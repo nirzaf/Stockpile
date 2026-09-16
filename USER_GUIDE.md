@@ -1,4 +1,4 @@
-# Stockpile user guide
+# Merconiq user guide
 
 The canonical user guide is maintained at [`docs/USER_GUIDE.md`](docs/USER_GUIDE.md).
 

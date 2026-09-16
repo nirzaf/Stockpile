@@ -1,8 +1,8 @@
-# CI/CD Pipeline Plan — Inventory Management System
+# CI/CD Pipeline Plan — Merconiq
 
 ## Goal
 
-Stand up a complete, production-quality CI/CD pipeline for the **Inventory Management System** that:
+Stand up a complete, production-quality CI/CD pipeline for the **Merconiq** that:
 
 1. **Builds** the .NET 10 solution on every PR and push.
 2. **Runs** all xUnit tests (with coverage reporting) on every PR and push.
@@ -20,10 +20,10 @@ User confirmed scope: **Coverage artifacts + tag-based releases** (no Codecov, n
 | Area | State |
 |---|---|
 | `.github/workflows/ci.yml` | Exists. Builds + tests + builds/pushes Docker image to GHCR. Triggers on PR/push to `master`. |
-| `Dockerfile` | Multi-stage (sdk 10.0 → aspnet 10.0), publishes `InventoryManagementSystem.Web`, non-root `app` user, port 8080. ✓ |
+| `Dockerfile` | Multi-stage (sdk 10.0 → aspnet 10.0), publishes `Merconiq.Web`, non-root `app` user, port 8080. ✓ |
 | `global.json` | Pins .NET SDK `10.0.300`, `rollForward: latestMajor`. ✓ |
-| `InventoryManagementSystem.sln` | 4 projects: `Web`, `Core`, `Infrastructure`, `Tests`. Target `net10.0`. ✓ |
-| `InventoryManagementSystem.Tests` | xUnit 2.9, Moq, FluentAssertions, AutoFixture, `coverlet.collector` 6.0.2, `Microsoft.AspNetCore.Mvc.Testing` 10.0.8, `EntityFrameworkCore.InMemory` 10.0.8. Uses `WebApplicationFactory<Program>` with an in-memory DB and a test-only auth scheme. **No service containers required in CI.** ✓ |
+| `Merconiq.sln` | 4 projects: `Web`, `Core`, `Infrastructure`, `Tests`. Target `net10.0`. ✓ |
+| `Merconiq.Tests` | xUnit 2.9, Moq, FluentAssertions, AutoFixture, `coverlet.collector` 6.0.2, `Microsoft.AspNetCore.Mvc.Testing` 10.0.8, `EntityFrameworkCore.InMemory` 10.0.8. Uses `WebApplicationFactory<Program>` with an in-memory DB and a test-only auth scheme. **No service containers required in CI.** ✓ |
 | `docs/` | New: `index.md` (landing page) + `USER_GUIDE.md` (user guide copy with Jekyll front matter). GitHub Pages–ready. ✓ |
 | `.github/ISSUE_TEMPLATE` | Present. |
 | `.github/PULL_REQUEST_TEMPLATE.md` | Present. |
@@ -38,7 +38,7 @@ User confirmed scope: **Coverage artifacts + tag-based releases** (no Codecov, n
 
 - The session in which this plan was produced only permits creating `.md` / `.mdx` / `.txt` / `.rst` / `.adoc` / `README` / `CHANGELOG` files via Write/Edit. **YAML workflow files must be authored in this plan and created by the user (or a follow-up session with broader permissions).**
 - Default branch is `master`.
-- Owner/repo: `nirzaf/InventoryManagementSystem` → Pages URL: `https://nirzaf.github.io/InventoryManagementSystem/`.
+- Owner/repo: `nirzaf/merconiq` → Pages URL: `https://nirzaf.github.io/merconiq/`.
 - Container registry: `ghcr.io` (already used by the existing `ci.yml`).
 - No Codecov account is configured → coverage will be uploaded as a build artifact, not to an external service.
 
@@ -115,7 +115,7 @@ All workflows use the default `GITHUB_TOKEN` (no extra secrets to configure). Co
 
 **File:** `.github/workflows/docker.yml`
 
-**Purpose:** Build and push the application image to `ghcr.io/nirzaf/inventorymanagementsystem`.
+**Purpose:** Build and push the application image to `ghcr.io/nirzaf/merconiq`.
 
 **Triggers:**
 - `push` to `master` (→ tags `:latest` and `:sha-<7>`).
@@ -137,7 +137,7 @@ permissions:
 2. `docker/setup-buildx-action@v3`.
 3. `docker/login-action@v3` against `ghcr.io` with the built-in `GITHUB_TOKEN`.
 4. Extract metadata via `docker/metadata-action@v5`:
-   - images: `ghcr.io/nirzaf/inventorymanagementsystem`
+   - images: `ghcr.io/nirzaf/merconiq`
    - tags: `latest`, `sha-<short>`, semver (`vX.Y.Z`, `vX.Y`, `vX`)
    - labels: `org.opencontainers.image.title`, `org.opencontainers.image.source`, `org.opencontainers.image.revision`, `org.opencontainers.image.created` (set automatically by the action).
 5. `docker/build-push-action@v6`:
@@ -153,7 +153,7 @@ permissions:
 
 **Image digest capture:** the metadata action exposes `steps.meta.outputs.digest`. We'll emit it as a workflow output so the release workflow can reference it.
 
-**Note on .dockerignore:** the current `.dockerignore` excludes `**/*.md` and `InventoryManagementSystem/`. ✓ Acceptable for the build (the Docker context is the repo root; the `*.md` exclusion is a nice optimization).
+**Note on .dockerignore:** the current `.dockerignore` excludes `**/*.md` and `Merconiq/`. ✓ Acceptable for the build (the Docker context is the repo root; the `*.md` exclusion is a nice optimization).
 
 ---
 
@@ -161,7 +161,7 @@ permissions:
 
 **File:** `.github/workflows/pages.yml`
 
-**Purpose:** Deploy the `/docs` folder to GitHub Pages (project pages at `https://nirzaf.github.io/InventoryManagementSystem/`).
+**Purpose:** Deploy the `/docs` folder to GitHub Pages (project pages at `https://nirzaf.github.io/merconiq/`).
 
 **Triggers:**
 - `push` to `master` **if** any of:
@@ -220,7 +220,7 @@ permissions:
 3. `actions/github-script@v7` to:
    - Find the previous semver tag (`git tag --sort=-v:refname | grep -E '^v[0-9]' | sed -n '2p'`).
    - Build the changelog body from commits between the two tags (using `Conventional Commits` style if available, falling back to the raw log).
-   - Fetch the image digest for `ghcr.io/nirzaf/inventorymanagementsystem:<tag>` from the GHCR API using `GITHUB_TOKEN`.
+   - Fetch the image digest for `ghcr.io/nirzaf/merconiq:<tag>` from the GHCR API using `GITHUB_TOKEN`.
 4. Create the release via `softprops/action-gh-release@v2`:
    - `tag_name: ${{ github.ref_name }}`
    - `name: ${{ github.ref_name }}`
@@ -301,9 +301,9 @@ Document in `README.md` / `CONTRIBUTING.md` the recommended branch protection ru
 
 ## Implementation steps (in order)
 
-1. **Create `docker.yml`** (most independent). Verify by running the workflow on the next push to `master`; check `ghcr.io/nirzaf/inventorymanagementsystem:latest` appears.
+1. **Create `docker.yml`** (most independent). Verify by running the workflow on the next push to `master`; check `ghcr.io/nirzaf/merconiq:latest` appears.
 2. **Refactor `ci.yml`** to remove the Docker job and add the coverage artifact. Verify on a PR that the `coverage-report` artifact is downloadable.
-3. **Create `pages.yml`**. After it's merged, perform the one-time UI step (**Settings → Pages → Source: GitHub Actions**). Verify the site is live at `https://nirzaf.github.io/InventoryManagementSystem/`.
+3. **Create `pages.yml`**. After it's merged, perform the one-time UI step (**Settings → Pages → Source: GitHub Actions**). Verify the site is live at `https://nirzaf.github.io/merconiq/`.
 4. **Create `release.yml`**. Test by pushing a tag like `v0.0.0-rc.1` (no real release); confirm a pre-release is cut.
 5. **Create `dependabot.yml`**. Open PRs will start appearing on the next Monday; review and merge the first batch.
 6. **Update `README.md`** with the new CI/CD section (workflow table + Pages link).
@@ -343,8 +343,8 @@ Each workflow is independently gated. To disable one:
 ## Verification checklist (post-merge)
 
 - [ ] `ci.yml` → green on a test PR; `coverage-report` artifact present.
-- [ ] `docker.yml` → `ghcr.io/nirzaf/inventorymanagementsystem:latest` and `:<sha>` exist; `docker pull` works locally; `linux/amd64` and `linux/arm64` manifests both present (`docker manifest inspect`).
-- [ ] `pages.yml` → `https://nirzaf.github.io/InventoryManagementSystem/` returns 200 and shows the landing page.
+- [ ] `docker.yml` → `ghcr.io/nirzaf/merconiq:latest` and `:<sha>` exist; `docker pull` works locally; `linux/amd64` and `linux/arm64` manifests both present (`docker manifest inspect`).
+- [ ] `pages.yml` → `https://nirzaf.github.io/merconiq/` returns 200 and shows the landing page.
 - [ ] `release.yml` → test tag `v0.0.0-rc.1` produces a pre-release with the changelog and Docker image digest.
 - [ ] `dependabot.yml` → first batch of PRs opens on the next Monday.
 - [ ] `README.md` → "CI/CD" section is present, all workflow names are linked to their `.yml` files on `master`.
@@ -374,7 +374,7 @@ on:
 env:
   REGISTRY: ghcr.io
   IMAGE_OWNER: nirzaf
-  IMAGE_NAME: inventorymanagementsystem
+  IMAGE_NAME: merconiq
 
 permissions:
   contents: read
@@ -422,7 +422,7 @@ jobs:
             type=semver,pattern={{major}}
             type=raw,value=latest,enable={{is_default_branch}}
           labels: |
-            org.opencontainers.image.title=Inventory Management System
+            org.opencontainers.image.title=Merconiq
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.licenses=MIT
 
@@ -575,8 +575,8 @@ jobs:
               '',
               '### Docker image',
               `\`\`\``,
-              `docker pull ghcr.io/nirzaf/inventorymanagementsystem:${tag}`,
-              `docker pull ghcr.io/nirzaf/inventorymanagementsystem:latest`,
+              `docker pull ghcr.io/nirzaf/merconiq:${tag}`,
+              `docker pull ghcr.io/nirzaf/merconiq:latest`,
               `\`\`\``,
               '',
               '_Auto-generated by the Release workflow._',
