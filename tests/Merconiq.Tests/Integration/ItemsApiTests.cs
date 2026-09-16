@@ -111,6 +111,57 @@ public class ItemsApiTests : IClassFixture<CustomWebApplicationFactory>
     }
 
     [Fact]
+    public async Task ItemReads_Viewer_returns200()
+    {
+        var client = _factory.CreateAuthenticatedClient("Viewer");
+
+        var response = await client.GetAsync("/api/v1/items");
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    [Fact]
+    public async Task ItemCreate_Viewer_is_forbidden()
+    {
+        var client = _factory.CreateAuthenticatedClient("Viewer");
+
+        var response = await client.PostAsJsonAsync("/api/v1/items", new
+        {
+            ItemCode = "VIEWER-001",
+            Description = "Must be rejected",
+            Rate = 1m
+        });
+
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+    }
+
+    [Fact]
+    public async Task ItemUpdate_Viewer_is_forbidden()
+    {
+        var client = _factory.CreateAuthenticatedClient("Viewer");
+
+        var response = await client.PutAsJsonAsync("/api/v1/items/1", new
+        {
+            Id = 1,
+            Description = "Must be rejected",
+            Rate = 1m,
+            SupplierId = (int?)null
+        });
+
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+    }
+
+    [Fact]
+    public async Task ItemDelete_Viewer_is_forbidden()
+    {
+        var client = _factory.CreateAuthenticatedClient("Viewer");
+
+        var response = await client.DeleteAsync("/api/v1/items/1");
+
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+    }
+
+    [Fact]
     public async Task Create_InvalidItem_Returns400()
     {
         var client = AuthClient;

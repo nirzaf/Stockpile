@@ -7,6 +7,7 @@ using MediatR;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
+using Merconiq.Web.Security;
 
 namespace Merconiq.Web.Controllers.Api.V1;
 
@@ -27,6 +28,7 @@ public class ItemsController : ControllerBase
 
     /// <summary>Get all items</summary>
     [HttpGet]
+    [Authorize(Policy = CapabilityPolicies.View)]
     [ProducesResponseType(typeof(ApiResponse<ItemsPagedResult>), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     public async Task<IActionResult> GetAll([FromQuery] int page = 1, [FromQuery] int pageSize = 25)
@@ -40,6 +42,7 @@ public class ItemsController : ControllerBase
 
     /// <summary>Get item by ID</summary>
     [HttpGet("{id:int}")]
+    [Authorize(Policy = CapabilityPolicies.View)]
     [ProducesResponseType(typeof(Core.Entities.Item), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> GetById(int id)
@@ -52,6 +55,7 @@ public class ItemsController : ControllerBase
 
     /// <summary>Search items</summary>
     [HttpGet("search")]
+    [Authorize(Policy = CapabilityPolicies.View)]
     [ProducesResponseType(typeof(IEnumerable<Core.Entities.Item>), StatusCodes.Status200OK)]
     public async Task<IActionResult> Search([FromQuery] string q)
     {
@@ -61,6 +65,7 @@ public class ItemsController : ControllerBase
 
     /// <summary>Create a new item</summary>
     [HttpPost]
+    [Authorize(Policy = CapabilityPolicies.Edit)]
     [ProducesResponseType(typeof(Core.Entities.Item), StatusCodes.Status201Created)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     public async Task<IActionResult> Create([FromBody] CreateItemCommand command)
@@ -71,6 +76,7 @@ public class ItemsController : ControllerBase
 
     /// <summary>Update an existing item</summary>
     [HttpPut("{id:int}")]
+    [Authorize(Policy = CapabilityPolicies.Edit)]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> Update(int id, [FromBody] UpdateItemCommand command)
@@ -84,6 +90,7 @@ public class ItemsController : ControllerBase
 
     /// <summary>Delete an item</summary>
     [HttpDelete("{id:int}")]
+    [Authorize(Policy = CapabilityPolicies.Edit)]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     public async Task<IActionResult> Delete(int id)
     {
