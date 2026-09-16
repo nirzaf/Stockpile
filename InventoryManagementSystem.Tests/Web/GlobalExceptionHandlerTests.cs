@@ -6,10 +6,12 @@ using FluentValidation.Results;
 using InventoryManagementSystem.Web;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
+using Npgsql;
 
 namespace InventoryManagementSystem.Tests.Web;
 
@@ -92,6 +94,38 @@ public class GlobalExceptionHandlerTests
 
         handled.Should().BeTrue();
         context.Response.StatusCode.Should().Be(409);
+    }
+
+    [Fact]
+    public async Task TryHandleAsync_PostgresUniqueViolation_ApiPath_Returns409()
+    {
+        var (context, _) = CreateHttpContext("/api/v1/items");
+        var postgresException = new PostgresException(
+            "duplicate key value violates unique constraint",
+            "ERROR",
+            "ERROR",
+            PostgresErrorCodes.UniqueViolation);
+        var exception = new DbUpdateException("Could not save item", postgresException);
+
+        var handled = await _sut.TryHandleAsync(context, exception, CancellationToken.None);
+
+        handled.Should().BeTrue();
+        context.Response.StatusCode.Should().Be(409);
+        (await ReadProblemDetails(context))!.Detail.Should().Be("Duplicate resource");
+    }
+
+    [Fact]
+    public async Task TryHandleAsync_NonUniqueDatabaseFailure_ApiPath_Returns500()
+    {
+        var (context, _) = CreateHttpContext("/api/v1/items");
+        var exception = new DbUpdateException(
+            "Could not save item",
+            new InvalidOperationException("database unavailable"));
+
+        var handled = await _sut.TryHandleAsync(context, exception, CancellationToken.None);
+
+        handled.Should().BeTrue();
+        context.Response.StatusCode.Should().Be(500);
     }
 
     [Fact]
