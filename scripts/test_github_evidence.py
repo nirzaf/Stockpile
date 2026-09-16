@@ -107,7 +107,7 @@ class GithubEvidenceTests(unittest.TestCase):
         self.assertEqual(branch_query["status"], "error")
         self.assertIn("unusable default-branch metadata", branch_query["error"])
 
-    def test_commit_window_uses_author_date_from_unbounded_commit_query(self):
+    def test_commit_window_uses_author_or_committer_date_from_unbounded_query(self):
         transport = FixtureTransport(
             commits=[
                 {
@@ -116,7 +116,14 @@ class GithubEvidenceTests(unittest.TestCase):
                         "author": {"date": "2026-09-15T12:00:00Z"},
                         "committer": {"date": "2020-01-01T12:00:00Z"},
                     },
-                }
+                },
+                {
+                    "sha": "d" * 40,
+                    "commit": {
+                        "author": {},
+                        "committer": {"date": "2026-09-14T12:00:00Z"},
+                    },
+                },
             ]
         )
 
@@ -126,7 +133,7 @@ class GithubEvidenceTests(unittest.TestCase):
             client=GitHubClient(transport),
         )
 
-        self.assertEqual(report["metrics"]["commits_in_window"]["value"], 1)
+        self.assertEqual(report["metrics"]["commits_in_window"]["value"], 2)
         self.assertNotIn("since", transport.commit_queries[0])
         self.assertNotIn("until", transport.commit_queries[0])
 
