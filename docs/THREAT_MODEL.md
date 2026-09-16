@@ -1,7 +1,7 @@
-# Stockpile threat model and tenant authorization matrix
+# Merconiq threat model and tenant authorization matrix
 
 This document describes the trust boundaries implemented in the current source. It is
-an engineering review aid, not a penetration test, certification, or claim that Stockpile
+an engineering review aid, not a penetration test, certification, or claim that Merconiq
 is critical infrastructure.
 
 ## Assets and actors
@@ -22,13 +22,13 @@ select a tenant explicitly before resolving tenant-scoped services.
 
 | Operation | Anonymous | Admin | Manager | Staff | Evidence and status |
 | --- | --- | --- | --- | --- | --- |
-| Item catalog reads and writes | Denied by `Api` policy | Allowed | Allowed | Allowed | `Controllers/Api/V1/ItemsController.cs`; `Integration/TenantAuthenticationTests.cs`; implemented, API-tested |
-| Stock/in-hand and transaction reads | Denied by `Api` policy | Allowed | Allowed | Allowed | `Controllers/Api/V1/StockController.cs`; tenant query filters; implemented, existing API/tenant tests |
-| Receive, transfer, and sell | Denied by `Api` policy | Allowed | Allowed | Allowed | `StockController.cs` role attributes; idempotency tests under `Tests/Web/Controllers`; implemented, unit-tested; PostgreSQL execution is separately recorded by CI |
-| Webhook list/create/update/delete | Denied by `Api` policy | Allowed | Allowed | Denied | `Configuration/EndpointExtensions.cs` role policies; `Infrastructure/WebhookDispatcherTests.cs`; implemented, service-tested |
-| Forecasts and anomaly detection | Denied by `Api` policy | Allowed | Allowed | Allowed | `EndpointExtensions.cs` API group and tenant cache keys; `Integration/AiEndpointTests.cs`; implemented, API-tested |
-| Browser login/logout | Login is public; logout requires a valid cookie | Authenticated user | Authenticated user | Authenticated user | `Controllers/AccountController.cs`; antiforgery on browser mutations; implemented |
-| Health and culture selection | Health is public; invalid culture is rejected | Public | Public | Public | `Configuration/EndpointExtensions.cs`; operational endpoint, no tenant data |
+| Item catalog reads and writes | Denied by `Api` policy | Allowed | Allowed | Allowed | `Merconiq.Web/Controllers/Api/V1/ItemsController.cs`; `Merconiq.Tests/Integration/TenantAuthenticationTests.cs`; implemented, API-tested |
+| Stock/in-hand and transaction reads | Denied by `Api` policy | Allowed | Allowed | Allowed | `Merconiq.Web/Controllers/Api/V1/StockController.cs`; tenant query filters; implemented, existing API/tenant tests |
+| Receive, transfer, and sell | Denied by `Api` policy | Allowed | Allowed | Allowed | `Merconiq.Web/Controllers/Api/V1/StockController.cs` role attributes; `Merconiq.Tests/Web/Controllers/TransferStockIdempotencyTests.cs` and `Merconiq.Tests/Web/Controllers/SellStockIdempotencyTests.cs`; implemented, unit-tested; PostgreSQL execution is separately recorded by CI |
+| Webhook list/create/update/delete | Denied by `Api` policy | Allowed | Allowed | Denied | `Merconiq.Web/Configuration/EndpointExtensions.cs` role policies; `Merconiq.Tests/Infrastructure/WebhookDispatcherTests.cs`; implemented, service-tested |
+| Forecasts and anomaly detection | Denied by `Api` policy | Allowed | Allowed | Allowed | `Merconiq.Web/Configuration/EndpointExtensions.cs` API group and tenant cache keys; `Merconiq.Tests/Integration/AiEndpointTests.cs`; implemented, API-tested |
+| Browser login/logout | Login is public; logout requires a valid cookie | Authenticated user | Authenticated user | Authenticated user | `Merconiq.Web/Controllers/AccountController.cs`; antiforgery on browser mutations; implemented |
+| Health and culture selection | Health is public; invalid culture is rejected | Public | Public | Public | `Merconiq.Web/Configuration/EndpointExtensions.cs`; operational endpoint, no tenant data |
 
 The API uses bearer authentication through the `Api` policy. Browser cookie authentication
 is used by MVC/Razor UI routes. The two surfaces must not be treated as interchangeable:
@@ -39,10 +39,10 @@ ASP.NET Core antiforgery validation.
 
 ### Tenant and authentication boundaries
 
-`IdentityExtensions` rejects a cookie or JWT whose `tenant_id` does not equal the resolved
-host tenant, and rejects requests when no tenant is resolved. `TenantAuthenticationTests`
-covers wrong-host and mismatched-claim rejection. `TenantIsolationTests` and the filtered
-`InventoryDbContext` cover tenant-scoped reads; `TenantCacheKeys` is used by forecast
+`Merconiq.Web/Configuration/IdentityExtensions.cs` rejects a cookie or JWT whose `tenant_id` does not equal the resolved
+host tenant, and rejects requests when no tenant is resolved. `Merconiq.Tests/Integration/TenantAuthenticationTests.cs`
+covers wrong-host and mismatched-claim rejection. `Merconiq.Tests/Infrastructure/TenantIsolationTests.cs` and the filtered
+`Merconiq.Infrastructure/Data/InventoryDbContext.cs` cover tenant-scoped reads; `Merconiq.Core/Interfaces/TenantCacheKeys.cs` is used by forecast
 endpoints so equal item IDs in two tenants do not share a cache entry.
 
 `auth/token` is intentionally anonymous only long enough to verify credentials. It still
@@ -51,7 +51,7 @@ abuse controls are documented in `SECURITY.md` and tested by the login-abuse iss
 
 ### Browser CSRF and bearer API behavior
 
-`AccountController` retains `[ValidateAntiForgeryToken]` on login and logout. The stock
+`Merconiq.Web/Controllers/AccountController` retains `[ValidateAntiForgeryToken]` on login and logout. The stock
 transfer and sell actions are bearer-only API actions; their explicit antiforgery marker
 is accompanied by `[IgnoreAntiforgeryToken]` because no ambient cookie authenticates them.
 This is a source-analysis annotation for the supported authentication boundary, not a
@@ -60,17 +60,17 @@ integration test before changing this decision.
 
 ### Background workers
 
-`ForecastBackgroundService` enumerates configured tenant IDs and invokes
-`TenantForecastRunner`, which sets the tenant before creating the forecast service.
-`WebhookDeliveryBackgroundService` loads the delivery and subscription using the delivery
+`Merconiq.Web/BackgroundServices/ForecastBackgroundService.cs` enumerates configured tenant IDs and invokes
+`Merconiq.Web/BackgroundServices/TenantForecastRunner.cs`, which sets the tenant before creating the forecast service.
+`Merconiq.Web/BackgroundServices/WebhookDeliveryBackgroundService.cs` loads the delivery and subscription using the delivery
 tenant, sets the tenant context, then completes the record under that tenant. These paths
-are isolated from HTTP middleware. `Integration/TenantBackgroundProcessingTests.cs` and
-`Infrastructure/WebhookDispatcherTests.cs` provide executable evidence; production
+are isolated from HTTP middleware. `Merconiq.Tests/Integration/TenantBackgroundProcessingTests.cs` and
+`Merconiq.Tests/Infrastructure/WebhookDispatcherTests.cs` provide executable evidence; production
 multi-tenant scheduling and failed-worker recovery remain configured-not-exercised here.
 
 ### Webhooks and outbound network trust
 
-`WebhookUrlValidator` rejects unsupported schemes, loopback/private/link-local addresses
+`Merconiq.Web/Security/WebhookUrlValidator.cs` rejects unsupported schemes, loopback/private/link-local addresses
 and unsafe DNS results before delivery. The validator is checked without sending requests
 to private infrastructure. Redirect handling, DNS rebinding between validation and send,
 and operator-approved public destination ownership are residual risks; they are not
