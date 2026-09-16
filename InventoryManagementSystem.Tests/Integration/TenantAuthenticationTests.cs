@@ -77,7 +77,7 @@ public class TenantAuthenticationTests : IClassFixture<CookieAuthenticationWebAp
         var response = await client.GetAsync("/Account/AccessDenied");
 
         response.StatusCode.Should().Be(HttpStatusCode.Redirect);
-        response.Headers.Location!.ToString().Should().StartWith("/Account/Login");
+        response.Headers.Location!.AbsolutePath.Should().Be("/Account/Login");
     }
 
     [Fact]
@@ -89,7 +89,7 @@ public class TenantAuthenticationTests : IClassFixture<CookieAuthenticationWebAp
         var response = await client.GetAsync("/Account/AccessDenied");
 
         response.StatusCode.Should().Be(HttpStatusCode.Redirect);
-        response.Headers.Location!.ToString().Should().StartWith("/Account/Login");
+        response.Headers.Location!.AbsolutePath.Should().Be("/Account/Login");
     }
 
     [Fact]
