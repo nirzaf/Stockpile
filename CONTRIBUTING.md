@@ -99,7 +99,7 @@ fi
 gh pr merge <PR_NUMBER> --repo nirzaf/stockpile --squash --match-head-commit "$REVIEWED_HEAD"
 ```
 
-The explicit head and base comparisons ensure the reviewed diff is still the diff being merged, while `--match-head-commit` makes the merge fail if the PR head changes during the final step. Never use an admin/bypass merge, disable checks, force-push, or lower an approval requirement. Preserve any applicable owner approval or confirmation-codeword rule; do not invent one.
+The head and base comparisons are preflight checks, not an atomic expected-base guard: GitHub CLI only provides `--match-head-commit` for the head. They intentionally require a fresh review whenever `master` advances or the PR is retargeted, so use this runbook serially and do not merge concurrently or place the PR in a merge queue. After merging, record the actual merge commit and its first parent as evidence of the base that was merged. Never use an admin/bypass merge, disable checks, force-push, or lower an approval requirement. Preserve any applicable owner approval or confirmation-codeword rule; do not invent one.
 
 After merging, verify that GitHub reports `MERGED`, record the merge commit, fetch `master`, and check its post-merge CI health before starting the next issue. A queued merge, green check, or review reaction is not proof of completion.
 
