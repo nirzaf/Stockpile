@@ -171,7 +171,7 @@ public class StockService : IStockService
             await _webhookDispatcher.EnqueueAsync(WebhookEventFactory.Create(_tenantContext, "Stock.Received",
                 new { ItemId = itemId, LocationId = locationId, Quantity = quantity, Notes = notes, BatchNumber = batchNumber, ExpiryDate = expiryDate }));
             await _unitOfWork.SaveChangesAsync();
-        }, () => TransactionExistsAsync(transaction));
+        }, () => VerifyTransactionCommitAsync(transaction));
 
         _logger.LogInformation("Received {Qty} of item {ItemId} at location {LocId}", quantity, itemId, locationId);
     }
@@ -227,7 +227,7 @@ public class StockService : IStockService
             await _webhookDispatcher.EnqueueAsync(WebhookEventFactory.Create(_tenantContext, "Stock.Transferred",
                 new { ItemId = itemId, FromLocationId = fromLocationId, ToLocationId = toLocationId, Quantity = quantity, Notes = notes, BatchNumber = batchNumber, ExpiryDate = expiryDate }));
             await _unitOfWork.SaveChangesAsync();
-        }, () => TransactionExistsAsync(transaction));
+        }, () => VerifyTransactionCommitAsync(transaction));
 
         _logger.LogInformation("Transferred {Qty} of item {ItemId} from {From} to {To}", quantity, itemId, fromLocationId, toLocationId);
     }
@@ -263,7 +263,7 @@ public class StockService : IStockService
             await _webhookDispatcher.EnqueueAsync(WebhookEventFactory.Create(_tenantContext, "Stock.Sold",
                 new { ItemId = itemId, LocationId = locationId, Quantity = quantity, Notes = notes, BatchNumber = batchNumber, ExpiryDate = expiryDate }));
             await _unitOfWork.SaveChangesAsync();
-        }, () => TransactionExistsAsync(transaction));
+        }, () => VerifyTransactionCommitAsync(transaction));
 
         _logger.LogInformation("Sold {Qty} of item {ItemId} from location {LocId}", quantity, itemId, locationId);
     }
@@ -302,13 +302,23 @@ public class StockService : IStockService
         }
     }
 
-    private async Task<bool> TransactionExistsAsync(StockTransaction? transaction)
+    private async Task<bool> VerifyTransactionCommitAsync(StockTransaction? transaction)
     {
         if (transaction is null || transaction.Id == 0)
         {
+            _unitOfWork.ClearTracker();
             return false;
         }
 
-        return (await _txRepo.FindAsync(item => item.Id == transaction.Id)).Any();
+        var exists = (await _txRepo.FindAsync(item => item.Id == transaction.Id)).Any();
+        if (!exists)
+        {
+            // SaveChanges has already accepted the first attempt's entity state. A
+            // false verification means that attempt was rolled back, so detach all
+            // stale instances before the execution strategy replays the operation.
+            _unitOfWork.ClearTracker();
+        }
+
+        return exists;
     }
 }
