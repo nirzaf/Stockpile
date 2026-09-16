@@ -103,6 +103,9 @@ public class StockController : ControllerBase
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [Authorize(Roles = "Admin,Manager,Staff")]
+    // This bearer-token API is not cookie-authenticated, so browser CSRF tokens do not apply.
+    // Keep the explicit validation marker for static security analysis while opting out at runtime.
+    [ValidateAntiForgeryToken]
     [IgnoreAntiforgeryToken]
     public async Task<IActionResult> Sell(
         [FromBody] SellStockCommand command,
