@@ -13,6 +13,7 @@ fail() {
 
 bash -n "$RESOLVER" || fail 'resolver has invalid Bash syntax'
 bash -n "${BASH_SOURCE[0]}" || fail 'harness has invalid Bash syntax'
+bash -n "$ROOT_DIR/scripts/wait-for-validated-sha.sh" || fail 'validation gate has invalid Bash syntax'
 
 for file in "$DOCKER_WORKFLOW" "$RELEASE_WORKFLOW"; do
   [[ -f "$file" ]] || fail "missing workflow: $file"
