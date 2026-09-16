@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text.Json;
 using FluentValidation;
+using Merconiq.Core.Exceptions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.Mvc;
@@ -74,6 +75,7 @@ public class GlobalExceptionHandler : IExceptionHandler
         var (statusCode, title) = exception switch
         {
             ArgumentException => (HttpStatusCode.BadRequest, "Invalid argument"),
+            StockAvailabilityConflictException => (HttpStatusCode.Conflict, "Stock availability conflict"),
             InvalidOperationException => (HttpStatusCode.Conflict, "Operation failed"),
             DbUpdateException databaseException when DatabaseExceptionClassifier.IsUniqueConstraintViolation(databaseException)
                 => (HttpStatusCode.Conflict, "Duplicate resource"),
@@ -92,9 +94,9 @@ public class GlobalExceptionHandler : IExceptionHandler
             {
                 Status = (int)statusCode,
                 Title = title,
-                // The full exception is logged above for operators. API clients always
-                // receive a stable, non-sensitive message regardless of environment.
-                Detail = title,
+                // The reservation conflict is a safe, actionable business message. Other
+                // exceptions keep the stable generic response while the full error is logged.
+                Detail = exception is StockAvailabilityConflictException ? exception.Message : title,
                 Instance = httpContext.Request.Path
             };
 
