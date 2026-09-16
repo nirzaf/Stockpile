@@ -270,11 +270,11 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
                   .OnDelete(DeleteBehavior.Cascade);
 
             // PostgreSQL exposes the inserting transaction's xmin (xid) as a hidden
-            // system column on every row. Mapping it to a shadow "Version" property and
+            // system column on every row. Mapping it to the CLR Version property and
             // marking it as a concurrency token gives us optimistic concurrency with
             // zero schema, trigger, or stored-procedure cost — EF Core compares xmin
             // on UPDATE and raises a concurrency exception if the row was modified.
-            entity.Property<uint>("Version")
+            entity.Property(s => s.Version)
                   .HasColumnName("xmin")
                   .HasColumnType("xid")
                   .ValueGeneratedOnAddOrUpdate()
