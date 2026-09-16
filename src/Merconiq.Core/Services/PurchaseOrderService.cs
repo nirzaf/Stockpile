@@ -71,6 +71,9 @@ public class PurchaseOrderService : IPurchaseOrderService
             throw new ArgumentException($"Invalid status: {status}");
 
         var previousStatus = po.Status;
+        if (previousStatus != parsedStatus && !IsValidTransition(previousStatus, parsedStatus))
+            throw new InvalidOperationException($"Invalid purchase order status transition: {previousStatus} -> {parsedStatus}");
+
         po.Status = parsedStatus;
         await _poRepo.UpdateAsync(po);
         if (previousStatus != parsedStatus)
@@ -86,6 +89,17 @@ public class PurchaseOrderService : IPurchaseOrderService
         await _unitOfWork.SaveChangesAsync();
         _logger.LogInformation("Updated PO {Id} status to {Status}", id, parsedStatus);
     }
+
+    private static bool IsValidTransition(PurchaseOrderStatus current, PurchaseOrderStatus next) =>
+        current switch
+        {
+            PurchaseOrderStatus.Draft => next is PurchaseOrderStatus.Pending or PurchaseOrderStatus.Cancelled,
+            PurchaseOrderStatus.Pending => next is PurchaseOrderStatus.Submitted or PurchaseOrderStatus.Approved or PurchaseOrderStatus.Cancelled,
+            PurchaseOrderStatus.Submitted => next is PurchaseOrderStatus.Approved or PurchaseOrderStatus.Cancelled,
+            PurchaseOrderStatus.Approved => next is PurchaseOrderStatus.Received or PurchaseOrderStatus.Cancelled,
+            PurchaseOrderStatus.Received or PurchaseOrderStatus.Cancelled => false,
+            _ => false
+        };
 
     /// <inheritdoc />
     public async Task DeleteAsync(int id)
