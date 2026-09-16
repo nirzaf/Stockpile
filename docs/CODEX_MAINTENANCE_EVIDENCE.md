@@ -3,7 +3,7 @@
 This file is a traceable template for maintenance work. Complete it from live
 GitHub and command output; use `not recorded` or `unknown` when a measurement was
 not collected. Native Codex review is a repository review signal, not automatic
-evidence of Stockpile API-credit spending.
+evidence of Merconiq API-credit spending.
 
 ## Entry template
 
@@ -11,8 +11,8 @@ evidence of Stockpile API-credit spending.
 ### [YYYY-MM-DD] Issue #<number> — <short title>
 
 - Task type: <bug | test | documentation | security | release preparation>
-- Issue: https://github.com/nirzaf/stockpile/issues/<number>
-- PR: https://github.com/nirzaf/stockpile/pull/<number>
+- Issue: https://github.com/nirzaf/merconiq/issues/<number>
+- PR: https://github.com/nirzaf/merconiq/pull/<number>
 - Branch: `<branch>`
 - Tested commit: `<full SHA>`
 - Reviewed commit: `<full SHA>`
@@ -40,12 +40,12 @@ production deployment.
 
 - Task type: CI reliability
 - Issue: no separate issue recorded; the PR is
-  https://github.com/nirzaf/stockpile/pull/167
-- PR: https://github.com/nirzaf/stockpile/pull/167
+  https://github.com/nirzaf/merconiq/pull/167
+- PR: https://github.com/nirzaf/merconiq/pull/167
 - Branch: `codex/fix-security-workflow-concurrency`
 - Tested commit: `22fbaed120a66f97a46871123bc7e4ba4ca8d7c5`
 - Reviewed commit: `22fbaed120a66f97a46871123bc7e4ba4ca8d7c5`; native review
-  summary: https://github.com/nirzaf/stockpile/pull/167#issuecomment-5679729359
+  summary: https://github.com/nirzaf/merconiq/pull/167#issuecomment-5679729359
 - Merge commit: `6db17943cacb29e29b9396e011c643c61c5e71a1`
 - Commands actually run: GitHub Actions workflow checks; local command
   transcript not recorded in this entry.
@@ -56,7 +56,7 @@ production deployment.
 - Fixes applied: security workflow concurrency was isolated by ref so unrelated
   runs do not cancel one another.
 - Native Codex review: completed on the exact commit before merge;
-  summary: https://github.com/nirzaf/stockpile/pull/167#issuecomment-5679729359
+  summary: https://github.com/nirzaf/merconiq/pull/167#issuecomment-5679729359
 - Other review findings: no unresolved finding is recorded in the merged PR.
 - Human disposition: merge completed normally on 2026-09-15; separate owner-only
   publication/deployment outcomes are not inferred.
