@@ -44,6 +44,10 @@ Please read and follow our [Code of Conduct](CODE_OF_CONDUCT.md).
      --no-build --configuration Release --filter "Category=PostgreSQL"
    ```
    The PostgreSQL phase uses Testcontainers to create a disposable PostgreSQL instance, so a working Docker-compatible daemon is required; a locally installed PostgreSQL server alone is not sufficient for this command. InMemory tests are useful for fast unit coverage, but a skipped or InMemory-only test does not prove PostgreSQL behavior. Confirm that the PostgreSQL phase actually ran.
+   The command above uses POSIX shell syntax. In PowerShell, set the environment variable for the command explicitly:
+   ```powershell
+   $env:RUN_POSTGRES_TESTS = "true"; dotnet test InventoryManagementSystem.Tests/InventoryManagementSystem.Tests.csproj --no-build --configuration Release --filter "Category=PostgreSQL"
+   ```
 7. **Inspect** `git diff --check`, the changed-file list, and the complete diff. Do not commit secrets, dumps, coverage output, or transient logs.
 8. **Commit** with descriptive conventional-commit messages.
 9. **Push only the issue branch** and open a Pull Request against `master`.
