@@ -304,7 +304,8 @@ public class PurchaseOrderWorkflowTests : IClassFixture<CustomWebApplicationFact
                 PONumber = $"PO-{Guid.NewGuid():N}".Substring(0, 15),
                 SupplierId = supplier.Id,
             },
-            [new OrderDetail { ItemId = item.Id, Quantity = 10, UnitPrice = 25m }]);
+            [new OrderDetail { ItemId = item.Id, Quantity = 10, UnitPrice = 25m }],
+            $"po-create-{Guid.NewGuid():N}");
 
             // Verify the service-computed PO exists with correct status
             var savedPo = await db.PurchaseOrders
@@ -331,7 +332,7 @@ public class PurchaseOrderWorkflowTests : IClassFixture<CustomWebApplicationFact
         {
             PONumber = $"PO-{Guid.NewGuid():N}".Substring(0, 15),
             SupplierId = supplier.Id,
-        }, []);
+        }, [], $"po-create-{Guid.NewGuid():N}");
 
         // Update status
         await poService.UpdateStatusAsync(po.Id, nameof(PurchaseOrderStatus.Approved));
@@ -354,7 +355,7 @@ public class PurchaseOrderWorkflowTests : IClassFixture<CustomWebApplicationFact
         {
             PONumber = $"PO-{Guid.NewGuid():N}"[..15],
             SupplierId = supplier.Id
-        }, []);
+        }, [], $"po-create-{Guid.NewGuid():N}");
 
         await FluentActions.Invoking(() => poService.UpdateStatusAsync(po.Id, "NotAStatus"))
             .Should().ThrowAsync<ArgumentException>();
@@ -394,7 +395,7 @@ public class PurchaseOrderWorkflowTests : IClassFixture<CustomWebApplicationFact
         [
             new OrderDetail { ItemId = item1.Id, Quantity = 5, UnitPrice = 10m },
             new OrderDetail { ItemId = item2.Id, Quantity = 3, UnitPrice = 20m }
-        ]);
+        ], $"po-create-{Guid.NewGuid():N}");
 
         var saved = await db.PurchaseOrders
             .Include(p => p.OrderDetails)
@@ -405,7 +406,7 @@ public class PurchaseOrderWorkflowTests : IClassFixture<CustomWebApplicationFact
     }
 
     [Fact]
-    public async Task DeletePO_VerifyRemoved()
+    public async Task DeletePO_CancelsAndRetainsTheNumberAndDocumentIdentity()
     {
         using var scope = _factory.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<InventoryDbContext>();
@@ -418,12 +419,17 @@ public class PurchaseOrderWorkflowTests : IClassFixture<CustomWebApplicationFact
         {
             PONumber = $"PO-{Guid.NewGuid():N}".Substring(0, 15),
             SupplierId = supplier.Id,
-        }, []);
+        }, [], $"po-create-{Guid.NewGuid():N}");
 
         await poService.DeleteAsync(po.Id);
 
-        var deleted = await db.PurchaseOrders.AsNoTracking().AnyAsync(p => p.Id == po.Id);
-        deleted.Should().BeFalse();
+        var retained = await db.PurchaseOrders
+            .Include(order => order.DocumentIdentity)
+            .AsNoTracking()
+            .SingleAsync(order => order.Id == po.Id);
+        retained.Status.Should().Be(PurchaseOrderStatus.Cancelled);
+        retained.DocumentIdentity.HumanNumber.Should().Be(retained.PONumber);
+        retained.DocumentIdentity.Status.Should().Be(DocumentLifecycleStatus.Cancelled);
     }
 }
 

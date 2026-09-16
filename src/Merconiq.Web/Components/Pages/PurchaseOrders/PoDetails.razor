@@ -24,6 +24,9 @@ else
         <MudGrid>
             <MudItem xs="6" sm="3"><MudText Typo="Typo.subtitle2" Color="Color.Secondary">PO Number</MudText></MudItem>
             <MudItem xs="6" sm="3"><MudText>@_po.PONumber</MudText></MudItem>
+
+            <MudItem xs="6" sm="3"><MudText Typo="Typo.subtitle2" Color="Color.Secondary">Document ID</MudText></MudItem>
+            <MudItem xs="6" sm="3"><MudText>@_po.DocumentId.Value</MudText></MudItem>
             
             <MudItem xs="6" sm="3"><MudText Typo="Typo.subtitle2" Color="Color.Secondary">Date</MudText></MudItem>
             <MudItem xs="6" sm="3"><MudText>@_po.OrderDate.ToString("yyyy-MM-dd")</MudText></MudItem>
@@ -67,6 +70,10 @@ else
         @if (_po.Status == PurchaseOrderStatus.Approved)
         {
             <MudButton Variant="Variant.Filled" Color="Color.Info" OnClick="@(() => UpdateStatus(PurchaseOrderStatus.Received))">Mark as Received</MudButton>
+        }
+        @if (_po.Status is PurchaseOrderStatus.Submitted or PurchaseOrderStatus.Approved)
+        {
+            <MudButton Variant="Variant.Outlined" Color="Color.Error" OnClick="@(() => UpdateStatus(PurchaseOrderStatus.Voided))">Void PO</MudButton>
         }
         <MudButton Href="/PurchaseOrders" Variant="Variant.Outlined" Color="Color.Secondary">Back to List</MudButton>
     </div>

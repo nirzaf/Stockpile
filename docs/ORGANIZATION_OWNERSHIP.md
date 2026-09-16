@@ -37,3 +37,26 @@ limited to one company; intentionally unmapped legacy locations remain usable
 until an owner-approved mapping is supplied. Stock/location foreign keys also
 carry `TenantId`, preserving existing integer IDs while making a tenant-mixed
 reference invalid at the database boundary.
+
+## Document identity and legacy purchase orders
+
+The document-identity migration assigns every existing purchase order a new,
+stable internal UUID and preserves its existing `PONumber` verbatim as the
+human-facing document number. Existing order-detail rows receive stable line
+UUIDs linked to that purchase-order identity. The migration does not renumber,
+delete, or infer ownership for any existing document.
+
+Legacy purchase orders and their lines remain `CompanyId = NULL` because the
+current purchase-order model has no company or branch owner. Their identity
+mapping is tenant-scoped, and line-link creation fails closed until both lines
+have an owner-approved company mapping. The supplier, current user, or selected
+UI context is not evidence of legal-company ownership. A later ownership
+change must supply and validate that mapping explicitly.
+
+Purchase-order create retries use a tenant-scoped idempotency key and a hash of
+the business request; replaying the same key and request returns the retained
+purchase order, while reusing it for different content is rejected. Cancellation
+and voiding change lifecycle state but retain the document identity, human
+number, and line records. The current implementation covers purchase orders;
+it does not claim document identity or lineage support for receipts, invoices,
+payments, or other business documents that are not yet modeled.
