@@ -9,7 +9,8 @@ namespace InventoryManagementSystem.Web.Services;
 /// <summary>PostgreSQL-backed idempotency coordinator shared by API instances.</summary>
 public sealed class IdempotencyKeyStore(
     InventoryDbContext context,
-    ITenantContext tenantContext) : IIdempotencyKeyStore
+    ITenantContext tenantContext,
+    IUnitOfWork unitOfWork) : IIdempotencyKeyStore
 {
     private static readonly TimeSpan Retention = TimeSpan.FromHours(1);
     private static readonly TimeSpan ClaimLease = TimeSpan.FromMinutes(2);
@@ -37,15 +38,19 @@ public sealed class IdempotencyKeyStore(
             return;
         }
 
+        var ownsTransaction = !unitOfWork.HasActiveTransaction;
         try
         {
-            await operation();
-            record.Status = IdempotencyRecordStatus.Completed;
-            record.ResponseStatusCode = StatusCodes.Status204NoContent;
-            record.CompletedAt = DateTimeOffset.UtcNow;
-            record.LeaseUntil = null;
-            record.LastError = null;
-            await context.SaveChangesAsync(cancellationToken);
+            await unitOfWork.ExecuteInTransactionAsync(async () =>
+            {
+                await operation();
+                TrackRecord(record);
+                record.Status = IdempotencyRecordStatus.Completed;
+                record.ResponseStatusCode = StatusCodes.Status204NoContent;
+                record.CompletedAt = DateTimeOffset.UtcNow;
+                record.LeaseUntil = null;
+                record.LastError = null;
+            }, CancellationToken.None);
         }
         catch (Exception ex)
         {
@@ -53,14 +58,30 @@ public sealed class IdempotencyKeyStore(
             // Detach those changes before recording the failed claim so the failure path
             // cannot accidentally commit a partial business mutation.
             var recordId = record.Id;
+            if (ownsTransaction)
+            {
+                await unitOfWork.RollbackTransactionAsync(CancellationToken.None);
+            }
+            else
+            {
+                throw;
+            }
             context.ChangeTracker.Clear();
             record = await context.IdempotencyRecords
-                .SingleAsync(item => item.Id == recordId, cancellationToken);
+                .SingleAsync(item => item.Id == recordId, CancellationToken.None);
             record.Status = IdempotencyRecordStatus.Failed;
             record.LeaseUntil = null;
             record.LastError = ex.Message[..Math.Min(ex.Message.Length, 4096)];
-            await context.SaveChangesAsync(cancellationToken);
+            await context.SaveChangesAsync(CancellationToken.None);
             throw;
+        }
+    }
+
+    private void TrackRecord(IdempotencyRecord record)
+    {
+        if (context.Entry(record).State == EntityState.Detached)
+        {
+            context.IdempotencyRecords.Attach(record);
         }
     }
 
