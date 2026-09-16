@@ -1,6 +1,11 @@
 # Public API contract
 
-This document describes the HTTP contract implemented by Stockpile's current
+Merconiq exposes its public resource HTTP API through versioned MVC controllers at
+`/api/v1`. Resource routes, authentication, validation, response envelopes, rate
+limits, and OpenAPI metadata are defined on the controllers. Auth, webhook, and AI
+operations remain minimal endpoints because they are not duplicate resource routes.
+
+This document describes the HTTP contract implemented by Merconiq's current
 `/api/v1` endpoints. It is intentionally limited to behavior present in the
 application source; it does not describe a separate gateway, tenant header, or
 external identity service.
@@ -195,9 +200,9 @@ The state transitions are:
   fails, the failed claim can be retried.
 
 Existing executable coverage for this contract is kept in
-`InventoryManagementSystem.Tests/Web/Services/IdempotencyKeyStoreTests.cs`,
-`InventoryManagementSystem.Tests/Integration/TenantAuthenticationTests.cs`,
-and `InventoryManagementSystem.Tests/Web/Services/RateLimitPartitionKeyTests.cs`.
+`Merconiq.Tests/Web/Services/IdempotencyKeyStoreTests.cs`,
+`Merconiq.Tests/Integration/TenantAuthenticationTests.cs`,
+and `Merconiq.Tests/Web/Services/RateLimitPartitionKeyTests.cs`.
 The integration test factory uses an in-memory database and synthetic signed
 JWTs; it does not represent an external identity provider or a production rate
 limit measurement.

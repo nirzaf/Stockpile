@@ -3,6 +3,6 @@ set -euo pipefail
 
 echo "=== Running database seed ==="
 export ASPNETCORE_ENVIRONMENT=Development
-dotnet run --project InventoryManagementSystem.Web
+dotnet run --project Merconiq.Web
 
 echo "=== Seed complete ==="

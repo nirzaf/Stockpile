@@ -16,7 +16,7 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE: ghcr.io/nirzaf/inventorymanagementsystem
+  IMAGE: ghcr.io/nirzaf/merconiq
 
 permissions:
   contents: write
