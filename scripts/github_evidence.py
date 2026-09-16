@@ -303,17 +303,26 @@ def collect_report(
     pull_items = [item for item in issues if isinstance(item, dict) and item.get("pull_request")]
     issues_in_window = [item for item in issue_items if in_window(item.get("created_at"), start, end)]
     pulls_in_window = [item for item in pull_items if in_window(item.get("created_at"), start, end)]
-    commits_in_window = [
-        item
-        for item in commits
-        if isinstance(item, dict)
-        and in_window(
-            item.get("commit", {}).get("author", {}).get("date")
-            or item.get("commit", {}).get("committer", {}).get("date"),
-            start,
-            end,
-        )
-    ]
+    def commit_is_in_window(item: Any) -> bool:
+        if not isinstance(item, dict):
+            raise ValueError("commit entry is not an object")
+        envelope = item.get("commit")
+        if not isinstance(envelope, dict):
+            raise ValueError("commit envelope is not an object")
+        author = envelope.get("author")
+        committer = envelope.get("committer")
+        if not isinstance(author, dict) or not isinstance(committer, dict):
+            raise ValueError("commit author or committer metadata is not an object")
+        return in_window(author.get("date") or committer.get("date"), start, end)
+
+    if commits_error:
+        commits_in_window: list[Any] = []
+    else:
+        try:
+            commits_in_window = [item for item in commits if commit_is_in_window(item)]
+        except ValueError as error:
+            commits_error = f"malformed commit metadata: {error}"
+            commits_in_window = []
     exact_runs = [
         run
         for run in action_runs
