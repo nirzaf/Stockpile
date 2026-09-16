@@ -12,6 +12,7 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Localization;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.Extensions.Caching.Memory;
+using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
 using MediatR;
 
@@ -60,7 +61,8 @@ public static class EndpointExtensions
             UserManager<ApplicationUser> userManager,
             SignInManager<ApplicationUser> signInManager,
             ITenantContext tenantContext,
-            JwtTokenOptions jwtOptions) =>
+            JwtTokenOptions jwtOptions,
+            IOptions<IdentityOptions> identityOptions) =>
         {
             var user = await userManager.FindByNameAsync(request.Username)
                 ?? await userManager.FindByEmailAsync(request.Username);
@@ -86,7 +88,11 @@ public static class EndpointExtensions
             var tokenDescriptor = new SecurityTokenDescriptor
             {
                 Subject = new System.Security.Claims.ClaimsIdentity(
-                    JwtClaimsFactory.Create(user, tenantContext.TenantId, roles)),
+                    JwtClaimsFactory.Create(
+                        user,
+                        tenantContext.TenantId,
+                        roles,
+                        identityOptions.Value.ClaimsIdentity.SecurityStampClaimType)),
                 Expires = DateTime.UtcNow.AddHours(2),
                 Issuer = jwtOptions.Issuer,
                 Audience = jwtOptions.Audience,
@@ -115,7 +121,7 @@ public static class EndpointExtensions
         })
             .WithName("GetWebhooks")
             .WithTags("Webhooks")
-            .RequireAuthorization(CapabilityPolicies.View);
+            .RequireAuthorization(CapabilityPolicies.TenantAdministrator);
 
         v1.MapPost("/webhooks", async (
             WebhookSubscriptionRequest request,
@@ -140,7 +146,7 @@ public static class EndpointExtensions
         })
             .WithName("CreateWebhook")
             .WithTags("Webhooks")
-            .RequireAuthorization(CapabilityPolicies.Edit);
+            .RequireAuthorization(CapabilityPolicies.TenantAdministrator);
 
         v1.MapPut("/webhooks/{id:int}", async (
             int id,
@@ -170,7 +176,7 @@ public static class EndpointExtensions
         })
             .WithName("UpdateWebhook")
             .WithTags("Webhooks")
-            .RequireAuthorization(CapabilityPolicies.Edit);
+            .RequireAuthorization(CapabilityPolicies.TenantAdministrator);
 
         v1.MapDelete("/webhooks/{id:int}", async (
             int id,
@@ -189,54 +195,104 @@ public static class EndpointExtensions
         })
             .WithName("DeleteWebhook")
             .WithTags("Webhooks")
-            .RequireAuthorization(CapabilityPolicies.Edit);
+            .RequireAuthorization(CapabilityPolicies.TenantAdministrator);
 
         v1.MapGet("/forecast/{itemId:int}", async (
             int itemId,
             int? horizon,
             IMediator mediator,
             IMemoryCache cache,
-            ITenantContext tenantContext) =>
+            ITenantContext tenantContext,
+            ICurrentUserAuthorization authorization,
+            HttpContext httpContext) =>
         {
+            var tenantAdministrator = await authorization.IsTenantAdministratorAsync(httpContext.User);
+            IReadOnlyCollection<int>? companyIds = null;
+            if (!tenantAdministrator)
+            {
+                companyIds = (await authorization.GetAccessibleCompanyIdsAsync(
+                    httpContext.User, CompanyCapability.View)).ToArray();
+                if (companyIds.Count == 0)
+                {
+                    return Results.Forbid();
+                }
+            }
+
             var horizonDays = horizon ?? 30;
-            var cacheKey = TenantCacheKeys.ForecastForItem(tenantContext.TenantId, itemId, horizonDays);
+            var cacheKey = TenantCacheKeys.ForecastForItem(
+                tenantContext.TenantId, itemId, horizonDays, companyIds);
             var forecast = await cache.GetOrCreateAsync(cacheKey, async entry =>
             {
                 entry.AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(5);
-                return await mediator.Send(new ForecastDemandQuery(itemId, horizonDays));
+                return await mediator.Send(new ForecastDemandQuery(itemId, horizonDays, companyIds));
             });
             return Results.Ok(ApiResponse<DemandForecastResult>.CreateSuccess(forecast!));
         })
             .WithName("ForecastDemand")
             .WithTags("AI")
+            .RequireAuthorization(CapabilityPolicies.View)
             .RequireRateLimiting("Ai");
 
         v1.MapGet("/forecast", async (
             int? horizon,
             IMediator mediator,
             IMemoryCache cache,
-            ITenantContext tenantContext) =>
+            ITenantContext tenantContext,
+            ICurrentUserAuthorization authorization,
+            HttpContext httpContext) =>
         {
+            var tenantAdministrator = await authorization.IsTenantAdministratorAsync(httpContext.User);
+            IReadOnlyCollection<int>? companyIds = null;
+            if (!tenantAdministrator)
+            {
+                companyIds = (await authorization.GetAccessibleCompanyIdsAsync(
+                    httpContext.User, CompanyCapability.View)).ToArray();
+                if (companyIds.Count == 0)
+                {
+                    return Results.Forbid();
+                }
+            }
+
             var horizonDays = horizon ?? 30;
-            var cacheKey = TenantCacheKeys.ForecastForAllItems(tenantContext.TenantId, horizonDays);
+            var cacheKey = TenantCacheKeys.ForecastForAllItems(
+                tenantContext.TenantId, horizonDays, companyIds);
             var forecasts = await cache.GetOrCreateAsync(cacheKey, async entry =>
             {
                 entry.AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(5);
-                return await mediator.Send(new ForecastAllItemsDemandQuery(horizonDays));
+                return await mediator.Send(new ForecastAllItemsDemandQuery(horizonDays, companyIds));
             });
             return Results.Ok(ApiResponse<IReadOnlyList<DemandForecastResult>>.CreateSuccess(forecasts!));
         })
             .WithName("ForecastAllDemand")
             .WithTags("AI")
+            .RequireAuthorization(CapabilityPolicies.View)
             .RequireRateLimiting("Ai");
 
-        v1.MapGet("/anomalies", async (DateTime? from, DateTime? to, IMediator mediator) =>
+        v1.MapGet("/anomalies", async (
+            DateTime? from,
+            DateTime? to,
+            IMediator mediator,
+            ICurrentUserAuthorization authorization,
+            HttpContext httpContext) =>
         {
-            var anomalies = await mediator.Send(new DetectAnomaliesQuery(from, to));
+            var tenantAdministrator = await authorization.IsTenantAdministratorAsync(httpContext.User);
+            IReadOnlyCollection<int>? companyIds = null;
+            if (!tenantAdministrator)
+            {
+                companyIds = (await authorization.GetAccessibleCompanyIdsAsync(
+                    httpContext.User, CompanyCapability.View)).ToArray();
+                if (companyIds.Count == 0)
+                {
+                    return Results.Forbid();
+                }
+            }
+
+            var anomalies = await mediator.Send(new DetectAnomaliesQuery(from, to, companyIds));
             return Results.Ok(ApiResponse<IReadOnlyList<StockAnomaly>>.CreateSuccess(anomalies));
         })
             .WithName("DetectAnomalies")
             .WithTags("AI")
+            .RequireAuthorization(CapabilityPolicies.View)
             .RequireRateLimiting("Ai");
 
         return app;

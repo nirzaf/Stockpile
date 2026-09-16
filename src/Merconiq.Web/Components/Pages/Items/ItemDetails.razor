@@ -1,7 +1,11 @@
 @page "/Items/Details/{Id:int}"
 @using Microsoft.AspNetCore.Authorization
-@attribute [Authorize]
+@using Microsoft.AspNetCore.Components.Authorization
+@using Merconiq.Web.Security
+@attribute [Authorize(Policy = CapabilityPolicies.View)]
 @inject IItemService ItemService
+@inject AuthenticationStateProvider AuthenticationStateProvider
+@inject ICurrentUserAuthorization CurrentUserAuthorization
 
 <PageTitle>Item Details</PageTitle>
 
@@ -29,7 +33,10 @@ else
             <MudItem xs="8" sm="9"><MudText>@_item.Supplier?.Name</MudText></MudItem>
         </MudGrid>
         <div class="mt-4">
-            <MudButton Href="@($"/Items/Edit/{_item.Id}")" Variant="Variant.Filled" Color="Color.Warning" Class="mr-2">Edit</MudButton>
+            @if (_canEdit)
+            {
+                <MudButton Href="@($"/Items/Edit/{_item.Id}")" Variant="Variant.Filled" Color="Color.Warning" Class="mr-2">Edit</MudButton>
+            }
             <MudButton Href="/Items" Variant="Variant.Outlined" Color="Color.Secondary">Back to List</MudButton>
         </div>
     </MudPaper>
@@ -40,9 +47,17 @@ else
     public int Id { get; set; }
 
     private Item? _item;
+    private bool _canEdit;
 
     protected override async Task OnInitializedAsync()
     {
+        var principal = (await AuthenticationStateProvider.GetAuthenticationStateAsync()).User;
+        if (!await CurrentUserAuthorization.HasCompanyCapabilityAsync(principal, CompanyCapability.View))
+        {
+            return;
+        }
+
+        _canEdit = await CurrentUserAuthorization.HasCompanyCapabilityAsync(principal, CompanyCapability.Edit);
         _item = await ItemService.GetByIdAsync(Id);
     }
 }

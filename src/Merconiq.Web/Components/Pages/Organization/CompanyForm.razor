@@ -132,6 +132,13 @@ else
         _loadErrorMessage = null;
         if (Id is not int id)
         {
+            var authenticationState = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+            if (!await CurrentUserAuthorization.IsTenantAdministratorAsync(authenticationState.User))
+            {
+                _notFound = true;
+                return;
+            }
+
             _loading = false;
             return;
         }
@@ -147,6 +154,14 @@ else
         _loadErrorMessage = null;
         try
         {
+            var authenticationState = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+            if (!await CurrentUserAuthorization.CanAccessCompanyAsync(
+                    authenticationState.User, id, CompanyCapability.Edit))
+            {
+                _notFound = true;
+                return;
+            }
+
             var company = await OrganizationService.GetCompanyAsync(id);
             if (company is null)
             {
@@ -194,7 +209,11 @@ else
         try
         {
             var authenticationState = await AuthenticationStateProvider.GetAuthenticationStateAsync();
-            if (!await CurrentUserAuthorization.CanEditOrganizationAsync(authenticationState.User))
+            var canSave = Id is int companyId
+                ? await CurrentUserAuthorization.CanAccessCompanyAsync(
+                    authenticationState.User, companyId, CompanyCapability.Edit)
+                : await CurrentUserAuthorization.IsTenantAdministratorAsync(authenticationState.User);
+            if (!canSave)
             {
                 _errorMessage = "Your session or organization-management permissions changed. Sign in again or contact an administrator.";
                 Snackbar.Add(_errorMessage, Severity.Error);

@@ -68,6 +68,8 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
 
     /// <summary>Company-owned operating branches.</summary>
     public DbSet<Branch> Branches { get; set; } = null!;
+    /// <summary>Company-scoped user capability grants.</summary>
+    public DbSet<CompanyMembership> CompanyMemberships { get; set; } = null!;
     public DbSet<DocumentNumberSequence> DocumentNumberSequences { get; set; } = null!;
 
     /// <summary>
@@ -334,6 +336,26 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
                   .HasForeignKey(e => new { e.CompanyId, e.TenantId })
                   .HasPrincipalKey(c => new { c.Id, c.TenantId })
                   .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<CompanyMembership>(entity =>
+        {
+            entity.HasQueryFilter(e => e.TenantId == CurrentTenantId);
+            entity.Property(e => e.TenantId).HasMaxLength(64).IsRequired();
+            entity.Property(e => e.UserId).HasMaxLength(450).IsRequired();
+            entity.Property(e => e.Capabilities).HasConversion<int>().IsRequired();
+            entity.HasIndex(e => new { e.TenantId, e.CompanyId, e.UserId }).IsUnique();
+            entity.HasIndex(e => new { e.TenantId, e.UserId, e.IsActive });
+            entity.HasOne(e => e.Company)
+                .WithMany(c => c.Memberships)
+                .HasForeignKey(e => new { e.CompanyId, e.TenantId })
+                .HasPrincipalKey(c => new { c.Id, c.TenantId })
+                .OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(e => e.User)
+                .WithMany(u => u.CompanyMemberships)
+                .HasForeignKey(e => new { e.UserId, e.TenantId })
+                .HasPrincipalKey(u => new { u.Id, u.TenantId })
+                .OnDelete(DeleteBehavior.Cascade);
         });
 
         modelBuilder.Entity<StockInHand>(entity =>

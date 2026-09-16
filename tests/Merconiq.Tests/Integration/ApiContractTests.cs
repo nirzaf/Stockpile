@@ -1,6 +1,10 @@
 using System.Net;
 using System.Net.Http.Json;
 using FluentAssertions;
+using Merconiq.Core.Entities;
+using Merconiq.Infrastructure.Data;
+using Microsoft.AspNetCore.Identity;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Merconiq.Tests.Integration;
 
@@ -42,13 +46,38 @@ public sealed class ApiContractTests : IClassFixture<CustomWebApplicationFactory
     {
         using var client = _factory.CreateAuthenticatedClient(role: "Viewer");
 
+        (await client.GetAsync("/api/v1/stock/in-hand")).StatusCode
+            .Should().Be(HttpStatusCode.Forbidden);
+
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<InventoryDbContext>();
+            var users = scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
+            var viewer = (await users.FindByNameAsync("viewer@test-tenant.test"))!;
+            var company = new Company
+            {
+                Code = $"VIEW-{Guid.NewGuid():N}"[..12],
+                LegalName = "Viewer company"
+            };
+            db.Companies.Add(company);
+            await db.SaveChangesAsync();
+            db.CompanyMemberships.Add(new CompanyMembership
+            {
+                CompanyId = company.Id,
+                UserId = viewer.Id,
+                Capabilities = CompanyCapability.View,
+                IsActive = true
+            });
+            await db.SaveChangesAsync();
+        }
+
         var response = await client.GetAsync("/api/v1/stock/in-hand");
 
         response.StatusCode.Should().Be(HttpStatusCode.OK);
     }
 
     [Fact]
-    public async Task Webhook_read_is_available_to_viewers_but_edit_is_not()
+    public async Task Webhook_configuration_is_restricted_to_tenant_administrators()
     {
         using var client = _factory.CreateAuthenticatedClient(role: "Viewer");
 
@@ -60,7 +89,10 @@ public sealed class ApiContractTests : IClassFixture<CustomWebApplicationFactory
             IsActive = true
         });
 
-        read.StatusCode.Should().Be(HttpStatusCode.OK);
+        read.StatusCode.Should().Be(HttpStatusCode.Forbidden);
         edit.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+
+        using var adminClient = _factory.CreateAuthenticatedClient(role: "Admin");
+        (await adminClient.GetAsync("/api/v1/webhooks")).StatusCode.Should().Be(HttpStatusCode.OK);
     }
 }

@@ -150,8 +150,16 @@ else
         _model = new BranchFormModel();
         try
         {
+            var authenticationState = await AuthenticationStateProvider.GetAuthenticationStateAsync();
             if (Id is int id)
             {
+                if (!await CurrentUserAuthorization.CanAccessBranchAsync(
+                        authenticationState.User, id, CompanyCapability.View))
+                {
+                    _notFound = true;
+                    return;
+                }
+
                 var branch = await OrganizationService.GetBranchAsync(id);
                 if (branch is null)
                 {
@@ -177,6 +185,13 @@ else
             }
             else if (CompanyId is int companyId)
             {
+                if (!await CurrentUserAuthorization.CanAccessCompanyAsync(
+                        authenticationState.User, companyId, CompanyCapability.View))
+                {
+                    _notFound = true;
+                    return;
+                }
+
                 _company = await OrganizationService.GetCompanyAsync(companyId);
                 _model = new BranchFormModel();
             }
@@ -213,7 +228,12 @@ else
         try
         {
             var authenticationState = await AuthenticationStateProvider.GetAuthenticationStateAsync();
-            if (!await CurrentUserAuthorization.CanEditOrganizationAsync(authenticationState.User))
+            var canSave = Id is int branchId
+                ? await CurrentUserAuthorization.CanAccessBranchAsync(
+                    authenticationState.User, branchId, CompanyCapability.Edit)
+                : await CurrentUserAuthorization.CanAccessCompanyAsync(
+                    authenticationState.User, _company.Id, CompanyCapability.Edit);
+            if (!canSave)
             {
                 _errorMessage = "Your session or organization-management permissions changed. Sign in again or contact an administrator.";
                 Snackbar.Add(_errorMessage, Severity.Error);

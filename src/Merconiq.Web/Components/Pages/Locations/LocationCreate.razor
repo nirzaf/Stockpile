@@ -1,7 +1,12 @@
 @page "/Locations/Create"
 @using Microsoft.AspNetCore.Authorization
-@attribute [Authorize]
+@using Microsoft.AspNetCore.Components.Authorization
+@using Merconiq.Web.Security
+@attribute [Authorize(Policy = CapabilityPolicies.Administer)]
 @inject ILocationService LocationService
+@inject IOrganizationService OrganizationService
+@inject AuthenticationStateProvider AuthenticationStateProvider
+@inject ICurrentUserAuthorization CurrentUserAuthorization
 @inject ISnackbar Snackbar
 @inject NavigationManager Nav
 
@@ -13,13 +18,32 @@
 <MudGrid>
     <MudItem xs="12" md="6">
         <MudPaper Elevation="1" Class="pa-4">
-            <EditForm Model="@_location" OnValidSubmit="OnValidSubmit">
-                <DataAnnotationsValidator />
-                <MudTextField @bind-Value="_location.Name" Label="Name" Required="true" For="@(() => _location.Name)" Class="mb-3" />
-                <MudTextField @bind-Value="_location.Address" Label="Address" Lines="3" For="@(() => _location.Address)" Class="mb-3" />
+                <EditForm Model="@_location" OnValidSubmit="OnValidSubmit">
+                    <DataAnnotationsValidator />
+                    @if (!string.IsNullOrWhiteSpace(_errorMessage))
+                    {
+                        <MudAlert Severity="Severity.Error" Class="mb-3">@_errorMessage</MudAlert>
+                    }
+                    @if (_branches.Count == 0)
+                    {
+                        <MudAlert Severity="Severity.Warning" Class="mb-3">
+                            Create an active branch in a company you administer before adding a location.
+                        </MudAlert>
+                    }
+                    else
+                    {
+                        <MudSelect T="int" @bind-Value="_branchId" Label="Company branch" Required="true" RequiredError="A branch is required." Class="mb-3">
+                            @foreach (var branch in _branches)
+                            {
+                                <MudSelectItem T="int" Value="@branch.Id">@branch.Company?.Code / @branch.Code — @branch.Name</MudSelectItem>
+                            }
+                        </MudSelect>
+                    }
+                    <MudTextField @bind-Value="_location.Name" Label="Name" Required="true" For="@(() => _location.Name)" Class="mb-3" />
+                    <MudTextField @bind-Value="_location.Address" Label="Address" Lines="3" For="@(() => _location.Address)" Class="mb-3" />
 
                 <div class="d-flex gap-2 mt-4">
-                    <MudButton ButtonType="ButtonType.Submit" Variant="Variant.Filled" Color="Color.Primary">Create</MudButton>
+                        <MudButton ButtonType="ButtonType.Submit" Variant="Variant.Filled" Color="Color.Primary" Disabled="@(_branches.Count == 0)">Create</MudButton>
                     <MudButton Href="/Locations" Variant="Variant.Outlined" Color="Color.Secondary">Cancel</MudButton>
                 </div>
             </EditForm>
@@ -29,18 +53,44 @@
 
 @code {
     private Location _location = new();
+    private IReadOnlyList<Branch> _branches = [];
+    private int _branchId;
+    private string? _errorMessage;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var principal = (await AuthenticationStateProvider.GetAuthenticationStateAsync()).User;
+        var companyIds = await CurrentUserAuthorization.GetAccessibleCompanyIdsAsync(
+            principal, CompanyCapability.Administer);
+        var branches = new List<Branch>();
+        foreach (var companyId in companyIds)
+        {
+            branches.AddRange(await OrganizationService.GetBranchesAsync(companyId));
+        }
+
+        _branches = branches.Where(branch => branch.IsActive).ToArray();
+        _branchId = _branches.FirstOrDefault()?.Id ?? 0;
+    }
 
     private async Task OnValidSubmit()
     {
         try
         {
+            var principal = (await AuthenticationStateProvider.GetAuthenticationStateAsync()).User;
+            if (!await CurrentUserAuthorization.CanCreateLocationInBranchAsync(principal, _branchId))
+            {
+                _errorMessage = "You are no longer authorized to create a location in the selected active branch.";
+                return;
+            }
+
+            _location.BranchId = _branchId;
             await LocationService.CreateAsync(_location);
             Snackbar.Add("Location created successfully", Severity.Success);
             Nav.NavigateTo("/Locations");
         }
         catch (Exception ex)
         {
-            Snackbar.Add(ex.Message, Severity.Error);
+            _errorMessage = ex.Message;
         }
     }
 }

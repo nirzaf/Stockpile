@@ -9,6 +9,9 @@ public interface IStockService
     /// <returns>A collection of stock-in-hand rows.</returns>
     Task<IEnumerable<StockInHand>> GetAllAsync();
 
+    /// <summary>Retrieves stock only from the supplied authorized companies.</summary>
+    Task<IEnumerable<StockInHand>> GetForCompaniesAsync(IReadOnlyCollection<int> companyIds);
+
     /// <summary>Gets the current stock-in-hand for a specific item at a specific location.</summary>
     /// <param name="itemId">The item identifier.</param>
     /// <param name="locationId">The location identifier.</param>
@@ -22,6 +25,12 @@ public interface IStockService
     /// <param name="to">Inclusive end date, or <see langword="null"/> for no upper bound.</param>
     /// <returns>Matching stock transactions.</returns>
     Task<IEnumerable<StockTransaction>> GetTransactionsAsync(DateTime? from, DateTime? to);
+
+    /// <summary>Retrieves stock movements only from the supplied authorized companies.</summary>
+    Task<IEnumerable<StockTransaction>> GetTransactionsForCompaniesAsync(
+        DateTime? from,
+        DateTime? to,
+        IReadOnlyCollection<int> companyIds);
 
     /// <summary>Receives stock into a location, increasing on-hand quantity.</summary>
     /// <param name="itemId">The item identifier.</param>

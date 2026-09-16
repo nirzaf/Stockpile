@@ -1,8 +1,11 @@
+using System.Security.Claims;
 using FluentAssertions;
+using Merconiq.Core.Entities;
 using Merconiq.Core.Features.Stock.Commands;
 using Merconiq.Core.Interfaces;
 using Merconiq.Tests.Infrastructure;
 using Merconiq.Web.Controllers.Api.V1;
+using Merconiq.Web.Security;
 using MediatR;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
@@ -17,7 +20,11 @@ public class TransferStockIdempotencyTests
     {
         var mediator = new Mock<IMediator>();
         var store = new Mock<IIdempotencyKeyStore>();
-        var controller = new StockController(mediator.Object)
+        var authorization = new Mock<ICurrentUserAuthorization>();
+        authorization.Setup(a => a.CanAccessTransferAsync(
+                It.IsAny<ClaimsPrincipal>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<CompanyCapability>()))
+            .ReturnsAsync(true);
+        var controller = new StockController(mediator.Object, authorization.Object)
         {
             ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() }
         };
@@ -47,7 +54,11 @@ public class TransferStockIdempotencyTests
         mediator.Setup(m => m.Send(It.IsAny<TransferStockCommand>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
         var store = new Mock<IIdempotencyKeyStore>();
-        var controller = new StockController(mediator.Object)
+        var authorization = new Mock<ICurrentUserAuthorization>();
+        authorization.Setup(a => a.CanAccessTransferAsync(
+                It.IsAny<ClaimsPrincipal>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<CompanyCapability>()))
+            .ReturnsAsync(true);
+        var controller = new StockController(mediator.Object, authorization.Object)
         {
             ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() }
         };

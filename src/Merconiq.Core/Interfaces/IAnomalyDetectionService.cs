@@ -10,4 +10,10 @@ public interface IAnomalyDetectionService
     /// <param name="to">Inclusive end date, or <see langword="null"/> for no upper bound.</param>
     /// <returns>A read-only list of detected anomalies.</returns>
     Task<IReadOnlyList<StockAnomaly>> DetectAnomaliesAsync(DateTime? from = null, DateTime? to = null);
+
+    /// <summary>Detects anomalies using only movements owned by the specified companies.</summary>
+    Task<IReadOnlyList<StockAnomaly>> DetectAnomaliesForCompaniesAsync(
+        DateTime? from,
+        DateTime? to,
+        IReadOnlyCollection<int> companyIds);
 }

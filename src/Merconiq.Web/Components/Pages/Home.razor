@@ -1,11 +1,20 @@
 @page "/"
 @using Microsoft.AspNetCore.Authorization
-@attribute [Authorize]
+@using Microsoft.AspNetCore.Components.Authorization
+@using Merconiq.Web.Security
+@attribute [Authorize(Policy = CapabilityPolicies.View)]
 @inject IItemService ItemService
 @inject IStockService StockService
+@inject AuthenticationStateProvider AuthenticationStateProvider
+@inject ICurrentUserAuthorization CurrentUserAuthorization
 @inject IPurchaseOrderService POService
 
 <PageTitle>Dashboard</PageTitle>
+
+@if (_authorizationMessage is not null)
+{
+    <MudAlert Severity="Severity.Warning" Variant="Variant.Outlined">@_authorizationMessage</MudAlert>
+}
 
 <MudText Typo="Typo.h4" Color="Color.Primary" Class="mb-4">Dashboard</MudText>
 <MudDivider Class="mb-4" />
@@ -17,12 +26,15 @@
             <MudText Typo="Typo.h3" Color="Color.Primary">@_itemCount</MudText>
         </MudPaper>
     </MudItem>
-    <MudItem xs="12" sm="6" md="4">
-        <MudPaper Elevation="1" Class="pa-4">
-            <MudText Typo="Typo.subtitle2" Color="Color.Secondary">Purchase Orders</MudText>
-            <MudText Typo="Typo.h3" Color="Color.Success">@_poCount</MudText>
-        </MudPaper>
-    </MudItem>
+    @if (_isTenantAdmin)
+    {
+        <MudItem xs="12" sm="6" md="4">
+            <MudPaper Elevation="1" Class="pa-4">
+                <MudText Typo="Typo.subtitle2" Color="Color.Secondary">Purchase Orders</MudText>
+                <MudText Typo="Typo.h3" Color="Color.Success">@_poCount</MudText>
+            </MudPaper>
+        </MudItem>
+    }
     <MudItem xs="12" sm="6" md="4">
         <MudPaper Elevation="1" Class="pa-4">
             <MudText Typo="Typo.subtitle2" Color="Color.Secondary">Units in Stock</MudText>
@@ -81,9 +93,19 @@
             <MudDivider />
             <div class="pa-3">
                 <div class="d-flex flex-column gap-2">
-                    <MudButton Href="/Items/Create" Variant="Variant.Outlined" Color="Color.Primary" FullWidth="true">Add New Item</MudButton>
-                    <MudButton Href="/Stock/Receive" Variant="Variant.Outlined" Color="Color.Success" FullWidth="true">Receive Stock</MudButton>
-                    <MudButton Href="/Suppliers/Create" Variant="Variant.Outlined" Color="Color.Info" FullWidth="true">Add New Supplier</MudButton>
+                    @if (_canEditSharedMasters)
+                    {
+                        <MudButton Href="/Items/Create" Variant="Variant.Outlined" Color="Color.Primary" FullWidth="true">Add New Item</MudButton>
+                        <MudButton Href="/Suppliers/Create" Variant="Variant.Outlined" Color="Color.Info" FullWidth="true">Add New Supplier</MudButton>
+                    }
+                    @if (_canPost)
+                    {
+                        <MudButton Href="/Stock/Receive" Variant="Variant.Outlined" Color="Color.Success" FullWidth="true">Receive Stock</MudButton>
+                    }
+                    @if (_isTenantAdmin)
+                    {
+                        <MudButton Href="/PurchaseOrders/Create" Variant="Variant.Outlined" Color="Color.Warning" FullWidth="true">Create Purchase Order</MudButton>
+                    }
                 </div>
             </div>
         </MudPaper>
@@ -99,7 +121,10 @@
                 <div class="d-flex flex-column gap-2">
                     <MudButton Href="/Items" Variant="Variant.Outlined" Color="Color.Secondary" FullWidth="true">Manage Items</MudButton>
                     <MudButton Href="/Stock/Index" Variant="Variant.Outlined" Color="Color.Secondary" FullWidth="true">View Stock</MudButton>
-                    <MudButton Href="/PurchaseOrders" Variant="Variant.Outlined" Color="Color.Secondary" FullWidth="true">Purchase Orders</MudButton>
+                    @if (_isTenantAdmin)
+                    {
+                        <MudButton Href="/PurchaseOrders" Variant="Variant.Outlined" Color="Color.Secondary" FullWidth="true">Purchase Orders</MudButton>
+                    }
                     <MudButton Href="/Suppliers" Variant="Variant.Outlined" Color="Color.Secondary" FullWidth="true">Manage Suppliers</MudButton>
                     <MudButton Href="/Locations" Variant="Variant.Outlined" Color="Color.Secondary" FullWidth="true">Manage Locations</MudButton>
                 </div>
@@ -112,6 +137,10 @@
     private int _itemCount;
     private int _poCount;
     private int _stockCount;
+    private bool _isTenantAdmin;
+    private bool _canEditSharedMasters;
+    private bool _canPost;
+    private string? _authorizationMessage;
     private string[] _movementLabels = [];
     private List<ChartSeries<double>> _movementSeries = [];
     private List<TopMover> _topMovers = [];
@@ -119,12 +148,36 @@
 
     protected override async Task OnInitializedAsync()
     {
+        var authenticationState = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+        _isTenantAdmin = await CurrentUserAuthorization.IsTenantAdministratorAsync(authenticationState.User);
+        var companyIds = _isTenantAdmin
+            ? []
+            : (await CurrentUserAuthorization.GetAccessibleCompanyIdsAsync(
+                authenticationState.User, CompanyCapability.View)).ToArray();
+        if (!_isTenantAdmin && companyIds.Length == 0)
+        {
+            _authorizationMessage = "An active company membership is required to view business data.";
+            return;
+        }
+
+        _canEditSharedMasters = _isTenantAdmin ||
+            (await CurrentUserAuthorization.GetAccessibleCompanyIdsAsync(
+                authenticationState.User, CompanyCapability.Edit)).Count > 0;
+        _canPost = _isTenantAdmin ||
+            (await CurrentUserAuthorization.GetAccessibleCompanyIdsAsync(
+                authenticationState.User, CompanyCapability.Post)).Count > 0;
+
         var items = (await ItemService.GetAllAsync()).ToList();
-        var stock = (await StockService.GetAllAsync()).ToList();
-        var transactions = (await StockService.GetTransactionsAsync(DateTime.UtcNow.AddDays(-30), null)).ToList();
+        var stock = (_isTenantAdmin
+            ? await StockService.GetAllAsync()
+            : await StockService.GetForCompaniesAsync(companyIds)).ToList();
+        var transactions = (_isTenantAdmin
+            ? await StockService.GetTransactionsAsync(DateTime.UtcNow.AddDays(-30), null)
+            : await StockService.GetTransactionsForCompaniesAsync(
+                DateTime.UtcNow.AddDays(-30), null, companyIds)).ToList();
 
         _itemCount = items.Count;
-        _poCount = await POService.GetCountAsync();
+        _poCount = _isTenantAdmin ? await POService.GetCountAsync() : 0;
         _stockCount = stock.Sum(s => s.Quantity);
 
         var itemCodes = items.ToDictionary(item => item.Id, item => item.ItemCode);

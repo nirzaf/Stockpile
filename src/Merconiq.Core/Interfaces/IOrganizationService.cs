@@ -6,7 +6,9 @@ namespace Merconiq.Core.Interfaces;
 /// <summary>Tenant-safe company, branch, and existing-location ownership workflows.</summary>
 public interface IOrganizationService
 {
-    Task<IReadOnlyList<Company>> GetCompaniesAsync(string? search = null);
+    Task<IReadOnlyList<Company>> GetCompaniesAsync(
+        string? search = null,
+        IReadOnlyCollection<int>? accessibleCompanyIds = null);
     Task<Company?> GetCompanyAsync(int id);
     Task<Company> CreateCompanyAsync(CreateCompanyRequest request);
     Task UpdateCompanyAsync(int id, UpdateCompanyRequest request);

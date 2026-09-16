@@ -23,8 +23,23 @@ public class StockApiTests : IClassFixture<CustomWebApplicationFactory>
     {
         using var scope = _factory.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<InventoryDbContext>();
+        var company = new Company
+        {
+            Code = $"CO-{Guid.NewGuid():N}".Substring(0, 10),
+            LegalName = "Stock test company"
+        };
+        db.Companies.Add(company);
+        await db.SaveChangesAsync();
+        var branch = new Branch
+        {
+            CompanyId = company.Id,
+            Code = $"BR-{Guid.NewGuid():N}".Substring(0, 10),
+            Name = "Stock test branch"
+        };
+        db.Branches.Add(branch);
+        await db.SaveChangesAsync();
         var item = new Item { ItemCode = $"STK-{Guid.NewGuid():N}".Substring(0, 15), Description = "Stock Test", Rate = 10m };
-        var loc = new Location { Name = $"LOC-{Guid.NewGuid():N}".Substring(0, 15) };
+        var loc = new Location { Name = $"LOC-{Guid.NewGuid():N}".Substring(0, 15), BranchId = branch.Id };
         db.Items.Add(item);
         db.Locations.Add(loc);
         await db.SaveChangesAsync();
@@ -127,7 +142,7 @@ public class StockApiTests : IClassFixture<CustomWebApplicationFactory>
         using (var scope = _factory.Services.CreateScope())
         {
             var db = scope.ServiceProvider.GetRequiredService<InventoryDbContext>();
-            var loc2 = new Location { Name = "LOC-DST" };
+            var loc2 = new Location { Name = "LOC-DST", BranchId = loc1.BranchId };
             db.Locations.Add(loc2);
             await db.SaveChangesAsync();
 
@@ -151,7 +166,7 @@ public class StockApiTests : IClassFixture<CustomWebApplicationFactory>
         using (var scope = _factory.Services.CreateScope())
         {
             var db = scope.ServiceProvider.GetRequiredService<InventoryDbContext>();
-            var loc2 = new Location { Name = "LOC-DST2" };
+            var loc2 = new Location { Name = "LOC-DST2", BranchId = loc1.BranchId };
             db.Locations.Add(loc2);
             db.StockInHand.Add(new StockInHand { ItemId = item.Id, LocationId = loc1.Id, Quantity = 5 });
             await db.SaveChangesAsync();

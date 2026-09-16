@@ -11,7 +11,10 @@ public class ForecastDemandHandler : IRequestHandler<ForecastDemandQuery, Demand
     public ForecastDemandHandler(IDemandForecastService service) => _service = service;
 
     public async Task<DemandForecastResult> Handle(ForecastDemandQuery request, CancellationToken ct)
-        => await _service.ForecastDemandAsync(request.ItemId, request.HorizonDays);
+        => request.CompanyIds is null
+            ? await _service.ForecastDemandAsync(request.ItemId, request.HorizonDays)
+            : await _service.ForecastDemandForCompaniesAsync(
+                request.ItemId, request.HorizonDays, request.CompanyIds);
 }
 
 public class ForecastAllItemsDemandHandler : IRequestHandler<ForecastAllItemsDemandQuery, IReadOnlyList<DemandForecastResult>>
@@ -21,5 +24,7 @@ public class ForecastAllItemsDemandHandler : IRequestHandler<ForecastAllItemsDem
     public ForecastAllItemsDemandHandler(IDemandForecastService service) => _service = service;
 
     public async Task<IReadOnlyList<DemandForecastResult>> Handle(ForecastAllItemsDemandQuery request, CancellationToken ct)
-        => await _service.ForecastAllItemsAsync(request.HorizonDays);
+        => request.CompanyIds is null
+            ? await _service.ForecastAllItemsAsync(request.HorizonDays)
+            : await _service.ForecastAllItemsForCompaniesAsync(request.HorizonDays, request.CompanyIds);
 }

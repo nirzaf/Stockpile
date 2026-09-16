@@ -16,10 +16,22 @@ public sealed class OrganizationService(
     ITenantContext tenantContext,
     InventoryDbContext context) : IOrganizationService
 {
-    public async Task<IReadOnlyList<Company>> GetCompaniesAsync(string? search = null)
+    public async Task<IReadOnlyList<Company>> GetCompaniesAsync(
+        string? search = null,
+        IReadOnlyCollection<int>? accessibleCompanyIds = null)
     {
         EnsureTenantResolved();
         IQueryable<Company> query = companies.Query().OrderBy(c => c.Code);
+        if (accessibleCompanyIds is not null)
+        {
+            if (accessibleCompanyIds.Count == 0)
+            {
+                return [];
+            }
+
+            query = query.Where(company => accessibleCompanyIds.Contains(company.Id));
+        }
+
         if (!string.IsNullOrWhiteSpace(search))
         {
             var term = search.Trim();

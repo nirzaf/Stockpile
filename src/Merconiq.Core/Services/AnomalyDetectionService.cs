@@ -32,14 +32,30 @@ public class AnomalyDetectionService : IAnomalyDetectionService
     }
 
     /// <inheritdoc />
-    public async Task<IReadOnlyList<StockAnomaly>> DetectAnomaliesAsync(DateTime? from = null, DateTime? to = null)
+    public Task<IReadOnlyList<StockAnomaly>> DetectAnomaliesAsync(DateTime? from = null, DateTime? to = null) =>
+        DetectAnomaliesForScopeAsync(from, to, null);
+
+    public Task<IReadOnlyList<StockAnomaly>> DetectAnomaliesForCompaniesAsync(
+        DateTime? from,
+        DateTime? to,
+        IReadOnlyCollection<int> companyIds) =>
+        DetectAnomaliesForScopeAsync(from, to, companyIds);
+
+    private async Task<IReadOnlyList<StockAnomaly>> DetectAnomaliesForScopeAsync(
+        DateTime? from = null,
+        DateTime? to = null,
+        IReadOnlyCollection<int>? companyIds = null)
     {
         var anomalies = new List<StockAnomaly>();
 
         // Push date filtering to the database — avoids loading entire transaction table
         var transactions = (await _txRepo.FindAsync(t =>
             (from == null || t.TransactionDate >= from.Value) &&
-            (to == null || t.TransactionDate <= to.Value))).ToList();
+            (to == null || t.TransactionDate <= to.Value) &&
+            (companyIds == null ||
+                (t.FromLocation.Branch != null && companyIds.Contains(t.FromLocation.Branch.CompanyId) &&
+                 (t.ToLocationId == null || (t.ToLocation != null && t.ToLocation.Branch != null &&
+                    companyIds.Contains(t.ToLocation.Branch.CompanyId))))))).ToList();
         var items = (await _itemRepo.GetAllAsync()).ToDictionary(i => i.Id, i => i.ItemCode);
 
         // Group transactions by item

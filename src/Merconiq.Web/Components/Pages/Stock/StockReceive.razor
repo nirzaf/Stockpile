@@ -1,9 +1,13 @@
 @page "/Stock/Receive"
 @using Microsoft.AspNetCore.Authorization
-@attribute [Authorize]
+@using Microsoft.AspNetCore.Components.Authorization
+@using Merconiq.Web.Security
+@attribute [Authorize(Policy = CapabilityPolicies.Post)]
 @inject IStockService StockService
 @inject IItemService ItemService
 @inject ILocationService LocationService
+@inject AuthenticationStateProvider AuthenticationStateProvider
+@inject ICurrentUserAuthorization CurrentUserAuthorization
 @inject ISnackbar Snackbar
 @inject NavigationManager Nav
 
@@ -60,7 +64,8 @@
     protected override async Task OnInitializedAsync()
     {
         _items = await ItemService.GetAllAsync();
-        _locations = await LocationService.GetAllAsync();
+        var authenticationState = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+        _locations = await GetAuthorizedLocationsAsync(authenticationState.User);
     }
 
     private async Task SubmitForm()
@@ -70,6 +75,14 @@
         {
             try
             {
+                var authenticationState = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+                if (!await CurrentUserAuthorization.CanAccessLocationAsync(
+                        authenticationState.User, _locationId, CompanyCapability.Post))
+                {
+                    Snackbar.Add("You no longer have posting access to this location.", Severity.Error);
+                    return;
+                }
+
                 await StockService.ReceiveStockAsync(_itemId, _locationId, _quantity, _notes);
                 Snackbar.Add($"Received {_quantity} units successfully.", Severity.Success);
                 Nav.NavigateTo("/Stock/Index");
@@ -81,5 +94,16 @@
         }
         else if (_itemId == 0) Snackbar.Add("Please select an item.", Severity.Warning);
         else if (_locationId == 0) Snackbar.Add("Please select a location.", Severity.Warning);
+    }
+
+    private async Task<IEnumerable<Location>> GetAuthorizedLocationsAsync(System.Security.Claims.ClaimsPrincipal user)
+    {
+        if (await CurrentUserAuthorization.IsTenantAdministratorAsync(user))
+        {
+            return await LocationService.GetAllAsync();
+        }
+
+        var companyIds = await CurrentUserAuthorization.GetAccessibleCompanyIdsAsync(user, CompanyCapability.View);
+        return await LocationService.GetForCompaniesAsync(companyIds.ToArray());
     }
 }

@@ -1,13 +1,22 @@
 @page "/PurchaseOrders/Create"
 @using Microsoft.AspNetCore.Authorization
-@attribute [Authorize]
+@using Microsoft.AspNetCore.Components.Authorization
+@using Merconiq.Web.Security
+@attribute [Authorize(Policy = CapabilityPolicies.TenantAdministrator)]
 @inject IPurchaseOrderService POService
 @inject ISupplierService SupplierService
 @inject IItemService ItemService
+@inject AuthenticationStateProvider AuthenticationStateProvider
+@inject ICurrentUserAuthorization CurrentUserAuthorization
 @inject ISnackbar Snackbar
 @inject NavigationManager Nav
 
 <PageTitle>Create Purchase Order</PageTitle>
+
+@if (_message is not null)
+{
+    <MudAlert Severity="Severity.Error" Class="mb-3">@_message</MudAlert>
+}
 
 <MudText Typo="Typo.h4" Color="Color.Primary" Class="mb-3">Create Purchase Order</MudText>
 <MudDivider Class="mb-4" />
@@ -78,9 +87,17 @@
     };
     private IEnumerable<Supplier> _suppliers = new List<Supplier>();
     private IEnumerable<Item> _items = new List<Item>();
+    private string? _message;
 
     protected override async Task OnInitializedAsync()
     {
+        var principal = (await AuthenticationStateProvider.GetAuthenticationStateAsync()).User;
+        if (!await CurrentUserAuthorization.IsTenantAdministratorAsync(principal))
+        {
+            _message = "Purchase orders remain tenant-scoped until company ownership is implemented; tenant administrator access is required.";
+            return;
+        }
+
         _suppliers = await SupplierService.GetAllAsync();
         _items = await ItemService.GetAllAsync();
     }
@@ -112,13 +129,20 @@
 
         try
         {
+            var principal = (await AuthenticationStateProvider.GetAuthenticationStateAsync()).User;
+            if (!await CurrentUserAuthorization.IsTenantAdministratorAsync(principal))
+            {
+                _message = "Your tenant administrator access is no longer active.";
+                return;
+            }
+
             await POService.CreateAsync(_po, _po.OrderDetails.ToList());
             Snackbar.Add("Purchase order created successfully", Severity.Success);
             Nav.NavigateTo("/PurchaseOrders");
         }
         catch (Exception ex)
         {
-            Snackbar.Add(ex.Message, Severity.Error);
+            _message = ex.Message;
         }
     }
 }

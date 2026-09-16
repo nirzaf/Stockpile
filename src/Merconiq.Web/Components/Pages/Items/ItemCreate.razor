@@ -1,12 +1,21 @@
 @page "/Items/Create"
 @using Microsoft.AspNetCore.Authorization
-@attribute [Authorize]
+@using Microsoft.AspNetCore.Components.Authorization
+@using Merconiq.Web.Security
+@attribute [Authorize(Policy = CapabilityPolicies.Edit)]
 @inject IItemService ItemService
 @inject ISupplierService SupplierService
+@inject AuthenticationStateProvider AuthenticationStateProvider
+@inject ICurrentUserAuthorization CurrentUserAuthorization
 @inject ISnackbar Snackbar
 @inject NavigationManager Nav
 
 <PageTitle>Create Item</PageTitle>
+
+@if (_message is not null)
+{
+    <MudAlert Severity="Severity.Error" Class="mb-3">@_message</MudAlert>
+}
 
 <MudText Typo="Typo.h4" Color="Color.Primary" Class="mb-3">Create Item</MudText>
 <MudDivider Class="mb-4" />
@@ -40,9 +49,17 @@
 @code {
     private Item _item = new();
     private IEnumerable<Supplier> _suppliers = new List<Supplier>();
+    private string? _message;
 
     protected override async Task OnInitializedAsync()
     {
+        var principal = (await AuthenticationStateProvider.GetAuthenticationStateAsync()).User;
+        if (!await CurrentUserAuthorization.HasCompanyCapabilityAsync(principal, CompanyCapability.Edit))
+        {
+            _message = "An active Edit grant is required to create shared item masters.";
+            return;
+        }
+
         _suppliers = await SupplierService.GetAllAsync();
     }
 
@@ -50,13 +67,20 @@
     {
         try
         {
+            var principal = (await AuthenticationStateProvider.GetAuthenticationStateAsync()).User;
+            if (!await CurrentUserAuthorization.HasCompanyCapabilityAsync(principal, CompanyCapability.Edit))
+            {
+                _message = "Your Edit grant is no longer active.";
+                return;
+            }
+
             await ItemService.CreateAsync(_item);
             Snackbar.Add("Item created successfully", Severity.Success);
             Nav.NavigateTo("/Items");
         }
         catch (Exception ex)
         {
-            Snackbar.Add(ex.Message, Severity.Error);
+            _message = ex.Message;
         }
     }
 }

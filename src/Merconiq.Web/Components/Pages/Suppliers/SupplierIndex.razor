@@ -1,15 +1,27 @@
 @page "/Suppliers"
 @using Microsoft.AspNetCore.Authorization
-@attribute [Authorize]
+@using Microsoft.AspNetCore.Components.Authorization
+@using Merconiq.Web.Security
+@attribute [Authorize(Policy = CapabilityPolicies.View)]
 @inject ISupplierService SupplierService
+@inject AuthenticationStateProvider AuthenticationStateProvider
+@inject ICurrentUserAuthorization CurrentUserAuthorization
 @inject ISnackbar Snackbar
 @inject IDialogService DialogService
 
 <PageTitle>Suppliers</PageTitle>
 
+@if (_message is not null)
+{
+    <MudAlert Severity="Severity.Warning" Class="mb-3">@_message</MudAlert>
+}
+
 <div class="d-flex justify-space-between align-center mb-4">
     <MudText Typo="Typo.h4" Color="Color.Primary">Suppliers</MudText>
-    <MudButton Variant="Variant.Filled" Color="Color.Primary" Href="/Suppliers/Create">Add New Supplier</MudButton>
+    @if (_canEdit)
+    {
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" Href="/Suppliers/Create">Add New Supplier</MudButton>
+    }
 </div>
 
 <MudTable Items="@_suppliers" Dense="true" Hover="true" Striped="true" Filter="new Func<Supplier,bool>(FilterFunc)">
@@ -30,8 +42,11 @@
         <MudTd DataLabel="Phone">@context.Phone</MudTd>
         <MudTd DataLabel="Email">@context.Email</MudTd>
         <MudTd DataLabel="Actions" Style="text-align:right">
-            <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Warning" Href="@($"/Suppliers/Edit/{context.Id}")" Class="mr-2">Edit</MudButton>
-            <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Error" OnClick="@(() => DeleteSupplier(context))">Delete</MudButton>
+            @if (_canEdit)
+            {
+                <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Warning" Href="@($"/Suppliers/Edit/{context.Id}")" Class="mr-2">Edit</MudButton>
+                <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Error" OnClick="@(() => DeleteSupplier(context))">Delete</MudButton>
+            }
         </MudTd>
     </RowTemplate>
     <PagerContent>
@@ -42,14 +57,27 @@
 @code {
     private IEnumerable<Supplier> _suppliers = new List<Supplier>();
     private string _searchString = "";
+    private bool _canEdit;
+    private string? _message;
 
     protected override async Task OnInitializedAsync()
     {
+        var principal = (await AuthenticationStateProvider.GetAuthenticationStateAsync()).User;
+        _canEdit = await CurrentUserAuthorization.HasCompanyCapabilityAsync(principal, CompanyCapability.Edit);
         await LoadData();
     }
 
     private async Task LoadData()
     {
+        var principal = (await AuthenticationStateProvider.GetAuthenticationStateAsync()).User;
+        if (!await CurrentUserAuthorization.HasCompanyCapabilityAsync(principal, CompanyCapability.View))
+        {
+            _suppliers = [];
+            _message = "An active company membership is required to view shared supplier masters.";
+            return;
+        }
+
+        _message = null;
         _suppliers = await SupplierService.GetAllAsync();
     }
 
@@ -75,6 +103,13 @@
         {
             try
             {
+                var principal = (await AuthenticationStateProvider.GetAuthenticationStateAsync()).User;
+                if (!await CurrentUserAuthorization.HasCompanyCapabilityAsync(principal, CompanyCapability.Edit))
+                {
+                    Snackbar.Add("An active Edit grant is required to change shared supplier masters.", Severity.Error);
+                    return;
+                }
+
                 await SupplierService.DeleteAsync(supplier.Id);
                 Snackbar.Add("Supplier deleted successfully", Severity.Success);
                 await LoadData();

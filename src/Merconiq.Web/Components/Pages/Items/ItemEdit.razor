@@ -1,12 +1,21 @@
 @page "/Items/Edit/{Id:int}"
 @using Microsoft.AspNetCore.Authorization
-@attribute [Authorize]
+@using Microsoft.AspNetCore.Components.Authorization
+@using Merconiq.Web.Security
+@attribute [Authorize(Policy = CapabilityPolicies.Edit)]
 @inject IItemService ItemService
 @inject ISupplierService SupplierService
+@inject AuthenticationStateProvider AuthenticationStateProvider
+@inject ICurrentUserAuthorization CurrentUserAuthorization
 @inject ISnackbar Snackbar
 @inject NavigationManager Nav
 
 <PageTitle>Edit Item</PageTitle>
+
+@if (_message is not null)
+{
+    <MudAlert Severity="Severity.Error" Class="mb-3">@_message</MudAlert>
+}
 
 <MudText Typo="Typo.h4" Color="Color.Primary" Class="mb-3">Edit Item</MudText>
 <MudDivider Class="mb-4" />
@@ -50,9 +59,17 @@ else
 
     private Item? _item;
     private IEnumerable<Supplier> _suppliers = new List<Supplier>();
+    private string? _message;
 
     protected override async Task OnInitializedAsync()
     {
+        var principal = (await AuthenticationStateProvider.GetAuthenticationStateAsync()).User;
+        if (!await CurrentUserAuthorization.HasCompanyCapabilityAsync(principal, CompanyCapability.Edit))
+        {
+            _message = "An active Edit grant is required to change shared item masters.";
+            return;
+        }
+
         _suppliers = await SupplierService.GetAllAsync();
         _item = await ItemService.GetByIdAsync(Id);
     }
@@ -63,13 +80,20 @@ else
         {
             try
             {
+                var principal = (await AuthenticationStateProvider.GetAuthenticationStateAsync()).User;
+                if (!await CurrentUserAuthorization.HasCompanyCapabilityAsync(principal, CompanyCapability.Edit))
+                {
+                    _message = "Your Edit grant is no longer active.";
+                    return;
+                }
+
                 await ItemService.UpdateAsync(_item);
                 Snackbar.Add("Item updated successfully", Severity.Success);
                 Nav.NavigateTo("/Items");
             }
             catch (Exception ex)
             {
-                Snackbar.Add(ex.Message, Severity.Error);
+                _message = ex.Message;
             }
         }
     }

@@ -5,10 +5,12 @@
 @using Microsoft.EntityFrameworkCore
 @using Merconiq.Core.Exceptions
 @using Merconiq.Core.Interfaces
-@attribute [Authorize(Roles = "Admin")]
+@using Merconiq.Web.Security
+@attribute [Authorize(Policy = CapabilityPolicies.TenantAdministrator)]
 @inject UserManager<ApplicationUser> UserManager
 @inject RoleManager<IdentityRole> RoleManager
 @inject AuthenticationStateProvider AuthenticationStateProvider
+@inject ICurrentUserAuthorization CurrentUserAuthorization
 @inject IUnitOfWork UnitOfWork
 @inject ISnackbar Snackbar
 @inject IDialogService DialogService
@@ -19,6 +21,11 @@
 <div class="d-flex justify-space-between align-center mb-4">
     <MudText Typo="Typo.h4" Color="Color.Primary">User Management</MudText>
 </div>
+
+@if (_message is not null)
+{
+    <MudAlert Severity="Severity.Error" Class="mb-3">@_message</MudAlert>
+}
 
 <MudGrid>
     <MudItem xs="12" md="4">
@@ -72,13 +79,15 @@
 </MudGrid>
 
 @code {
-    private static readonly string[] Roles = ["Admin", "Manager", "Staff"];
+    private static readonly string[] Roles =
+        ["Admin", "Manager", "Staff", "Operator", "Buyer", "Accountant", "Cashier", "CompanyAdmin", "RestrictedAuditor"];
     private readonly List<UserRow> _users = [];
     private string _newUserName = string.Empty;
     private string _newEmail = string.Empty;
     private string _newPassword = string.Empty;
     private string _newRole = "Staff";
     private string? _currentUserId;
+    private string? _message;
 
     protected override async Task OnInitializedAsync()
     {
@@ -90,6 +99,14 @@
     private async Task LoadUsers()
     {
         _users.Clear();
+        var principal = (await AuthenticationStateProvider.GetAuthenticationStateAsync()).User;
+        if (!await CurrentUserAuthorization.IsTenantAdministratorAsync(principal))
+        {
+            _message = "Tenant administrator access is required to manage tenant users and roles.";
+            return;
+        }
+
+        _message = null;
         var users = await UserManager.Users.OrderBy(user => user.UserName).ToListAsync();
         foreach (var user in users)
         {
@@ -100,6 +117,12 @@
 
     private async Task CreateUser()
     {
+        if (!await IsTenantAdministratorAsync())
+        {
+            Snackbar.Add("Tenant administrator access is required to create users.", Severity.Error);
+            return;
+        }
+
         if (string.IsNullOrWhiteSpace(_newUserName) || string.IsNullOrWhiteSpace(_newEmail) ||
             string.IsNullOrWhiteSpace(_newPassword))
         {
@@ -143,7 +166,8 @@
 
     private async Task SaveRole(UserRow row)
     {
-        if (row.User.Id == _currentUserId || !Roles.Contains(row.Role, StringComparer.Ordinal))
+        if (!await IsTenantAdministratorAsync() || row.User.Id == _currentUserId ||
+            !Roles.Contains(row.Role, StringComparer.Ordinal))
         {
             return;
         }
@@ -202,7 +226,7 @@
 
     private async Task DeleteUser(UserRow row)
     {
-        if (row.User.Id == _currentUserId)
+        if (!await IsTenantAdministratorAsync() || row.User.Id == _currentUserId)
         {
             return;
         }
@@ -211,6 +235,12 @@
             "Delete user", $"Delete {row.User.UserName}?", yesText: "Delete", cancelText: "Cancel");
         if (confirmed != true)
         {
+            return;
+        }
+
+        if (!await IsTenantAdministratorAsync())
+        {
+            Snackbar.Add("Your tenant administrator access is no longer active.", Severity.Error);
             return;
         }
 
@@ -237,4 +267,10 @@
     }
 
     private sealed class RoleMutationException : Exception { }
+
+    private async Task<bool> IsTenantAdministratorAsync()
+    {
+        var principal = (await AuthenticationStateProvider.GetAuthenticationStateAsync()).User;
+        return await CurrentUserAuthorization.IsTenantAdministratorAsync(principal);
+    }
 }

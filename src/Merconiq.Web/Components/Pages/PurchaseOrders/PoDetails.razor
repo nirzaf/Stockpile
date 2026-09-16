@@ -1,7 +1,11 @@
 @page "/PurchaseOrders/Details/{Id:int}"
 @using Microsoft.AspNetCore.Authorization
-@attribute [Authorize]
+@using Microsoft.AspNetCore.Components.Authorization
+@using Merconiq.Web.Security
+@attribute [Authorize(Policy = CapabilityPolicies.TenantAdministrator)]
 @inject IPurchaseOrderService POService
+@inject AuthenticationStateProvider AuthenticationStateProvider
+@inject ICurrentUserAuthorization CurrentUserAuthorization
 @inject ISnackbar Snackbar
 @inject NavigationManager Nav
 
@@ -76,6 +80,12 @@ else
 
     protected override async Task OnInitializedAsync()
     {
+        var principal = (await AuthenticationStateProvider.GetAuthenticationStateAsync()).User;
+        if (!await CurrentUserAuthorization.IsTenantAdministratorAsync(principal))
+        {
+            return;
+        }
+
         _po = await POService.GetByIdAsync(Id);
     }
 
@@ -97,6 +107,13 @@ else
         {
             try
             {
+                var principal = (await AuthenticationStateProvider.GetAuthenticationStateAsync()).User;
+                if (!await CurrentUserAuthorization.IsTenantAdministratorAsync(principal))
+                {
+                    Snackbar.Add("Tenant administrator access is required for tenant-wide purchase orders.", Severity.Error);
+                    return;
+                }
+
                 await POService.UpdateStatusAsync(_po.Id, newStatus.ToString());
                 Snackbar.Add($"Status updated to {newStatus}", Severity.Success);
                 _po = await POService.GetByIdAsync(Id); // Reload
