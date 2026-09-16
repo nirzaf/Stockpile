@@ -147,7 +147,7 @@ public sealed class IdempotencyKeyStore(
 
     private static bool IsUniqueConstraintViolation(DbUpdateException exception)
     {
-        for (var current = exception; current is not null; current = current.InnerException)
+        for (Exception? current = exception; current is not null; current = current.InnerException)
         {
             if (current is PostgresException postgresException &&
                 postgresException.SqlState == PostgresErrorCodes.UniqueViolation)
