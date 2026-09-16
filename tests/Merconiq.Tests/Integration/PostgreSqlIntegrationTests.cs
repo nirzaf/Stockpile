@@ -109,34 +109,40 @@ public sealed class PostgreSqlIntegrationTests
             otherTenantLocationId = location.Id;
         }
 
-        await using (var operation = _fixture.CreateContext(tenantA))
+        await using (var sameCompanyOperation = _fixture.CreateContext(tenantA))
         {
-            var dispatcher = new Mock<IWebhookDispatcher>();
-            var stockService = new StockService(
-                new Repository<StockInHand>(operation),
-                new Repository<StockTransaction>(operation),
-                new Repository<Item>(operation),
-                new Repository<Location>(operation),
-                new Repository<Branch>(operation),
-                new UnitOfWork(operation),
-                dispatcher.Object,
-                new TestTenantContext(tenantA),
-                NullLogger<StockService>.Instance);
-
+            var stockService = CreateStockService(sameCompanyOperation, tenantA);
             await stockService.TransferStockAsync(
                 itemId, companyALocationId, sameCompanyLocationId, 1, "same-company");
+        }
+
+        await using (var legacyOperation = _fixture.CreateContext(tenantA))
+        {
+            var stockService = CreateStockService(legacyOperation, tenantA);
             await stockService.TransferStockAsync(
                 itemId, companyALocationId, legacyLocationId, 1, "legacy-unmapped");
+        }
 
+        await using (var crossCompanyOperation = _fixture.CreateContext(tenantA))
+        {
+            var stockService = CreateStockService(crossCompanyOperation, tenantA);
             var crossCompany = () => stockService.TransferStockAsync(
                 itemId, companyALocationId, companyBLocationId, 1, "cross-company");
             await crossCompany.Should().ThrowAsync<InvalidOperationException>()
                 .WithMessage("Cross-company stock transfers are not supported.");
+        }
 
+        await using (var crossTenantOperation = _fixture.CreateContext(tenantA))
+        {
+            var stockService = CreateStockService(crossTenantOperation, tenantA);
             var crossTenant = () => stockService.ReceiveStockAsync(itemId, otherTenantLocationId, 1, "cross-tenant");
             await crossTenant.Should().ThrowAsync<InvalidOperationException>()
                 .WithMessage("Location does not exist in the current tenant or is deleted.");
+        }
 
+        await using (var deletedLocationOperation = _fixture.CreateContext(tenantA))
+        {
+            var stockService = CreateStockService(deletedLocationOperation, tenantA);
             var deletedLocation = () => stockService.ReceiveStockAsync(itemId, deletedLocationId, 1, "deleted-location");
             await deletedLocation.Should().ThrowAsync<InvalidOperationException>()
                 .WithMessage("Location does not exist in the current tenant or is deleted.");
@@ -424,6 +430,20 @@ public sealed class PostgreSqlIntegrationTests
         var sequence = await verify.DocumentNumberSequences.SingleAsync(item => item.DocumentType == documentType);
         sequence.CompanyId.Should().Be(42);
         sequence.NextNumber.Should().Be(3);
+    }
+
+    private static StockService CreateStockService(InventoryDbContext context, string tenantId)
+    {
+        return new StockService(
+            new Repository<StockInHand>(context),
+            new Repository<StockTransaction>(context),
+            new Repository<Item>(context),
+            new Repository<Location>(context),
+            new Repository<Branch>(context),
+            new UnitOfWork(context),
+            new Mock<IWebhookDispatcher>().Object,
+            new TestTenantContext(tenantId),
+            NullLogger<StockService>.Instance);
     }
 
     private static string Unique(string prefix) => $"{prefix}-{Guid.NewGuid():N}";
