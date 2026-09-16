@@ -12,7 +12,7 @@ Reviewed **2026-09-16**. This is a public-safe decision ledger for the 26 offeri
 
 The gates below are intentionally independent:
 
-1. **Project readiness / fit** — what the public repository can demonstrate and whether the offering matches Stockpile’s purpose, license, and actual evidence.
+1. **Project readiness / fit** — what the public repository can demonstrate and whether the offering matches Merconiq’s purpose, license, and actual evidence.
 2. **Owner gate** — identity, account, region, employment, payment, tax, consent, authorship, and other facts that must be verified privately.
 3. **Application status** — preparation state only. No application is submitted by this repository change.
 4. **Provider confirmation** — an explicit provider decision or entitlement. None is recorded here unless linked to a real provider confirmation.
@@ -29,7 +29,7 @@ The repository baseline for this branch is `b1646978f51ac7493d70e1b701685d0e8fd7
 
 ## Project evidence boundary
 
-Stockpile’s public repository includes an MIT license, an inventory application, active maintenance material, CI/test evidence, and security/release documentation. Those facts support project-readiness review only. They do not establish external adoption, personal eligibility, payment details, a nomination, a provider selection, an award, or a guaranteed benefit. Native Codex review activity is not evidence of project API-credit spending.
+Merconiq’s public repository includes an MIT license, an inventory application, active maintenance material, CI/test evidence, and security/release documentation. Those facts support project-readiness review only. They do not establish external adoption, personal eligibility, payment details, a nomination, a provider selection, an award, or a guaranteed benefit. Native Codex review activity is not evidence of project API-credit spending.
 
 Do not add identities, residence, age, employer status, account addresses, organization IDs, tax or bank details, subscription billing information, private contacts, or unapproved budgets to this file. Keep completed personal fields in a private owner checklist.
 
@@ -38,18 +38,18 @@ Do not add identities, residence, age, employer status, account addresses, organ
 ### P01 — OpenAI Codex Open Source Fund
 
 - **Offering:** API credits.
-- **Project readiness / fit:** **Conditional candidate.** The official form asks for a real OSS project and a concrete API-credit use; awards are discretionary and the published maximum is credits, not cash. Stockpile’s quantified API workload and attributable cost evidence are missing.
-- **Owner gate:** Privately confirm the applicant, project ownership, account or organization, current terms, and an owner-approved budget. The form was readable during the packet review and stated ongoing review.
+- **Project readiness / fit:** **Conditional candidate.** The official form asks for a real OSS project and a concrete API-credit use; awards are discretionary and the published maximum is credits, not cash. Merconiq’s quantified API workload and attributable cost evidence are missing.
+- **Owner gate:** Privately confirm the applicant, project ownership, account or organization, current terms, and an owner-approved budget. The public form returned HTTP 403 during the 2026-09-16 packet review and remains provider-side recheck pending; it must not be described as readable or accepting an application.
 - **Application status:** Not submitted; application candidate only.
 - **Provider confirmation:** None recorded.
-- **Next action:** Complete SFR-018/SFR-020 evidence work, then recheck the live form and obtain separate submission authorization.
+- **Next action:** Complete the public API-workload and maintenance-evidence work, then recheck the live form and obtain separate submission authorization.
 - **Source:** [OpenAI Codex Open Source Fund](https://openai.com/form/codex-open-source-fund/) — reviewed 2026-09-16.
 
 ### P02 — OpenAI Codex for Open Source
 
 - **Offering:** Maintainer subscription and possible additional support.
 - **Project readiness / fit:** **Partial.** Public maintenance is visible, but adoption or ecosystem importance still needs evidence. Native Codex reviews do not prove API-credit expenditure. No universal star threshold is claimed here.
-- **Owner gate:** Privately confirm the correct account and organization, maintainer role, and current terms. Recheck the form’s 500-character qualification, credit-use, and additional-information limits before drafting.
+- **Owner gate:** Privately confirm the correct account and organization, maintainer role, and current terms. The public form returned HTTP 403 during the 2026-09-16 packet review and remains provider-side recheck pending; recheck its limits before drafting.
 - **Application status:** Not submitted; application candidate only.
 - **Provider confirmation:** None recorded.
 - **Next action:** Record dated project/adoption evidence and obtain owner authorship/review of any draft.
@@ -58,8 +58,8 @@ Do not add identities, residence, age, employer status, account addresses, organ
 ### P03 — Anthropic Claude for Open Source
 
 - **Offering:** Six months of Claude Max 20x.
-- **Project readiness / fit:** **Unverified.** The provider lists alternative routes involving dependent repositories or packages, registry downloads, recognized contribution, external merged pull requests, or an OpenSSF Criticality Score. No qualifying route was established for Stockpile; stars are not a substitute.
-- **Owner gate:** The owner must choose a truthful route and verify subscription, region, and renewal terms privately. Contributions made by an individual elsewhere must not be reported as Stockpile metrics.
+- **Project readiness / fit:** **Unverified.** The provider lists alternative routes involving dependent repositories or packages, registry downloads, recognized contribution, external merged pull requests, or an OpenSSF Criticality Score. No qualifying route was established for Merconiq; stars are not a substitute.
+- **Owner gate:** The owner must choose a truthful route and verify subscription, region, and renewal terms privately. Contributions made by an individual elsewhere must not be reported as Merconiq metrics.
 - **Application status:** Not submitted; no qualifying route established.
 - **Provider confirmation:** None recorded.
 - **Next action:** Check current criteria and gather only dated, source-backed evidence for a route that genuinely applies.
@@ -68,7 +68,7 @@ Do not add identities, residence, age, employer status, account addresses, organ
 ### P04 — GitHub Secure Open Source Fund
 
 - **Offering:** Security grant, education, and conditional credits.
-- **Project readiness / fit:** **Partial.** Stockpile has an engineering foundation, but governance, real adoption, attendance, and owner conditions are not established. Enabling CodeQL is not automatic compensation or fund eligibility.
+- **Project readiness / fit:** **Partial.** Merconiq has an engineering foundation, but governance, real adoption, attendance, and owner conditions are not established. Enabling CodeQL is not automatic compensation or fund eligibility.
 - **Owner gate:** Confirm the current cohort, supported applicant conditions, participation, and follow-up commitments privately. The page had active application links but still mentioned 2025 sessions during review.
 - **Application status:** Not submitted; current cohort unverified.
 - **Provider confirmation:** None recorded.
@@ -78,7 +78,7 @@ Do not add identities, residence, age, employer status, account addresses, organ
 ### P05 — Alpha-Omega
 
 - **Offering:** Security-focused project funding.
-- **Project readiness / fit:** **Conditional candidate.** The published basis includes OSI-approved licensing, a credible security problem and project importance, a concrete plan, measurable outcomes, and reporting. Stockpile’s ecosystem criticality is unproven; it must not be described as a foundational dependency without evidence.
+- **Project readiness / fit:** **Conditional candidate.** The published basis includes OSI-approved licensing, a credible security problem and project importance, a concrete plan, measurable outcomes, and reporting. Merconiq’s ecosystem criticality is unproven; it must not be described as a foundational dependency without evidence.
 - **Owner gate:** Recheck the current quarterly intake, statement-of-work requirements, reporting, and any applicant conditions.
 - **Application status:** Not submitted; conditional future candidate.
 - **Provider confirmation:** None recorded.
@@ -98,7 +98,7 @@ Do not add identities, residence, age, employer status, account addresses, organ
 ### P07 — Sovereign Tech Fund
 
 - **Offering:** Foundational-technology investment or work commissions.
-- **Project readiness / fit:** **Not matched on current scope.** The reviewed program funds open digital base technologies used by other software, excludes user-facing applications and prototypes, and has a large proposed-work threshold. Stockpile is a user-facing inventory application; engineering improvements cannot remove that mismatch.
+- **Project readiness / fit:** **Not matched on current scope.** The reviewed program funds open digital base technologies used by other software, excludes user-facing applications and prototypes, and has a large proposed-work threshold. Merconiq is a user-facing inventory application; engineering improvements cannot remove that mismatch.
 - **Owner gate:** Do not apply under a false infrastructure description. Reconsider only after a genuine project-scope change or provider-rule change.
 - **Application status:** Not applicable on current project purpose.
 - **Provider confirmation:** None recorded.
@@ -118,7 +118,7 @@ Do not add identities, residence, age, employer status, account addresses, organ
 ### P09 — Microsoft FOSS Fund
 
 - **Offering:** Employee-nominated sponsorship.
-- **Project readiness / fit:** **External dependency.** Microsoft employee nomination and genuine Microsoft use or community relevance are provider conditions. Stockpile’s use of .NET does not establish either condition.
+- **Project readiness / fit:** **External dependency.** Microsoft employee nomination and genuine Microsoft use or community relevance are provider conditions. Merconiq’s use of .NET does not establish either condition.
 - **Owner gate:** Verify genuine use and nomination through the program. Do not invent a Microsoft relationship or automatically solicit strangers.
 - **Application status:** Not submitted; nomination dependent.
 - **Provider confirmation:** None recorded.
@@ -138,7 +138,7 @@ Do not add identities, residence, age, employer status, account addresses, organ
 ### P11 — Cloudflare Community Engineers
 
 - **Offering:** Community or ecosystem contribution grants.
-- **Project readiness / fit:** **Watch / verify.** This is distinct from Cloudflare OSS product sponsorship, and no sustained Stockpile contribution to the Cloudflare ecosystem was established.
+- **Project readiness / fit:** **Watch / verify.** This is distinct from Cloudflare OSS product sponsorship, and no sustained Merconiq contribution to the Cloudflare ecosystem was established.
 - **Owner gate:** Confirm whether applications are open and what current contribution requirements apply. Do not add Cloudflare dependencies merely to pursue eligibility.
 - **Application status:** Not submitted; route unverified.
 - **Provider confirmation:** None recorded.
@@ -208,7 +208,7 @@ Do not add identities, residence, age, employer status, account addresses, organ
 ### P18 — AWS Open Source Credits
 
 - **Offering:** Cloud service credits.
-- **Project readiness / fit:** **Conditional infrastructure request.** OSI licensing, active maintenance/community, and a justified AWS use case are relevant. Stockpile can be self-hosted; moving production to AWS is not a readiness requirement.
+- **Project readiness / fit:** **Conditional infrastructure request.** OSI licensing, active maintenance/community, and a justified AWS use case are relevant. Merconiq can be self-hosted; moving production to AWS is not a readiness requirement.
 - **Owner gate:** The cited announcement is a policy source, not proof of a current award. Verify the live application, eligible services, expiry, overage, account, and terms privately.
 - **Application status:** Not submitted; conditional infrastructure request.
 - **Provider confirmation:** None recorded.
@@ -218,7 +218,7 @@ Do not add identities, residence, age, employer status, account addresses, organ
 ### P19 — Fastly Fast Forward
 
 - **Offering:** Infrastructure sponsorship.
-- **Project readiness / fit:** **Conditional option.** Approved OSS/community projects may receive relevant support, but actual delivery or traffic needs must be explained. Sponsorship is not a substitute for improving Stockpile.
+- **Project readiness / fit:** **Conditional option.** Approved OSS/community projects may receive relevant support, but actual delivery or traffic needs must be explained. Sponsorship is not a substitute for improving Merconiq.
 - **Owner gate:** Verify current terms, expected traffic, attribution, privacy, and offboarding. Keep a provider-independent distribution route.
 - **Application status:** Not submitted; conditional infrastructure option.
 - **Provider confirmation:** None recorded.
@@ -238,7 +238,7 @@ Do not add identities, residence, age, employer status, account addresses, organ
 ### P21 — GitLab for Open Source
 
 - **Offering:** Development-platform benefits.
-- **Project readiness / fit:** **Optional / not a migration target.** A public OSS project must meet current licensing and project-use conditions. There is no reason to migrate Stockpile from GitHub solely for this benefit.
+- **Project readiness / fit:** **Optional / not a migration target.** A public OSS project must meet current licensing and project-use conditions. There is no reason to migrate Merconiq from GitHub solely for this benefit.
 - **Owner gate:** Verify current terms and renewal requirements; assess commercial-purpose restrictions and the needed GitLab footprint.
 - **Application status:** Not started; optional platform benefit.
 - **Provider confirmation:** None recorded.
@@ -258,7 +258,7 @@ Do not add identities, residence, age, employer status, account addresses, organ
 ### P23 — CircleCI OSS benefits
 
 - **Offering:** CI service allocation.
-- **Project readiness / fit:** **Optional.** Public OSS workloads may use the offering under current resource and platform conditions, but GitHub Actions already builds and tests Stockpile. A second CI service is not a readiness prerequisite.
+- **Project readiness / fit:** **Optional.** Public OSS workloads may use the offering under current resource and platform conditions, but GitHub Actions already builds and tests Merconiq. A second CI service is not a readiness prerequisite.
 - **Owner gate:** Check live quotas, architecture support, permissions, and a no-cost fallback.
 - **Application status:** Not started; optional CI route.
 - **Provider confirmation:** None recorded.
@@ -278,7 +278,7 @@ Do not add identities, residence, age, employer status, account addresses, organ
 ### P25 — BrowserStack OSS program
 
 - **Offering:** Cross-browser and device-testing access.
-- **Project readiness / fit:** **Potentially useful, unverified.** Stockpile’s responsive Blazor UI could benefit, but approval is not established and tests must work without an award.
+- **Project readiness / fit:** **Potentially useful, unverified.** Merconiq’s responsive Blazor UI could benefit, but approval is not established and tests must work without an award.
 - **Owner gate:** Verify project-purpose, attribution, user-seat, data handling, and renewal conditions. Use synthetic data and the smallest useful matrix.
 - **Application status:** Not submitted; potential testing route.
 - **Provider confirmation:** None recorded.
@@ -288,7 +288,7 @@ Do not add identities, residence, age, employer status, account addresses, organ
 ### P26 — OTF FOSS Sustainability Fund
 
 - **Offering:** Mission-specific sustainability funding.
-- **Project readiness / fit:** **Not matched on current evidence.** The reviewed fund is tied to an internet-freedom mission, not generic commercial application maintenance. No Stockpile mission fit was established.
+- **Project readiness / fit:** **Not matched on current evidence.** The reviewed fund is tied to an internet-freedom mission, not generic commercial application maintenance. No Merconiq mission fit was established.
 - **Owner gate:** Recheck intake status and mission before any future application. Do not rebrand a shop inventory system as internet-freedom infrastructure without real evidence.
 - **Application status:** Not applicable on current mission fit.
 - **Provider confirmation:** None recorded.
@@ -310,4 +310,4 @@ Complete these items outside the repository for any selected offering. Publish o
 
 ## Reassessment rules
 
-Recheck the official source and the relevant project evidence before acting when a provider changes its terms, form, intake, region list, product, or renewal policy, or when Stockpile gains genuine adoption or other public evidence. A passing repository check cannot satisfy an owner or provider gate. No application, deployment, account change, funding commitment, or external contact is authorized by this document.
+Recheck the official source and the relevant project evidence before acting when a provider changes its terms, form, intake, region list, product, or renewal policy, or when Merconiq gains genuine adoption or other public evidence. A passing repository check cannot satisfy an owner or provider gate. No application, deployment, account change, funding commitment, or external contact is authorized by this document.
