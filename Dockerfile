@@ -27,7 +27,7 @@ RUN dotnet test Merconiq.Tests/Merconiq.Tests.csproj \
 WORKDIR /src/Merconiq.Web
 RUN dotnet publish -c Release -o /app --no-restore
 RUN mkdir -p /app/logs
-RUN mkdir -p /app/data/keys && chown -R app:app /app/data
+RUN mkdir -p /app/data/keys
 
 # === Runtime Stage ===
 FROM mcr.microsoft.com/dotnet/aspnet:10.0.11 AS runtime
