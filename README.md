@@ -303,7 +303,7 @@ Pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines
 
 ## License
 
-Stockpile-authored material is available under the MIT License; see
+Merconiq-authored material is available under the MIT License; see
 [LICENSE](LICENSE). Third-party packages and copied browser assets retain
 their own licenses and notices. Review [third-party notices](docs/THIRD_PARTY_NOTICES.md)
 before redistributing a built artifact; the repository MIT license does not
