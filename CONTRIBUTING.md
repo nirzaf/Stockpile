@@ -1,4 +1,4 @@
-# Contributing to Inventory Management System
+# Contributing to Stockpile
 
 Thank you for your interest in contributing! This document outlines the process for contributing to this open-source project.
 
@@ -23,22 +23,125 @@ Please read and follow our [Code of Conduct](CODE_OF_CONDUCT.md).
 ### Pull Requests
 
 1. **Fork** the repository
-2. **Create a branch** from `main`:
+2. **Create a branch** from the canonical repository's current `master` branch:
    ```bash
-   git checkout -b feature/your-feature-name
+   git remote add upstream https://github.com/nirzaf/stockpile.git  # once, if upstream is not configured
+   git fetch upstream master
+   git switch -c codex/issue-<number>-<short-description> upstream/master
    ```
+   If `upstream` already exists, keep its canonical URL and omit the `remote add` command. Contributors who work directly from the canonical repository may use `origin/master` only when `origin` is verified to be `https://github.com/nirzaf/stockpile.git`.
 3. **Make changes** following our coding conventions
 4. **Add tests** for new functionality
-5. **Run all tests** to verify nothing is broken:
+5. **Restore, build, and run all tests** to verify nothing is broken:
    ```bash
-   dotnet test
+   dotnet restore
+   dotnet build --no-restore --configuration Release
+   dotnet test --no-build --configuration Release
    ```
-6. **Build** the solution:
+   The repository pins the SDK to exactly **.NET 10.0.300** in `global.json` (`rollForward` is disabled); install that SDK before running these commands. A generic .NET 10 installation is not sufficient.
+6. **Run the PostgreSQL phase** when a change involves relational constraints, transactions, concurrency, persistence boundaries, migrations, or API behavior that depends on PostgreSQL:
    ```bash
-   dotnet build
+   RUN_POSTGRES_TESTS=true dotnet test InventoryManagementSystem.Tests/InventoryManagementSystem.Tests.csproj \
+     --no-build --configuration Release --filter "Category=PostgreSQL"
    ```
-7. **Commit** with descriptive messages
-8. **Push** and open a Pull Request against `main`
+   The PostgreSQL phase uses Testcontainers to create a disposable `postgres:16-alpine` instance, so Docker must be installed and running in Linux-container mode; a locally installed PostgreSQL server alone is not sufficient for this command. InMemory tests are useful for fast unit coverage, but a skipped or InMemory-only test does not prove PostgreSQL behavior. Confirm that the PostgreSQL phase actually ran.
+   The command above uses POSIX shell syntax. In PowerShell, set the environment variable for the command explicitly:
+   ```powershell
+   $previousRunPostgresTests = $env:RUN_POSTGRES_TESTS
+   try {
+     $env:RUN_POSTGRES_TESTS = "true"
+     dotnet test InventoryManagementSystem.Tests/InventoryManagementSystem.Tests.csproj --no-build --configuration Release --filter "Category=PostgreSQL"
+   }
+   finally {
+     if ($null -eq $previousRunPostgresTests) { Remove-Item Env:RUN_POSTGRES_TESTS -ErrorAction SilentlyContinue }
+     else { $env:RUN_POSTGRES_TESTS = $previousRunPostgresTests }
+   }
+   ```
+7. **Inspect** `git diff --check`, the changed-file list, and the complete diff. Do not commit secrets, dumps, coverage output, or transient logs.
+8. **Commit** with descriptive conventional-commit messages.
+9. **Push only the issue branch** and open a Pull Request against `master`.
+
+### Stockpile review and merge runbook
+
+For an engineering change, use one issue → one fresh `codex/issue-<number>-<short-description>` branch → one focused PR. Keep the PR linked to the real issue and record the tested commit, commands, and limitations. Do not bundle unrelated work or commit directly to `master`.
+
+After implementation and verification, mark the PR ready for review. Stockpile uses the existing native `chatgpt-codex-connector[bot]` integration. Request a review by commenting:
+
+```text
+@codex review
+
+Please review the current PR head <FULL_HEAD_SHA> against master.
+Check the linked issue's acceptance criteria, exact stock balances, tenant isolation,
+transaction/outbox consistency, retry/idempotency safety, compatibility, and tests.
+```
+
+An eyes reaction or a posted review request only means that a review may be running. A completed native Codex summary tied to the current full head, with all findings inspected (and the integration's no-findings signal where applicable), is the review completion evidence. It is distinct from a GitHub `APPROVED` review, required human or CODEOWNERS approval, and the actual `MERGED` state.
+
+For every material finding, inspect the full thread, reproduce or substantiate it, make the smallest valid fix, rerun relevant tests, push the new head, and request a fresh review for that new SHA. Record accepted and rejected dispositions with evidence; do not weaken tests or close a concern merely by resolving its thread.
+
+Before merging, verify the current head and base, acceptance criteria, complete diff, required checks, completed current-head Codex review, resolved actionable findings, required approvals, and a usable merge state. Use the repository's normal merge strategy with GitHub's expected-head guard:
+
+```bash
+REVIEWED_HEAD="<FULL_REVIEWED_HEAD_SHA>"
+REVIEWED_BASE_BRANCH="<REVIEWED_BASE_BRANCH>"
+REVIEWED_BASE="<FULL_REVIEWED_BASE_SHA>"
+CURRENT_HEAD="$(gh pr view <PR_NUMBER> --repo nirzaf/stockpile --json headRefOid --jq '.headRefOid')"
+CURRENT_BASE_BRANCH="$(gh pr view <PR_NUMBER> --repo nirzaf/stockpile --json baseRefName --jq '.baseRefName')"
+CURRENT_BASE="$(gh pr view <PR_NUMBER> --repo nirzaf/stockpile --json baseRefOid --jq '.baseRefOid')"
+if test "$CURRENT_HEAD" != "$REVIEWED_HEAD"; then
+  printf 'PR head changed: expected %s, found %s. Re-review before merging.\n' "$REVIEWED_HEAD" "$CURRENT_HEAD"
+  exit 1
+fi
+if test "$CURRENT_BASE_BRANCH" != "$REVIEWED_BASE_BRANCH" || test "$CURRENT_BASE" != "$REVIEWED_BASE"; then
+  printf 'PR base changed: expected %s at %s, found %s at %s. Re-review before merging.\n' "$REVIEWED_BASE_BRANCH" "$REVIEWED_BASE" "$CURRENT_BASE_BRANCH" "$CURRENT_BASE"
+  exit 1
+fi
+if ! ACTIVE_RULESETS="$(gh api "repos/nirzaf/stockpile/rulesets" --paginate --slurp)"; then
+  printf 'Could not inspect repository rulesets; do not merge until the target branch policy is known.\n'
+  exit 1
+fi
+if ! DEFAULT_BRANCH="$(gh api "repos/nirzaf/stockpile" --jq '.default_branch')"; then
+  printf 'Could not inspect the repository default branch; do not merge until the target branch policy is known.\n'
+  exit 1
+fi
+if QUEUE_RULE_RESULT="$(printf '%s' "$ACTIVE_RULESETS" | jq -e --arg base_ref "refs/heads/$REVIEWED_BASE_BRANCH" --arg default_branch "$DEFAULT_BRANCH" '
+  def selector_matches($selector; $ref; $default):
+    if $selector == "~ALL" then true
+    elif $selector == "~DEFAULT_BRANCH" then $ref == ("refs/heads/" + $default)
+    elif ($selector | endswith("*")) then $ref | startswith($selector[0:-1])
+    else $selector == $ref
+    end;
+  def applies_to_base($ruleset; $ref; $default):
+    ($ruleset.conditions.ref_name.include // []) as $includes
+    | ($ruleset.conditions.ref_name.exclude // []) as $excludes
+    | (($includes | length) == 0 or any($includes[]; selector_matches(.; $ref; $default)))
+      and all($excludes[]?; selector_matches(.; $ref; $default) | not);
+  flatten
+  | any(.[]?;
+      .enforcement == "active"
+      and any(.rules[]?; .type == "merge_queue")
+      and applies_to_base(.; $base_ref; $default_branch)
+    )
+'); then
+  if test "$QUEUE_RULE_RESULT" = "true"; then
+    printf 'The target branch requires a merge queue; stop before invoking gh pr merge.\n'
+    exit 1
+  fi
+else
+  QUEUE_RULE_STATUS=$?
+  if test "$QUEUE_RULE_STATUS" -ne 1; then
+    printf 'Could not parse repository rulesets; do not merge until the target branch policy is known.\n'
+    exit 1
+  fi
+fi
+gh pr merge <PR_NUMBER> --repo nirzaf/stockpile --squash --match-head-commit "$REVIEWED_HEAD"
+```
+
+The head and base comparisons are preflight checks, not an atomic expected-base guard: GitHub CLI only provides `--match-head-commit` for the head. They intentionally require a fresh review whenever `master` advances or the PR is retargeted, so use this runbook serially and do not merge concurrently or place the PR in a merge queue. After merging, record the actual merge commit and its first parent as evidence of the base that was merged. Never use an admin/bypass merge, disable checks, force-push, or lower an approval requirement. Preserve any applicable owner approval or confirmation-codeword rule; do not invent one.
+
+After merging, verify that GitHub reports `MERGED`, record the merge commit, fetch `master`, and check its post-merge CI health before starting the next issue. A queued merge, green check, or review reaction is not proof of completion.
+
+The normal workflows may have side effects: pushes to `master` publish the configured Docker image to GHCR, and changes under `docs/` can deploy GitHub Pages. Treat release publication, production deployment, user recruitment, and funding submission as separately authorized owner actions. Do not run `synthetic-history.sh`, rewrite history, or fabricate metrics.
 
 ### PR Guidelines
 
