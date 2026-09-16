@@ -3,6 +3,7 @@ using System;
 using Merconiq.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace Merconiq.Infrastructure.Migrations
 {
     [DbContext(typeof(InventoryDbContext))]
-    partial class InventoryDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260916225156_AddStockReservations")]
+    partial class AddStockReservations
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -330,180 +333,6 @@ namespace Merconiq.Infrastructure.Migrations
                     b.HasIndex("TenantId", "UserId", "IsActive");
 
                     b.ToTable("CompanyMemberships");
-                });
-
-            modelBuilder.Entity("Merconiq.Core.Entities.DocumentIdentity", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .HasColumnType("uuid");
-
-                    b.Property<int?>("CompanyId")
-                        .HasColumnType("integer");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("CreatedBy")
-                        .HasColumnType("text");
-
-                    b.Property<string>("DocumentType")
-                        .IsRequired()
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)");
-
-                    b.Property<string>("HumanNumber")
-                        .IsRequired()
-                        .HasMaxLength(50)
-                        .HasColumnType("character varying(50)");
-
-                    b.Property<int>("Period")
-                        .HasColumnType("integer");
-
-                    b.Property<string>("RequestHash")
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)");
-
-                    b.Property<string>("RequestKey")
-                        .HasMaxLength(200)
-                        .HasColumnType("character varying(200)");
-
-                    b.Property<string>("RequestScope")
-                        .IsRequired()
-                        .HasMaxLength(256)
-                        .HasColumnType("character varying(256)");
-
-                    b.Property<string>("Status")
-                        .IsRequired()
-                        .HasMaxLength(32)
-                        .HasColumnType("character varying(32)");
-
-                    b.Property<string>("TenantId")
-                        .IsRequired()
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)");
-
-                    b.Property<DateTime?>("UpdatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("UpdatedBy")
-                        .HasColumnType("text");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("CompanyId", "TenantId");
-
-                    b.HasIndex("TenantId", "DocumentType", "Period", "HumanNumber")
-                        .IsUnique()
-                        .HasFilter("\"CompanyId\" IS NULL");
-
-                    b.HasIndex("TenantId", "RequestScope", "RequestKey")
-                        .IsUnique()
-                        .HasFilter("\"RequestKey\" IS NOT NULL");
-
-                    b.HasIndex("TenantId", "CompanyId", "DocumentType", "Period", "HumanNumber")
-                        .IsUnique()
-                        .HasFilter("\"CompanyId\" IS NOT NULL");
-
-                    b.ToTable("DocumentIdentities");
-                });
-
-            modelBuilder.Entity("Merconiq.Core.Entities.DocumentLineIdentity", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .HasColumnType("uuid");
-
-                    b.Property<int?>("CompanyId")
-                        .HasColumnType("integer");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("CreatedBy")
-                        .HasColumnType("text");
-
-                    b.Property<Guid>("DocumentId")
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("LineType")
-                        .IsRequired()
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)");
-
-                    b.Property<string>("TenantId")
-                        .IsRequired()
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)");
-
-                    b.Property<DateTime?>("UpdatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("UpdatedBy")
-                        .HasColumnType("text");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("DocumentId", "TenantId");
-
-                    b.ToTable("DocumentLineIdentities");
-                });
-
-            modelBuilder.Entity("Merconiq.Core.Entities.DocumentLineLink", b =>
-                {
-                    b.Property<long>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("bigint");
-
-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
-
-                    b.Property<int>("CompanyId")
-                        .HasColumnType("integer");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("CreatedBy")
-                        .HasColumnType("text");
-
-                    b.Property<string>("RelationshipType")
-                        .IsRequired()
-                        .HasMaxLength(32)
-                        .HasColumnType("character varying(32)");
-
-                    b.Property<Guid>("SourceDocumentId")
-                        .HasColumnType("uuid");
-
-                    b.Property<Guid>("SourceLineId")
-                        .HasColumnType("uuid");
-
-                    b.Property<Guid>("TargetDocumentId")
-                        .HasColumnType("uuid");
-
-                    b.Property<Guid>("TargetLineId")
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("TenantId")
-                        .IsRequired()
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)");
-
-                    b.Property<DateTime?>("UpdatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("UpdatedBy")
-                        .HasColumnType("text");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("CompanyId", "TenantId");
-
-                    b.HasIndex("SourceDocumentId", "SourceLineId", "TenantId");
-
-                    b.HasIndex("TargetDocumentId", "TargetLineId", "TenantId");
-
-                    b.HasIndex("TenantId", "CompanyId", "SourceDocumentId", "SourceLineId", "TargetDocumentId", "TargetLineId", "RelationshipType")
-                        .IsUnique();
-
-                    b.ToTable("DocumentLineLinks");
                 });
 
             modelBuilder.Entity("Merconiq.Core.Entities.DocumentNumberSequence", b =>
@@ -929,9 +758,6 @@ namespace Merconiq.Infrastructure.Migrations
                     b.Property<string>("CreatedBy")
                         .HasColumnType("text");
 
-                    b.Property<Guid>("DocumentLineId")
-                        .HasColumnType("uuid");
-
                     b.Property<int>("ItemId")
                         .HasColumnType("integer");
 
@@ -963,9 +789,6 @@ namespace Merconiq.Infrastructure.Migrations
 
                     b.HasIndex("TenantId");
 
-                    b.HasIndex("DocumentLineId", "TenantId")
-                        .IsUnique();
-
                     b.ToTable("OrderDetails");
                 });
 
@@ -982,9 +805,6 @@ namespace Merconiq.Infrastructure.Migrations
 
                     b.Property<string>("CreatedBy")
                         .HasColumnType("text");
-
-                    b.Property<Guid>("DocumentId")
-                        .HasColumnType("uuid");
 
                     b.Property<string>("Notes")
                         .HasColumnType("text");
@@ -1028,9 +848,6 @@ namespace Merconiq.Infrastructure.Migrations
                     b.HasIndex("SupplierId");
 
                     b.HasIndex("TenantId");
-
-                    b.HasIndex("DocumentId", "TenantId")
-                        .IsUnique();
 
                     b.HasIndex("TenantId", "PONumber")
                         .IsUnique();
@@ -1774,57 +1591,6 @@ namespace Merconiq.Infrastructure.Migrations
                     b.Navigation("User");
                 });
 
-            modelBuilder.Entity("Merconiq.Core.Entities.DocumentIdentity", b =>
-                {
-                    b.HasOne("Merconiq.Core.Entities.Company", "Company")
-                        .WithMany()
-                        .HasForeignKey("CompanyId", "TenantId")
-                        .HasPrincipalKey("Id", "TenantId")
-                        .OnDelete(DeleteBehavior.Restrict);
-
-                    b.Navigation("Company");
-                });
-
-            modelBuilder.Entity("Merconiq.Core.Entities.DocumentLineIdentity", b =>
-                {
-                    b.HasOne("Merconiq.Core.Entities.DocumentIdentity", "DocumentIdentity")
-                        .WithMany("Lines")
-                        .HasForeignKey("DocumentId", "TenantId")
-                        .HasPrincipalKey("Id", "TenantId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-
-                    b.Navigation("DocumentIdentity");
-                });
-
-            modelBuilder.Entity("Merconiq.Core.Entities.DocumentLineLink", b =>
-                {
-                    b.HasOne("Merconiq.Core.Entities.Company", null)
-                        .WithMany()
-                        .HasForeignKey("CompanyId", "TenantId")
-                        .HasPrincipalKey("Id", "TenantId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-
-                    b.HasOne("Merconiq.Core.Entities.DocumentLineIdentity", "SourceLine")
-                        .WithMany()
-                        .HasForeignKey("SourceDocumentId", "SourceLineId", "TenantId")
-                        .HasPrincipalKey("DocumentId", "Id", "TenantId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-
-                    b.HasOne("Merconiq.Core.Entities.DocumentLineIdentity", "TargetLine")
-                        .WithMany()
-                        .HasForeignKey("TargetDocumentId", "TargetLineId", "TenantId")
-                        .HasPrincipalKey("DocumentId", "Id", "TenantId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-
-                    b.Navigation("SourceLine");
-
-                    b.Navigation("TargetLine");
-                });
-
             modelBuilder.Entity("Merconiq.Core.Entities.Item", b =>
                 {
                     b.HasOne("Merconiq.Core.Entities.Supplier", "Supplier")
@@ -1913,15 +1679,6 @@ namespace Merconiq.Infrastructure.Migrations
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
-                    b.HasOne("Merconiq.Core.Entities.DocumentLineIdentity", "DocumentLineIdentity")
-                        .WithOne("OrderDetail")
-                        .HasForeignKey("Merconiq.Core.Entities.OrderDetail", "DocumentLineId", "TenantId")
-                        .HasPrincipalKey("Merconiq.Core.Entities.DocumentLineIdentity", "Id", "TenantId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-
-                    b.Navigation("DocumentLineIdentity");
-
                     b.Navigation("Item");
 
                     b.Navigation("PurchaseOrder");
@@ -1934,15 +1691,6 @@ namespace Merconiq.Infrastructure.Migrations
                         .HasForeignKey("SupplierId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
-
-                    b.HasOne("Merconiq.Core.Entities.DocumentIdentity", "DocumentIdentity")
-                        .WithOne("PurchaseOrder")
-                        .HasForeignKey("Merconiq.Core.Entities.PurchaseOrder", "DocumentId", "TenantId")
-                        .HasPrincipalKey("Merconiq.Core.Entities.DocumentIdentity", "Id", "TenantId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-
-                    b.Navigation("DocumentIdentity");
 
                     b.Navigation("Supplier");
                 });
@@ -2129,18 +1877,6 @@ namespace Merconiq.Infrastructure.Migrations
                     b.Navigation("Branches");
 
                     b.Navigation("Memberships");
-                });
-
-            modelBuilder.Entity("Merconiq.Core.Entities.DocumentIdentity", b =>
-                {
-                    b.Navigation("Lines");
-
-                    b.Navigation("PurchaseOrder");
-                });
-
-            modelBuilder.Entity("Merconiq.Core.Entities.DocumentLineIdentity", b =>
-                {
-                    b.Navigation("OrderDetail");
                 });
 
             modelBuilder.Entity("Merconiq.Core.Entities.Item", b =>

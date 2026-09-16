@@ -38,6 +38,9 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
     /// <summary>Current stock-in-hand per item per location.</summary>
     public DbSet<StockInHand> StockInHand { get; set; } = null!;
 
+    /// <summary>Tenant-scoped stock reservations.</summary>
+    public DbSet<StockReservation> StockReservations { get; set; } = null!;
+
     /// <summary>Current weighted-average stock valuation per item and location.</summary>
     public DbSet<StockValuationBucket> StockValuationBuckets { get; set; } = null!;
 
@@ -379,6 +382,7 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
             entity.Property(e => e.TenantId).HasMaxLength(64).IsRequired();
             entity.HasIndex(e => e.TenantId);
             entity.Property(e => e.BatchNumber).HasMaxLength(100);
+            entity.Property(e => e.ReservedQuantity).HasDefaultValue(0).IsRequired();
             entity.HasIndex(e => new { e.TenantId, e.ItemId, e.LocationId, e.BatchNumber, e.ExpiryDate }).IsUnique();
 
             entity.HasOne(s => s.Item)
@@ -402,6 +406,33 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
                   .HasColumnType("xid")
                   .ValueGeneratedOnAddOrUpdate()
                   .IsConcurrencyToken();
+        });
+
+        modelBuilder.Entity<StockReservation>(entity =>
+        {
+            entity.HasQueryFilter(e => e.TenantId == CurrentTenantId);
+            entity.Property(e => e.TenantId).HasMaxLength(64).IsRequired();
+            entity.Property(e => e.SourceLineReference).HasMaxLength(128).IsRequired();
+            entity.Property(e => e.BatchNumber).HasMaxLength(100);
+            entity.Property(e => e.ExpiresAt).HasColumnType("timestamp with time zone").IsRequired();
+            entity.Property(e => e.Status).HasConversion<string>().HasMaxLength(32).IsRequired();
+            entity.Property(e => e.ResolutionReason).HasMaxLength(500);
+            entity.HasIndex(e => new { e.TenantId, e.SourceLineReference }).IsUnique();
+            entity.HasIndex(e => new { e.TenantId, e.ItemId, e.LocationId, e.BatchNumber, e.ExpiryDate, e.Status });
+            entity.HasOne(e => e.Item)
+                .WithMany()
+                .HasForeignKey(e => e.ItemId)
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(e => e.Location)
+                .WithMany()
+                .HasForeignKey(e => new { e.LocationId, e.TenantId })
+                .HasPrincipalKey(e => new { e.Id, e.TenantId })
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.Property(e => e.Version)
+                .HasColumnName("xmin")
+                .HasColumnType("xid")
+                .ValueGeneratedOnAddOrUpdate()
+                .IsConcurrencyToken();
         });
 
         modelBuilder.Entity<StockValuationBucket>(entity =>

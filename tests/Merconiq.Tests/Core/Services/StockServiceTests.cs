@@ -320,11 +320,13 @@ public class StockServiceTests
         source.ItemId = 1;
         source.LocationId = 10;
         source.Quantity = 100;
+        source.ReservedQuantity = 0;
 
         var dest = _fixture.Create<StockInHand>();
         dest.ItemId = 1;
         dest.LocationId = 20;
         dest.Quantity = 50;
+        dest.ReservedQuantity = 0;
 
         // Setup sequential calls: first call returns source, second returns dest
         _stockRepoMock.SetupSequence(r => r.FindAsync(
@@ -360,6 +362,23 @@ public class StockServiceTests
 
         await act.Should().ThrowAsync<InvalidOperationException>()
             .WithMessage("Insufficient stock at source location");
+    }
+
+    [Fact]
+    public async Task TransferStockAsync_ReservedQuantity_BlocksTransfer()
+    {
+        _locations.Single(location => location.Id == 10).BranchId = 301;
+        _locations.Single(location => location.Id == 20).BranchId = 301;
+        _branches.Add(new Branch { Id = 301, CompanyId = 401, TenantId = "test-tenant" });
+        var source = new StockInHand { ItemId = 1, LocationId = 10, Quantity = 10, ReservedQuantity = 6 };
+        _stockRepoMock.Setup(r => r.FindAsync(It.IsAny<Expression<Func<StockInHand, bool>>>() ))
+            .ReturnsAsync([source]);
+
+        var action = () => _sut.TransferStockAsync(1, 10, 20, 5, null);
+
+        await action.Should().ThrowAsync<StockAvailabilityConflictException>();
+        source.Quantity.Should().Be(10);
+        _stockRepoMock.Verify(r => r.UpdateAsync(It.IsAny<StockInHand>()), Times.Never);
     }
 
     [Fact]
@@ -445,6 +464,7 @@ public class StockServiceTests
         stock.ItemId = 1;
         stock.LocationId = 2;
         stock.Quantity = 100;
+        stock.ReservedQuantity = 0;
         SetupStockFindAsync(new List<StockInHand> { stock });
 
         await _sut.SellStockAsync(1, 2, 30, "Sold to customer");
@@ -484,6 +504,7 @@ public class StockServiceTests
             .With(s => s.ItemId, 1)
             .With(s => s.LocationId, 2)
             .With(s => s.Quantity, 15)
+            .With(s => s.ReservedQuantity, 0)
             .Create();
         _itemRepoMock.Setup(r => r.GetByIdAsync(1)).ReturnsAsync(item);
         _stockRepoMock.SetupSequence(r => r.FindAsync(

@@ -2,6 +2,7 @@ using Merconiq.Core.Entities;
 using Merconiq.Core.Interfaces;
 using Merconiq.Core.Models;
 using Merconiq.Core.Diagnostics;
+using Merconiq.Core.Exceptions;
 using Microsoft.Extensions.Logging;
 
 namespace Merconiq.Core.Services;
@@ -24,6 +25,7 @@ public class StockService : IStockService
     private readonly ILogger<StockService> _logger;
     private readonly IRepository<StockValuationBucket>? _valuationBucketRepo;
     private readonly IRepository<StockValuationEntry>? _valuationEntryRepo;
+    private readonly IRepository<StockReservation>? _reservationRepo;
 
     public StockService(
         IRepository<StockInHand> stockRepo,
@@ -36,7 +38,8 @@ public class StockService : IStockService
         ITenantContext tenantContext,
         ILogger<StockService> logger,
         IRepository<StockValuationBucket>? valuationBucketRepo = null,
-        IRepository<StockValuationEntry>? valuationEntryRepo = null)
+        IRepository<StockValuationEntry>? valuationEntryRepo = null,
+        IRepository<StockReservation>? reservationRepo = null)
     {
         _stockRepo = stockRepo;
         _txRepo = txRepo;
@@ -49,6 +52,7 @@ public class StockService : IStockService
         _logger = logger;
         _valuationBucketRepo = valuationBucketRepo;
         _valuationEntryRepo = valuationEntryRepo;
+        _reservationRepo = reservationRepo;
     }
 
     /// <inheritdoc />
@@ -255,9 +259,12 @@ public class StockService : IStockService
             var sourceLocation = await EnsureLocationUsableAsync(fromLocationId);
             var destinationLocation = await EnsureLocationUsableAsync(toLocationId);
             await EnsureSameCompanyTransferAsync(sourceLocation, destinationLocation);
+            await ReleaseExpiredReservationsAsync(itemId, fromLocationId);
+            await ReleaseExpiredReservationsAsync(itemId, toLocationId);
             var source = await GetByItemAndLocationAsync(itemId, fromLocationId, batchNumber, expiryDate);
             if (source == null || source.Quantity < quantity)
                 throw new InvalidOperationException("Insufficient stock at source location");
+            EnsureAvailable(source, quantity, "transfer");
 
             source.Quantity -= quantity;
             await _stockRepo.UpdateAsync(source);
@@ -303,7 +310,14 @@ public class StockService : IStockService
     }
 
     /// <inheritdoc />
-    public async Task SellStockAsync(int itemId, int locationId, int quantity, string? notes, string? batchNumber = null, DateTime? expiryDate = null)
+    public async Task SellStockAsync(
+        int itemId,
+        int locationId,
+        int quantity,
+        string? notes,
+        string? batchNumber = null,
+        DateTime? expiryDate = null,
+        string? reservationSourceLineReference = null)
     {
         if (quantity <= 0) throw new ArgumentException("Quantity must be positive");
 
@@ -311,9 +325,47 @@ public class StockService : IStockService
         await ExecuteWithRetryAsync(itemId, async () =>
         {
             await EnsureLocationUsableAsync(locationId);
+            await ReleaseExpiredReservationsAsync(itemId, locationId);
             var stock = await GetByItemAndLocationAsync(itemId, locationId, batchNumber, expiryDate);
             if (stock == null || stock.Quantity < quantity)
                 throw new InvalidOperationException("Insufficient stock for sale");
+
+            StockReservation? reservation = null;
+            var reservationRemaining = 0;
+            if (!string.IsNullOrWhiteSpace(reservationSourceLineReference))
+            {
+                EnsureReservationRepository();
+                reservation = await FindReservationAsync(reservationSourceLineReference.Trim());
+                if (reservation is null || reservation.Status != StockReservationStatus.Active)
+                    throw new StockAvailabilityConflictException("Reservation is not active.");
+                if (reservation.ExpiresAt <= DateTimeOffset.UtcNow)
+                    throw new StockAvailabilityConflictException("Reservation has expired.");
+                if (reservation.ItemId != itemId || reservation.LocationId != locationId ||
+                    reservation.BatchNumber != batchNumber || reservation.ExpiryDate != expiryDate)
+                    throw new StockAvailabilityConflictException("Reservation does not match the requested stock lot.");
+
+                reservationRemaining = Remaining(reservation);
+                if (reservationRemaining < quantity)
+                    throw new StockAvailabilityConflictException("The reservation does not contain enough remaining quantity.");
+
+                var reservedForOtherLines = stock.ReservedQuantity - reservationRemaining;
+                if (reservedForOtherLines < 0)
+                    throw new StockAvailabilityConflictException("Stock reservation counters are inconsistent.");
+                EnsureAvailable(stock, quantity, "reservation consumption", reservedForOtherLines);
+                stock.ReservedQuantity -= quantity;
+                reservation.ConsumedQuantity = checked(reservation.ConsumedQuantity + quantity);
+                if (Remaining(reservation) == 0)
+                {
+                    reservation.Status = StockReservationStatus.Consumed;
+                    reservation.ClosedAt = DateTimeOffset.UtcNow;
+                    reservation.ResolutionReason = "Consumed";
+                }
+                await _reservationRepo!.UpdateAsync(reservation);
+            }
+            else
+            {
+                EnsureAvailable(stock, quantity, "sale");
+            }
 
             stock.Quantity -= quantity;
             await _stockRepo.UpdateAsync(stock);
@@ -342,6 +394,329 @@ public class StockService : IStockService
         }, () => VerifyTransactionCommitAsync(transaction));
 
         _logger.LogInformation("Sold {Qty} of item {ItemId} from location {LocId}", quantity, itemId, locationId);
+    }
+
+    /// <inheritdoc />
+    public async Task CreateReservationAsync(CreateStockReservationRequest request)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        EnsureReservationRequest(request.Quantity, request.SourceLineReference);
+        EnsureReservationFields(request.BatchNumber, null);
+        EnsureReservationRepository();
+
+        var sourceLineReference = request.SourceLineReference.Trim();
+        var now = DateTimeOffset.UtcNow;
+        var expiresAt = request.ExpiresAt ?? now.AddHours(24);
+        if (expiresAt <= now)
+            throw new ArgumentException("Reservation expiry must be in the future.", nameof(request));
+
+        await ExecuteWithRetryAsync(request.ItemId, async () =>
+        {
+            await EnsureLocationUsableAsync(request.LocationId);
+            await ReleaseExpiredReservationsAsync(request.ItemId, request.LocationId);
+
+            var existing = await FindReservationAsync(sourceLineReference);
+            if (existing is not null)
+            {
+                if (existing.Status == StockReservationStatus.Active &&
+                    existing.ItemId == request.ItemId && existing.LocationId == request.LocationId &&
+                    existing.Quantity == request.Quantity &&
+                    (request.ExpiresAt is null || existing.ExpiresAt == expiresAt) &&
+                    (request.BatchNumber is null && !request.ExpiryDate.HasValue ||
+                     existing.BatchNumber == request.BatchNumber && existing.ExpiryDate == request.ExpiryDate))
+                    return;
+
+                throw new InvalidOperationException("The source line already has a different or closed reservation.");
+            }
+
+            var stock = await SelectStockForReservationAsync(request.ItemId, request.LocationId,
+                request.BatchNumber, request.ExpiryDate);
+            if (stock is null)
+                throw new StockAvailabilityConflictException("No stock is available for the requested lot.");
+            EnsureAvailable(stock, request.Quantity, "reservation");
+
+            var reservation = new StockReservation
+            {
+                ItemId = request.ItemId,
+                LocationId = request.LocationId,
+                SourceLineReference = sourceLineReference,
+                BatchNumber = stock.BatchNumber,
+                ExpiryDate = stock.ExpiryDate,
+                Quantity = request.Quantity,
+                ExpiresAt = expiresAt
+            };
+            stock.ReservedQuantity = checked(stock.ReservedQuantity + request.Quantity);
+            await _stockRepo.UpdateAsync(stock);
+            await (_reservationRepo ?? throw new InvalidOperationException(
+                "Stock reservation persistence is not configured.")).AddAsync(reservation);
+            await _webhookDispatcher.EnqueueAsync(WebhookEventFactory.Create(_tenantContext, "Stock.Reserved",
+                new { reservation.ItemId, reservation.LocationId, reservation.SourceLineReference, reservation.Quantity, reservation.BatchNumber, reservation.ExpiryDate, reservation.ExpiresAt }));
+            await _unitOfWork.SaveChangesAsync();
+        }, () => Task.FromResult(true));
+    }
+
+    /// <inheritdoc />
+    public Task ReleaseReservationAsync(string sourceLineReference, string? reason = null) =>
+        ChangeReservationStateAsync(sourceLineReference, StockReservationStatus.Released, reason);
+
+    /// <inheritdoc />
+    public Task CancelReservationAsync(string sourceLineReference, string? reason = null) =>
+        ChangeReservationStateAsync(sourceLineReference, StockReservationStatus.Cancelled, reason);
+
+    /// <inheritdoc />
+    public async Task ConsumeReservationAsync(ConsumeStockReservationRequest request)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        EnsureReservationRequest(request.Quantity, request.SourceLineReference);
+        EnsureReservationFields(null, request.Notes);
+        EnsureReservationRepository();
+        var sourceLineReference = request.SourceLineReference.Trim();
+        var reservation = await GetReservationAsync(sourceLineReference)
+            ?? throw new KeyNotFoundException("Reservation not found.");
+        if (reservation.Status != StockReservationStatus.Active)
+            throw new StockAvailabilityConflictException("Reservation is not active.");
+        if (reservation.ExpiresAt <= DateTimeOffset.UtcNow)
+        {
+            await ReleaseReservationAsync(sourceLineReference, "Expired");
+            throw new StockAvailabilityConflictException("Reservation has expired.");
+        }
+        if (reservation.RemainingQuantity < request.Quantity)
+            throw new StockAvailabilityConflictException("The reservation does not contain enough remaining quantity.");
+
+        await SellStockAsync(
+            reservation.ItemId,
+            reservation.LocationId,
+            request.Quantity,
+            request.Notes,
+            reservation.BatchNumber,
+            reservation.ExpiryDate,
+            sourceLineReference);
+    }
+
+    /// <inheritdoc />
+    public async Task<StockReservationView?> GetReservationAsync(string sourceLineReference)
+    {
+        EnsureReservationRepository();
+        if (string.IsNullOrWhiteSpace(sourceLineReference))
+            throw new ArgumentException("Source line reference is required.", nameof(sourceLineReference));
+        var reservation = await FindReservationAsync(sourceLineReference.Trim());
+        return reservation is null ? null : ToView(reservation);
+    }
+
+    /// <inheritdoc />
+    public async Task<IEnumerable<StockAvailabilityView>> GetAvailabilityAsync(
+        int? itemId = null,
+        int? locationId = null,
+        IReadOnlyCollection<int>? companyIds = null)
+    {
+        EnsureReservationRepository();
+        if (companyIds is { Count: 0 })
+            return [];
+
+        var now = DateTimeOffset.UtcNow;
+        var stock = await _stockRepo.FindAsync(row =>
+            (!itemId.HasValue || row.ItemId == itemId.Value) &&
+            (!locationId.HasValue || row.LocationId == locationId.Value) &&
+            (companyIds == null || (row.Location.Branch != null && companyIds.Contains(row.Location.Branch.CompanyId))));
+        var reservations = await _reservationRepo!.FindAsync(row =>
+            row.Status == StockReservationStatus.Active && row.ExpiresAt > now &&
+            (!itemId.HasValue || row.ItemId == itemId.Value) &&
+            (!locationId.HasValue || row.LocationId == locationId.Value));
+        var reservedByLot = reservations
+            .GroupBy(row => (row.ItemId, row.LocationId, row.BatchNumber, row.ExpiryDate))
+            .ToDictionary(group => group.Key, group => group.Sum(Remaining));
+
+        return stock
+            .Select(row =>
+            {
+                var key = (row.ItemId, row.LocationId, row.BatchNumber, row.ExpiryDate);
+                var reserved = reservedByLot.GetValueOrDefault(key);
+                return new StockAvailabilityView(row.ItemId, row.LocationId, row.BatchNumber, row.ExpiryDate,
+                    row.Quantity, reserved, Math.Max(0, row.Quantity - reserved));
+            })
+            .OrderBy(row => row.ItemId)
+            .ThenBy(row => row.LocationId)
+            .ThenBy(row => row.ExpiryDate.HasValue ? 0 : 1)
+            .ThenBy(row => row.ExpiryDate)
+            .ThenBy(row => row.BatchNumber)
+            .ToArray();
+    }
+
+    private async Task ChangeReservationStateAsync(
+        string sourceLineReference,
+        StockReservationStatus requestedStatus,
+        string? reason)
+    {
+        EnsureReservationRepository();
+        EnsureSourceLineReference(sourceLineReference);
+        EnsureReservationFields(null, reason);
+        var source = sourceLineReference.Trim();
+
+        await _unitOfWork.ExecuteInTransactionAsync(async () =>
+        {
+            var reservation = await FindReservationAsync(source);
+            if (reservation is null)
+                throw new KeyNotFoundException("Reservation not found.");
+            if (reservation.Status is StockReservationStatus.Released or
+                StockReservationStatus.Cancelled or StockReservationStatus.Expired)
+                return;
+            if (reservation.Status == StockReservationStatus.Consumed)
+                throw new StockAvailabilityConflictException("Consumed reservations cannot be released or cancelled.");
+
+            var remaining = Remaining(reservation);
+            var stock = await GetByItemAndLocationAsync(
+                reservation.ItemId, reservation.LocationId, reservation.BatchNumber, reservation.ExpiryDate)
+                ?? throw new InvalidOperationException("Reservation stock no longer exists.");
+            if (stock.ReservedQuantity < remaining)
+                throw new StockAvailabilityConflictException("Stock reservation counters are inconsistent.");
+
+            var now = DateTimeOffset.UtcNow;
+            var finalStatus = reservation.ExpiresAt <= now
+                ? StockReservationStatus.Expired
+                : requestedStatus;
+            stock.ReservedQuantity -= remaining;
+            reservation.Status = finalStatus;
+            reservation.ClosedAt = now;
+            reservation.ResolutionReason = string.IsNullOrWhiteSpace(reason)
+                ? finalStatus.ToString()
+                : reason.Trim();
+            await _stockRepo.UpdateAsync(stock);
+            await _reservationRepo!.UpdateAsync(reservation);
+            await _webhookDispatcher.EnqueueAsync(WebhookEventFactory.Create(_tenantContext,
+                $"Stock.Reservation{finalStatus}", new
+                {
+                    reservation.ItemId,
+                    reservation.LocationId,
+                    reservation.SourceLineReference,
+                    ReleasedQuantity = remaining,
+                    reservation.ResolutionReason
+                }));
+            await _unitOfWork.SaveChangesAsync();
+        });
+    }
+
+    private async Task ReleaseExpiredReservationsAsync(int itemId, int locationId)
+    {
+        if (_reservationRepo is null)
+            return;
+
+        var now = DateTimeOffset.UtcNow;
+        var expired = (await _reservationRepo.FindAsync(row =>
+            row.ItemId == itemId && row.LocationId == locationId &&
+            row.Status == StockReservationStatus.Active && row.ExpiresAt <= now)).ToList();
+        if (expired.Count == 0)
+            return;
+
+        foreach (var group in expired.GroupBy(row =>
+                     (row.ItemId, row.LocationId, row.BatchNumber, row.ExpiryDate)))
+        {
+            var stock = await GetByItemAndLocationAsync(
+                group.Key.ItemId, group.Key.LocationId, group.Key.BatchNumber, group.Key.ExpiryDate)
+                ?? throw new InvalidOperationException("Reservation stock no longer exists.");
+            var released = group.Sum(Remaining);
+            if (stock.ReservedQuantity < released)
+                throw new StockAvailabilityConflictException("Stock reservation counters are inconsistent.");
+            stock.ReservedQuantity -= released;
+            await _stockRepo.UpdateAsync(stock);
+        }
+
+        foreach (var reservation in expired)
+        {
+            reservation.Status = StockReservationStatus.Expired;
+            reservation.ClosedAt = now;
+            reservation.ResolutionReason = "Expired";
+            await _reservationRepo.UpdateAsync(reservation);
+            await _webhookDispatcher.EnqueueAsync(WebhookEventFactory.Create(_tenantContext,
+                "Stock.ReservationExpired", new
+                {
+                    reservation.ItemId,
+                    reservation.LocationId,
+                    reservation.SourceLineReference,
+                    ReleasedQuantity = Remaining(reservation)
+                }));
+        }
+
+        await _unitOfWork.SaveChangesAsync();
+        _unitOfWork.ClearTracker();
+    }
+
+    private async Task<StockInHand?> SelectStockForReservationAsync(
+        int itemId,
+        int locationId,
+        string? batchNumber,
+        DateTime? expiryDate)
+    {
+        if (batchNumber is not null || expiryDate.HasValue)
+            return await GetByItemAndLocationAsync(itemId, locationId, batchNumber, expiryDate);
+
+        // FEFO is deterministic for the bounded single-lot reservation contract. A null
+        // expiry is last because it cannot win an expiry-first allocation.
+        return (await _stockRepo.FindAsync(row =>
+                row.ItemId == itemId && row.LocationId == locationId && row.Quantity > 0))
+            .OrderBy(row => row.ExpiryDate.HasValue ? 0 : 1)
+            .ThenBy(row => row.ExpiryDate)
+            .ThenBy(row => row.BatchNumber)
+            .ThenBy(row => row.Id)
+            .FirstOrDefault();
+    }
+
+    private async Task<StockReservation?> FindReservationAsync(string sourceLineReference) =>
+        (await _reservationRepo!.FindAsync(row => row.SourceLineReference == sourceLineReference)).FirstOrDefault();
+
+    private static StockReservationView ToView(StockReservation reservation) => new(
+        reservation.Id,
+        reservation.ItemId,
+        reservation.LocationId,
+        reservation.SourceLineReference,
+        reservation.BatchNumber,
+        reservation.ExpiryDate,
+        reservation.Quantity,
+        reservation.ConsumedQuantity,
+        Remaining(reservation),
+        reservation.ExpiresAt,
+        reservation.Status);
+
+    private static int Remaining(StockReservation reservation) =>
+        checked(reservation.Quantity - reservation.ConsumedQuantity);
+
+    private static void EnsureAvailable(
+        StockInHand stock,
+        int quantity,
+        string operation,
+        int? reservedOverride = null)
+    {
+        var reserved = reservedOverride ?? stock.ReservedQuantity;
+        if (reserved < 0 || reserved > stock.Quantity || stock.Quantity - reserved < quantity)
+            throw new StockAvailabilityConflictException(
+                $"Insufficient available stock for {operation}; reserved stock cannot be used.");
+    }
+
+    private void EnsureReservationRepository()
+    {
+        if (_reservationRepo is null)
+            throw new InvalidOperationException("Stock reservation persistence is not configured.");
+    }
+
+    private static void EnsureReservationRequest(int quantity, string sourceLineReference)
+    {
+        if (quantity <= 0)
+            throw new ArgumentException("Reservation quantity must be positive.", nameof(quantity));
+        EnsureSourceLineReference(sourceLineReference);
+    }
+
+    private static void EnsureReservationFields(string? batchNumber, string? notesOrReason)
+    {
+        if (batchNumber?.Length > 100)
+            throw new ArgumentException("Batch number must be 100 characters or fewer.", nameof(batchNumber));
+        if (notesOrReason?.Length > 500)
+            throw new ArgumentException("Notes or reason must be 500 characters or fewer.", nameof(notesOrReason));
+    }
+
+    private static void EnsureSourceLineReference(string sourceLineReference)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(sourceLineReference);
+        if (sourceLineReference.Trim().Length > 128)
+            throw new ArgumentException("Source line reference must be 128 characters or fewer.", nameof(sourceLineReference));
     }
 
     private async Task ApplyReceiptValuationAsync(
