@@ -16,6 +16,7 @@ public class ItemService : IItemService
     private readonly ILogger<ItemService> _logger;
     private readonly IMemoryCache _cache;
     private readonly ITenantContext _tenantContext;
+    private readonly IRepository<UnitOfMeasure> _unitRepository;
     private const int MaxSearchTermLength = 100;
 
     public ItemService(
@@ -23,13 +24,15 @@ public class ItemService : IItemService
         IUnitOfWork unitOfWork,
         ILogger<ItemService> logger,
         IMemoryCache cache,
-        ITenantContext tenantContext)
+        ITenantContext tenantContext,
+        IRepository<UnitOfMeasure> unitRepository)
     {
         _repo = repo;
         _unitOfWork = unitOfWork;
         _logger = logger;
         _cache = cache;
         _tenantContext = tenantContext;
+        _unitRepository = unitRepository;
     }
 
     /// <inheritdoc />
@@ -56,6 +59,7 @@ public class ItemService : IItemService
     public async Task<Item> CreateAsync(Item item)
     {
         _logger.LogInformation("Creating item {ItemCode}", item.ItemCode);
+        await ValidateUnitReferencesAsync(item);
         var existing = await _repo.FindAsync(candidate => candidate.ItemCode == item.ItemCode);
         if (existing.Any())
         {
@@ -72,6 +76,7 @@ public class ItemService : IItemService
     public async Task UpdateAsync(Item item)
     {
         _logger.LogInformation("Updating item {Id}", item.Id);
+        await ValidateUnitReferencesAsync(item);
         await _repo.UpdateAsync(item);
         await _unitOfWork.SaveChangesAsync();
         _cache.Remove(TenantCacheKeys.AllItems(_tenantContext.TenantId));
@@ -106,5 +111,21 @@ public class ItemService : IItemService
         }
 
         return await _repo.SearchAsync(term);
+    }
+
+    private async Task ValidateUnitReferencesAsync(Item item)
+    {
+        var ids = new[] { item.BaseUnitId, item.PurchaseUnitId, item.SalesUnitId }
+            .Where(id => id.HasValue)
+            .Select(id => id!.Value)
+            .Distinct()
+            .ToArray();
+        if (ids.Length == 0) return;
+
+        var validIds = (await _unitRepository.FindAsync(unit => ids.Contains(unit.Id)))
+            .Select(unit => unit.Id)
+            .ToHashSet();
+        if (validIds.Count != ids.Length)
+            throw new ArgumentException("Each item unit must exist and belong to the current tenant.");
     }
 }

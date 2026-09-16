@@ -84,8 +84,12 @@ public class StockService : IStockService
             {
                 await _unitOfWork.ExecuteInTransactionAsync(async () =>
                 {
+                    var item = await _itemRepo.GetByIdAsync(itemId);
+                    if (item is not null && !item.IsActive)
+                        throw new InvalidOperationException("Inactive items cannot be used in stock operations.");
                     await action();
-                    await CheckLowStockAsync(itemId);
+                    if (item is not null)
+                        await CheckLowStockAsync(item);
                 }, CancellationToken.None, verifySucceeded);
                 break;
             }
@@ -268,24 +272,21 @@ public class StockService : IStockService
         _logger.LogInformation("Sold {Qty} of item {ItemId} from location {LocId}", quantity, itemId, locationId);
     }
 
-    private async Task CheckLowStockAsync(int itemId)
+    private async Task CheckLowStockAsync(Item item)
     {
         try
         {
-            var item = await _itemRepo.GetByIdAsync(itemId);
-            if (item == null) return;
-
-            var stockInHands = await _stockRepo.FindAsync(s => s.ItemId == itemId);
+            var stockInHands = await _stockRepo.FindAsync(s => s.ItemId == item.Id);
             var totalStock = stockInHands.Sum(s => s.Quantity);
 
             if (totalStock <= item.ReorderLevel)
             {
-                _logger.LogWarning("Low stock alert for item {ItemCode}: Total Stock is {TotalStock}, Reorder Level is {ReorderLevel}", 
+                _logger.LogWarning("Low stock alert for item {ItemCode}: Total Stock is {TotalStock}, Reorder Level is {ReorderLevel}",
                     item.ItemCode, totalStock, item.ReorderLevel);
                 InventoryTelemetry.LowStockAlerts.Add(1);
                 await _webhookDispatcher.EnqueueAsync(WebhookEventFactory.Create(_tenantContext, "Stock.Low", new
                 {
-                    ItemId = itemId,
+                    ItemId = item.Id,
                     ItemCode = item.ItemCode,
                     TotalStock = totalStock,
                     ReorderLevel = item.ReorderLevel
@@ -297,7 +298,7 @@ public class StockService : IStockService
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error checking low stock level for item {ItemId}", itemId);
+            _logger.LogError(ex, "Error checking low stock level for item {ItemId}", item.Id);
             throw;
         }
     }
