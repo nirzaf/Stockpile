@@ -69,7 +69,7 @@ public sealed class IdempotencyKeyStore(
                     });
                     break;
                 }
-                catch (InventoryManagementSystem.Core.Exceptions.ConcurrencyException) when (--concurrencyRetries > 0)
+                catch (InventoryManagementSystem.Core.Exceptions.ConcurrencyException) when (ownsTransaction && --concurrencyRetries > 0)
                 {
                     // The complete keyed operation owns the transaction boundary.
                     // Restart it after a conflict so StockService can never retry
