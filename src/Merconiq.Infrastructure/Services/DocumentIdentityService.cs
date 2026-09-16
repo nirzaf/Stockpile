@@ -152,6 +152,12 @@ public sealed class DocumentIdentityService(
 
             foreach (var detail in details)
             {
+                detail.PurchaseOrder = purchaseOrder;
+                if (!purchaseOrder.OrderDetails.Contains(detail))
+                {
+                    purchaseOrder.OrderDetails.Add(detail);
+                }
+
                 var lineIdentity = DocumentLineIdentity.Create(
                     detail.DocumentLineId,
                     purchaseOrder.DocumentId,
