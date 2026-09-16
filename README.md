@@ -303,7 +303,11 @@ Pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines
 
 ## License
 
-MIT — see [LICENSE](LICENSE). Use, modify, distribute, and sell freely.
+Merconiq-authored material is available under the MIT License; see
+[LICENSE](LICENSE). Third-party packages and copied browser assets retain
+their own licenses and notices. Review [third-party notices](docs/THIRD_PARTY_NOTICES.md)
+before redistributing a built artifact; the repository MIT license does not
+relicense those components.
 
 ## Acknowledgements
 
