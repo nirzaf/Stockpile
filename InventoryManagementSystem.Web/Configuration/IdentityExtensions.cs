@@ -26,6 +26,7 @@ public static class IdentityExtensions
         services.AddScoped<ITenantContext>(serviceProvider =>
             serviceProvider.GetRequiredService<TenantContext>());
         services.AddSingleton<HostTenantResolver>();
+        services.AddScoped<AdminBootstrapService>();
 
         services.AddIdentity<ApplicationUser, IdentityRole>(options =>
         {

@@ -89,7 +89,7 @@ The app will be available at **http://localhost:8080**.
 
 Swagger UI is available at **http://localhost:8080/swagger** in the Development environment for interactive API exploration.
 
-Set `DB_PASSWORD`, `ADMIN_EMAIL`, `ADMIN_PASSWORD`, and `JWT_SECRET` in `.env` before starting. There are no committed default credentials.
+Set `DB_PASSWORD` and `JWT_SECRET` in `.env` before starting. There are no committed default credentials.
 
 ### Manual Setup
 
@@ -111,14 +111,22 @@ dotnet run
 
 Open the HTTP URL printed by `dotnet run` (this repository's launch profile uses `http://localhost:5069`; HTTPS is available only when the local development certificate is configured).
 
-For local Development runs, configure the database connection, JWT secret, and optional seed administrator with ASP.NET User Secrets instead of committing them:
+For local Development runs, configure the database connection and JWT secret with ASP.NET User Secrets instead of committing them:
 
 ```bash
 dotnet user-secrets init --project InventoryManagementSystem.Web
 dotnet user-secrets set "ConnectionStrings:DefaultConnection" "Host=localhost;Database=InventoryDB;Username=postgres;Password=<local-password>" --project InventoryManagementSystem.Web
 dotnet user-secrets set "JwtSettings:Secret" "<at-least-32-byte-local-secret>" --project InventoryManagementSystem.Web
-dotnet user-secrets set "AdminSettings:Email" "<admin-email>" --project InventoryManagementSystem.Web
-dotnet user-secrets set "AdminSettings:Password" "<admin-password>" --project InventoryManagementSystem.Web
+dotnet user-secrets set "BootstrapAdmin:TenantId" "default" --project InventoryManagementSystem.Web
+dotnet user-secrets set "BootstrapAdmin:Email" "<admin-email>" --project InventoryManagementSystem.Web
+dotnet user-secrets set "BootstrapAdmin:Password" "<admin-password>" --project InventoryManagementSystem.Web
+```
+
+Run the one-shot bootstrap before the first login, then start the web application normally:
+
+```bash
+dotnet run --project InventoryManagementSystem.Web -- --bootstrap-admin
+dotnet run --project InventoryManagementSystem.Web
 ```
 
 ## API Reference
@@ -201,24 +209,28 @@ separate from the development path above and requires explicit non-empty secrets
 
 ```bash
 cp .env.example .env
-# Edit .env: DB_PASSWORD, JWT_SECRET, ADMIN_EMAIL, and ADMIN_PASSWORD.
+# Edit .env: DB_PASSWORD and JWT_SECRET.
 docker compose config
 docker compose --profile migrations run --rm migrator
+docker compose --profile bootstrap run --rm bootstrap-admin
 docker compose up -d --wait
 ```
 
-The migrator applies the committed schema to the disposable/target database before
-the application starts. The development-only seed path is not a production
-provisioning mechanism; never commit the administrator password or data-protection
-keys. Keep the `dataprotection` volume across restarts so existing sessions and
-protected values retain their documented behavior.
+Before the bootstrap command, set `BOOTSTRAP_ADMIN_TENANT`, `BOOTSTRAP_ADMIN_EMAIL`,
+and `BOOTSTRAP_ADMIN_PASSWORD` in the untracked `.env` file. The command is explicit,
+tenant-bound, safe to repeat, and fails if Identity rejects the supplied credentials.
+Normal production web startup does not create users, roles, sample locations, or other
+sample data. The migrator applies the committed schema before the bootstrap command and
+application start; never commit the administrator password or data-protection keys.
+Keep the `dataprotection` volume across restarts so existing sessions and protected
+values retain their documented behavior.
 
 ```bash
 # Publish
 dotnet publish -c Release -o ./publish
 
 # Docker Compose (production)
-cp .env.example .env    # set DB_PASSWORD, JWT_SECRET, and admin settings
+cp .env.example .env    # set DB_PASSWORD and JWT_SECRET; bootstrap settings are one-shot
 ./scripts/deploy.sh --migrate
 
 # Automated deployment script
