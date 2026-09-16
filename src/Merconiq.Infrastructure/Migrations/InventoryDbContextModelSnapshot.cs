@@ -432,6 +432,10 @@ namespace Merconiq.Infrastructure.Migrations
                         .HasMaxLength(500)
                         .HasColumnType("character varying(500)");
 
+                    b.Property<string>("ExternalId")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
                     b.Property<bool>("IsActive")
                         .HasColumnType("boolean");
 
@@ -496,6 +500,9 @@ namespace Merconiq.Infrastructure.Migrations
                     b.HasIndex("SalesUnitId", "TenantId");
 
                     b.HasIndex("TenantId", "Barcode")
+                        .IsUnique();
+
+                    b.HasIndex("TenantId", "ExternalId")
                         .IsUnique();
 
                     b.HasIndex("TenantId", "ItemCode")

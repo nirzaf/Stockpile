@@ -156,6 +156,12 @@ All endpoints are prefixed with `/api/v1`.
 | `GET` | `/forecast/{itemId}` | Demand forecast for an item |
 | `GET` | `/forecast` | Forecast all items |
 | `GET` | `/anomalies` | Detect stock anomalies |
+| `POST` | `/organization/items/import` | Dry-run or apply a tenant-scoped item master CSV import (edit capability required) |
+
+Item imports default to dry-run and use the existing bearer-token API. The CSV header is
+`external_id,item_code,description,rate,base_unit_external_id,purchase_unit_external_id,sales_unit_external_id,purchase_to_base_factor,sales_to_base_factor,quantity_precision,whole_unit_only`.
+Unit columns are optional but, when supplied, must reference a unit external ID in the current
+tenant. A valid import can be replayed safely; any rejected row prevents all writes.
 
 ## Project Structure
 

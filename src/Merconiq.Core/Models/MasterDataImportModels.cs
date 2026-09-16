@@ -6,3 +6,8 @@ public sealed record ImportRowResult(int RowNumber, string ExternalId, string St
 
 public sealed record ImportUnitsResult(bool DryRun, int Created, int Unchanged, int Rejected,
     IReadOnlyList<ImportRowResult> Rows);
+
+public sealed record ImportItemsRequest(string Csv, bool DryRun = true);
+
+public sealed record ImportItemsResult(bool DryRun, int Created, int Unchanged, int Rejected,
+    IReadOnlyList<ImportRowResult> Rows);
