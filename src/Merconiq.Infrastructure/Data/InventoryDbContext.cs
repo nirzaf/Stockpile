@@ -4,6 +4,8 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.ChangeTracking;
+using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 namespace Merconiq.Infrastructure.Data;
 
@@ -81,6 +83,9 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
     /// <summary>Company-scoped user capability grants.</summary>
     public DbSet<CompanyMembership> CompanyMemberships { get; set; } = null!;
     public DbSet<DocumentNumberSequence> DocumentNumberSequences { get; set; } = null!;
+    public DbSet<DocumentIdentity> DocumentIdentities { get; set; } = null!;
+    public DbSet<DocumentLineIdentity> DocumentLineIdentities { get; set; } = null!;
+    public DbSet<DocumentLineLink> DocumentLineLinks { get; set; } = null!;
 
     /// <summary>
     /// Saves pending changes, stamping <see cref="AuditableEntity"/> timestamps, translating
@@ -454,9 +459,20 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
             entity.Property(e => e.PONumber).HasMaxLength(50).IsRequired();
             entity.Property(e => e.TotalAmount).HasColumnType("decimal(18,2)");
             entity.Property(e => e.Status).HasConversion<string>().HasMaxLength(50);
+            entity.Property(e => e.DocumentId)
+                .HasConversion(id => id.Value, value => new DocumentIdentityId(value))
+                .ValueGeneratedNever();
+            entity.Property(e => e.DocumentId).Metadata.SetAfterSaveBehavior(PropertySaveBehavior.Throw);
+            entity.Property(e => e.PONumber).Metadata.SetAfterSaveBehavior(PropertySaveBehavior.Throw);
             entity.HasIndex(e => e.SupplierId);
             entity.HasIndex(e => e.Status);
             entity.HasIndex(e => e.OrderDate);
+
+            entity.HasOne(po => po.DocumentIdentity)
+                .WithOne(identity => identity.PurchaseOrder)
+                .HasForeignKey<PurchaseOrder>(po => new { po.DocumentId, po.TenantId })
+                .HasPrincipalKey<DocumentIdentity>(identity => new { identity.Id, identity.TenantId })
+                .OnDelete(DeleteBehavior.Restrict);
 
             entity.HasOne(po => po.Supplier)
                   .WithMany(s => s.PurchaseOrders)
@@ -470,6 +486,10 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
             entity.Property(e => e.TenantId).HasMaxLength(64).IsRequired();
             entity.HasIndex(e => e.TenantId);
             entity.Property(e => e.UnitPrice).HasColumnType("decimal(18,2)");
+            entity.Property(e => e.DocumentLineId)
+                .HasConversion(id => id.Value, value => new DocumentLineIdentityId(value))
+                .ValueGeneratedNever();
+            entity.Property(e => e.DocumentLineId).Metadata.SetAfterSaveBehavior(PropertySaveBehavior.Throw);
 
             entity.HasOne(od => od.PurchaseOrder)
                   .WithMany(po => po.OrderDetails)
@@ -480,6 +500,111 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
                   .WithMany(i => i.OrderDetails)
                   .HasForeignKey(od => od.ItemId)
                   .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasOne(od => od.DocumentLineIdentity)
+                .WithOne(line => line.OrderDetail)
+                .HasForeignKey<OrderDetail>(od => new { od.DocumentLineId, od.TenantId })
+                .HasPrincipalKey<DocumentLineIdentity>(line => new { line.Id, line.TenantId })
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<DocumentIdentity>(entity =>
+        {
+            entity.HasQueryFilter(document => document.TenantId == CurrentTenantId);
+            entity.Property(document => document.TenantId).HasMaxLength(64).IsRequired();
+            entity.Property(document => document.Id)
+                .HasConversion(id => id.Value, value => new DocumentIdentityId(value))
+                .ValueGeneratedNever();
+            entity.Property(document => document.DocumentType).HasMaxLength(64).IsRequired();
+            entity.Property(document => document.HumanNumber).HasMaxLength(50).IsRequired();
+            entity.Property(document => document.Status).HasConversion<string>().HasMaxLength(32).IsRequired();
+            entity.Property(document => document.RequestScope).HasMaxLength(256).IsRequired();
+            entity.Property(document => document.RequestKey).HasMaxLength(200);
+            entity.Property(document => document.RequestHash).HasMaxLength(64);
+            entity.HasAlternateKey(document => new { document.Id, document.TenantId });
+            entity.HasIndex(document => new { document.TenantId, document.DocumentType, document.Period, document.HumanNumber })
+                .IsUnique()
+                .HasFilter("\"CompanyId\" IS NULL");
+            entity.HasIndex(document => new { document.TenantId, document.CompanyId, document.DocumentType, document.Period, document.HumanNumber })
+                .IsUnique()
+                .HasFilter("\"CompanyId\" IS NOT NULL");
+            entity.HasIndex(document => new { document.TenantId, document.RequestScope, document.RequestKey })
+                .IsUnique()
+                .HasFilter("\"RequestKey\" IS NOT NULL");
+            entity.Property(document => document.Id).Metadata.SetAfterSaveBehavior(PropertySaveBehavior.Throw);
+            entity.Property(document => document.DocumentType).Metadata.SetAfterSaveBehavior(PropertySaveBehavior.Throw);
+            entity.Property(document => document.HumanNumber).Metadata.SetAfterSaveBehavior(PropertySaveBehavior.Throw);
+            entity.Property(document => document.Period).Metadata.SetAfterSaveBehavior(PropertySaveBehavior.Throw);
+            entity.Property(document => document.RequestScope).Metadata.SetAfterSaveBehavior(PropertySaveBehavior.Throw);
+            entity.Property(document => document.RequestKey).Metadata.SetAfterSaveBehavior(PropertySaveBehavior.Throw);
+            entity.Property(document => document.RequestHash).Metadata.SetAfterSaveBehavior(PropertySaveBehavior.Throw);
+            entity.HasOne(document => document.Company)
+                .WithMany()
+                .HasForeignKey(document => new { document.CompanyId, document.TenantId })
+                .HasPrincipalKey(company => new { company.Id, company.TenantId })
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<DocumentLineIdentity>(entity =>
+        {
+            entity.HasQueryFilter(line => line.TenantId == CurrentTenantId);
+            entity.Property(line => line.TenantId).HasMaxLength(64).IsRequired();
+            entity.Property(line => line.Id)
+                .HasConversion(id => id.Value, value => new DocumentLineIdentityId(value))
+                .ValueGeneratedNever();
+            entity.Property(line => line.DocumentId)
+                .HasConversion(id => id.Value, value => new DocumentIdentityId(value))
+                .ValueGeneratedNever();
+            entity.Property(line => line.LineType).HasMaxLength(64).IsRequired();
+            entity.HasAlternateKey(line => new { line.Id, line.TenantId });
+            entity.HasOne(line => line.DocumentIdentity)
+                .WithMany(document => document.Lines)
+                .HasForeignKey(line => new { line.DocumentId, line.TenantId })
+                .HasPrincipalKey(document => new { document.Id, document.TenantId })
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.Property(line => line.Id).Metadata.SetAfterSaveBehavior(PropertySaveBehavior.Throw);
+            entity.Property(line => line.DocumentId).Metadata.SetAfterSaveBehavior(PropertySaveBehavior.Throw);
+            entity.Property(line => line.LineType).Metadata.SetAfterSaveBehavior(PropertySaveBehavior.Throw);
+        });
+
+        modelBuilder.Entity<DocumentLineLink>(entity =>
+        {
+            entity.HasQueryFilter(link => link.TenantId == CurrentTenantId);
+            entity.Property(link => link.TenantId).HasMaxLength(64).IsRequired();
+            entity.Property(link => link.SourceDocumentId)
+                .HasConversion(id => id.Value, value => new DocumentIdentityId(value));
+            entity.Property(link => link.SourceLineId)
+                .HasConversion(id => id.Value, value => new DocumentLineIdentityId(value));
+            entity.Property(link => link.TargetDocumentId)
+                .HasConversion(id => id.Value, value => new DocumentIdentityId(value));
+            entity.Property(link => link.TargetLineId)
+                .HasConversion(id => id.Value, value => new DocumentLineIdentityId(value));
+            entity.Property(link => link.RelationshipType).HasConversion<string>().HasMaxLength(32).IsRequired();
+            entity.HasIndex(link => new
+            {
+                link.TenantId,
+                link.CompanyId,
+                link.SourceDocumentId,
+                link.SourceLineId,
+                link.TargetDocumentId,
+                link.TargetLineId,
+                link.RelationshipType
+            }).IsUnique();
+            entity.HasOne(link => link.SourceLine)
+                .WithMany()
+                .HasForeignKey(link => new { link.SourceDocumentId, link.SourceLineId, link.TenantId })
+                .HasPrincipalKey(line => new { line.DocumentId, line.Id, line.TenantId })
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(link => link.TargetLine)
+                .WithMany()
+                .HasForeignKey(link => new { link.TargetDocumentId, link.TargetLineId, link.TenantId })
+                .HasPrincipalKey(line => new { line.DocumentId, line.Id, line.TenantId })
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne<Company>()
+                .WithMany()
+                .HasForeignKey(link => new { link.CompanyId, link.TenantId })
+                .HasPrincipalKey(company => new { company.Id, company.TenantId })
+                .OnDelete(DeleteBehavior.Restrict);
         });
 
         modelBuilder.Entity<StockTransaction>(entity =>

@@ -23,5 +23,8 @@ public enum PurchaseOrderStatus
     Received,
 
     /// <summary>Order has been cancelled. Terminal state.</summary>
-    Cancelled
+    Cancelled,
+
+    /// <summary>Issued order invalidated before receipt. Terminal; received orders need a reversal.</summary>
+    Voided
 }

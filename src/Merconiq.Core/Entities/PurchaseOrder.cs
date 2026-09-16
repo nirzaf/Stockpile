@@ -5,7 +5,16 @@ namespace Merconiq.Core.Entities;
 /// </summary>
 public class PurchaseOrder : AuditableEntity
 {
+    public PurchaseOrder()
+    {
+        DocumentId = DocumentIdentityId.New();
+    }
+
     public int Id { get; set; }
+
+    /// <summary>Immutable internal identity, distinct from the human-facing PO number.</summary>
+    public DocumentIdentityId DocumentId { get; private set; }
+    public DocumentIdentity DocumentIdentity { get; set; } = null!;
 
     /// <summary>Business purchase order number (e.g. <c>PO-2026-0001</c>).</summary>
     public string PONumber { get; set; } = string.Empty;
