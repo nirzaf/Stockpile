@@ -10,6 +10,10 @@ public class Location : AuditableEntity, ISoftDelete
 {
     public int Id { get; set; }
 
+    /// <summary>Optional owner branch for existing locations awaiting controlled mapping.</summary>
+    public int? BranchId { get; set; }
+    public Branch? Branch { get; set; }
+
     /// <summary>Display name of the location.</summary>
     public string Name { get; set; } = string.Empty;
 
