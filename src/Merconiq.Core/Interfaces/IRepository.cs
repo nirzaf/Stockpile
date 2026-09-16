@@ -38,6 +38,19 @@ public interface IRepository<T> where T : class
         Expression<Func<T, bool>> predicate,
         Func<IQueryable<T>, IOrderedQueryable<T>>? orderBy = null);
 
+    /// <summary>
+    /// Finds an ordered, bounded set of entities. The ordering and limit are applied to the
+    /// provider query before materialization, so callers can use this for database-side caps.
+    /// </summary>
+    /// <param name="predicate">The filter to apply before the limit.</param>
+    /// <param name="orderBy">A deterministic ordering applied before the limit.</param>
+    /// <param name="maxResults">The maximum number of results to materialize.</param>
+    /// <returns>At most <paramref name="maxResults"/> matching entities.</returns>
+    Task<IEnumerable<T>> FindPageAsync(
+        Expression<Func<T, bool>> predicate,
+        Func<IQueryable<T>, IOrderedQueryable<T>> orderBy,
+        int maxResults);
+
     /// <summary>Retrieves a page of entities.</summary>
     /// <param name="page">The 1-based page number.</param>
     /// <param name="pageSize">The number of entities per page.</param>

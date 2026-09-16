@@ -1,4 +1,5 @@
 using Merconiq.Core.Entities;
+using Merconiq.Core.Exceptions;
 using Merconiq.Core.Interfaces;
 using Merconiq.Core.Models;
 using Merconiq.Core.Options;
@@ -50,7 +51,7 @@ public class DemandForecastService : IDemandForecastService
         if (!ForecastingOptions.HasValidResourceLimits(_forecastingOptions))
         {
             throw new ArgumentException(
-                $"Forecasting limits must set {nameof(ForecastingOptions.MaxForecastHorizonDays)} between 1 and {ForecastingOptions.AbsoluteMaxForecastHorizonDays}, and {nameof(ForecastingOptions.MaxHistoricalDays)} between {ForecastingOptions.MinimumHistoricalDays} and {ForecastingOptions.AbsoluteMaxHistoricalDays}.",
+                $"Forecasting limits must set {nameof(ForecastingOptions.MaxForecastHorizonDays)} between 1 and {ForecastingOptions.AbsoluteMaxForecastHorizonDays}, {nameof(ForecastingOptions.MaxHistoricalDays)} between {ForecastingOptions.MinimumHistoricalDays} and {ForecastingOptions.AbsoluteMaxHistoricalDays}, {nameof(ForecastingOptions.MaxHistoricalTransactionsPerForecast)} between 1 and {ForecastingOptions.AbsoluteMaxHistoricalTransactionsPerForecast}, and {nameof(ForecastingOptions.MaxItemsPerAllItemsForecast)} between 1 and {ForecastingOptions.AbsoluteMaxItemsPerAllItemsForecast}.",
                 nameof(forecastingOptions));
         }
 
@@ -141,13 +142,20 @@ public class DemandForecastService : IDemandForecastService
             KnownLimitations = GetKnownLimitations(implementation)
         };
 
-        var transactions = await _txRepo.FindAsync(t =>
-            t.ItemId == itemId &&
-            t.TransactionType == TransactionType.Sell &&
-            t.TransactionDate >= dataWindowStart &&
-            t.TransactionDate < dataWindowEndExclusive &&
-            (companyIds == null || (t.FromLocation.Branch != null &&
-                companyIds.Contains(t.FromLocation.Branch.CompanyId))));
+        var transactions = (await _txRepo.FindPageAsync(
+            t => t.ItemId == itemId &&
+                t.TransactionType == TransactionType.Sell &&
+                t.TransactionDate >= dataWindowStart &&
+                t.TransactionDate < dataWindowEndExclusive &&
+                (companyIds == null || (t.FromLocation.Branch != null &&
+                    companyIds.Contains(t.FromLocation.Branch.CompanyId))),
+            query => query.OrderBy(t => t.TransactionDate).ThenBy(t => t.Id),
+            _forecastingOptions.MaxHistoricalTransactionsPerForecast + 1)).ToList();
+
+        RejectWhenOverLimit(
+            transactions.Count,
+            _forecastingOptions.MaxHistoricalTransactionsPerForecast,
+            nameof(ForecastingOptions.MaxHistoricalTransactionsPerForecast));
 
         // Keep the calendar series bounded even when a repository implementation or test
         // double does not apply its predicate server-side.
@@ -222,7 +230,7 @@ public class DemandForecastService : IDemandForecastService
             "Only recorded sell movements contribute to demand; the transaction model has no distinct return movement, so returns cannot be netted out.",
             "Stockout and lost-sales observations are not recorded; zero recorded sales cannot distinguish no demand from unavailable stock.",
             "Missing calendar dates between the first and latest recorded sale are filled with zero; dates after the latest sale are not added.",
-            "The bounded calendar window does not cap raw transaction rows within that window, and all-item forecast cost still scales with tenant item count."
+            "Forecasts enforce configured hard limits on matching historical sell rows and all-item catalog size; over-limit requests are rejected rather than truncated."
         };
 
         if (string.Equals(implementation, ForecastingImplementations.ManagedMovingAverage, StringComparison.Ordinal))
@@ -298,8 +306,19 @@ public class DemandForecastService : IDemandForecastService
         int horizonDays,
         IReadOnlyCollection<int>? companyIds)
     {
-        var items = await _itemRepo.GetAllAsync();
-        
+        var items = (await _itemRepo.FindPageAsync(
+            item => companyIds == null || item.StockTransactions.Any(transaction =>
+                transaction.TransactionType == TransactionType.Sell &&
+                transaction.FromLocation.Branch != null &&
+                companyIds.Contains(transaction.FromLocation.Branch.CompanyId)),
+            query => query.OrderBy(item => item.Id),
+            _forecastingOptions.MaxItemsPerAllItemsForecast + 1)).ToList();
+
+        RejectWhenOverLimit(
+            items.Count,
+            _forecastingOptions.MaxItemsPerAllItemsForecast,
+            nameof(ForecastingOptions.MaxItemsPerAllItemsForecast));
+
         var results = new List<DemandForecastResult>();
         foreach (var item in items)
         {
@@ -313,6 +332,12 @@ public class DemandForecastService : IDemandForecastService
                     results.Add(forecast);
                 }
             }
+            catch (ForecastResourceLimitExceededException)
+            {
+                // An all-items call is atomic from the caller's perspective: do not turn a
+                // resource-limit rejection into a partial response by skipping one item.
+                throw;
+            }
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "Forecast failed for item {ItemId}, skipping", item.Id);
@@ -320,6 +345,14 @@ public class DemandForecastService : IDemandForecastService
         }
 
         return results;
+    }
+
+    private static void RejectWhenOverLimit(int observed, int maximum, string resource)
+    {
+        if (observed > maximum)
+        {
+            throw new ForecastResourceLimitExceededException(resource, maximum, maximum + 1);
+        }
     }
 
     private class DemandDataPoint

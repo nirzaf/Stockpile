@@ -2,6 +2,7 @@ using System.Linq.Expressions;
 using AutoFixture;
 using FluentAssertions;
 using Merconiq.Core.Entities;
+using Merconiq.Core.Exceptions;
 using Merconiq.Core.Interfaces;
 using Merconiq.Core.Options;
 using Merconiq.Core.Services;
@@ -48,8 +49,7 @@ public class DemandForecastServiceTests
                 .With(t => t.TransactionType, TransactionType.Sell)
                 .With(t => t.Quantity, 10)
                 .Create()).ToList();
-        _txRepoMock.Setup(r => r.FindAsync(It.IsAny<Expression<Func<StockTransaction, bool>>>()))
-            .ReturnsAsync(transactions);
+        SetupBoundedFind(_txRepoMock, transactions);
 
         // Act
         var result = await _sut.ForecastDemandAsync(1, 30);
@@ -74,8 +74,7 @@ public class DemandForecastServiceTests
                 .With(t => t.TransactionType, TransactionType.Sell)
                 .With(t => t.Quantity, 10 + (d % 5))
                 .Create()).ToList();
-        _txRepoMock.Setup(r => r.FindAsync(It.IsAny<Expression<Func<StockTransaction, bool>>>()))
-            .ReturnsAsync(transactions);
+        SetupBoundedFind(_txRepoMock, transactions);
 
         // Act
         var result = await _sut.ForecastDemandAsync(1, 7);
@@ -102,8 +101,7 @@ public class DemandForecastServiceTests
                 .With(t => t.TransactionType, TransactionType.Sell)
                 .With(t => t.Quantity, 20)
                 .Create()).ToList();
-        _txRepoMock.Setup(r => r.FindAsync(It.IsAny<Expression<Func<StockTransaction, bool>>>()))
-            .ReturnsAsync(transactions);
+        SetupBoundedFind(_txRepoMock, transactions);
 
         var result = await _sut.ForecastDemandAsync(1, 5);
 
@@ -124,8 +122,7 @@ public class DemandForecastServiceTests
                 .With(t => t.TransactionType, TransactionType.Sell)
                 .With(t => t.Quantity, 5)
                 .Create()).ToList();
-        _txRepoMock.Setup(r => r.FindAsync(It.IsAny<Expression<Func<StockTransaction, bool>>>()))
-            .ReturnsAsync(transactions);
+        SetupBoundedFind(_txRepoMock, transactions);
 
         var result = await _sut.ForecastDemandAsync(1, 5);
 
@@ -140,8 +137,7 @@ public class DemandForecastServiceTests
             .ReturnsAsync(new[] { item });
 
         // Fewer than 5 days → insufficient, but horizon still set
-        _txRepoMock.Setup(r => r.FindAsync(It.IsAny<Expression<Func<StockTransaction, bool>>>()))
-            .ReturnsAsync(new List<StockTransaction>());
+        SetupBoundedFind(_txRepoMock, []);
 
         var result = await _sut.ForecastDemandAsync(1, 14);
 
@@ -166,7 +162,10 @@ public class DemandForecastServiceTests
 
         await act.Should().ThrowAsync<ArgumentOutOfRangeException>();
         _itemRepoMock.Verify(repository => repository.FindAsync(It.IsAny<Expression<Func<Item, bool>>>()), Times.Never);
-        _txRepoMock.Verify(repository => repository.FindAsync(It.IsAny<Expression<Func<StockTransaction, bool>>>()), Times.Never);
+        _txRepoMock.Verify(repository => repository.FindPageAsync(
+            It.IsAny<Expression<Func<StockTransaction, bool>>>(),
+            It.IsAny<Func<IQueryable<StockTransaction>, IOrderedQueryable<StockTransaction>>>(),
+            It.IsAny<int>()), Times.Never);
     }
 
     [Fact]
@@ -189,10 +188,7 @@ public class DemandForecastServiceTests
         itemRepository.Setup(repository => repository.FindAsync(It.IsAny<Expression<Func<Item, bool>>>() ))
             .ReturnsAsync(new[] { item });
         var transactionRepository = new Mock<IRepository<StockTransaction>>();
-        transactionRepository
-            .Setup(repository => repository.FindAsync(It.IsAny<Expression<Func<StockTransaction, bool>>>() ))
-            .Returns((Expression<Func<StockTransaction, bool>> filter) =>
-                Task.FromResult<IEnumerable<StockTransaction>>(transactions.Where(filter.Compile()).ToList()));
+        SetupBoundedFind(transactionRepository, transactions);
 
         using var cache = new MemoryCache(new MemoryCacheOptions());
         var service = new DemandForecastService(
@@ -222,6 +218,7 @@ public class DemandForecastServiceTests
         result.GeneratedAt.Should().Be(asOf.UtcDateTime);
         result.KnownLimitations.Should().Contain(limitation => limitation.Contains("return", StringComparison.OrdinalIgnoreCase));
         result.KnownLimitations.Should().Contain(limitation => limitation.Contains("stockout", StringComparison.OrdinalIgnoreCase));
+        result.KnownLimitations.Should().Contain(limitation => limitation.Contains("hard limits", StringComparison.OrdinalIgnoreCase));
     }
 
     [Fact]
@@ -229,8 +226,7 @@ public class DemandForecastServiceTests
     {
         _itemRepoMock.Setup(r => r.FindAsync(It.IsAny<Expression<Func<Item, bool>>>()))
             .ReturnsAsync(new List<Item>());
-        _txRepoMock.Setup(r => r.FindAsync(It.IsAny<Expression<Func<StockTransaction, bool>>>()))
-            .ReturnsAsync(new List<StockTransaction>());
+        SetupBoundedFind(_txRepoMock, []);
 
         var result = await _sut.ForecastDemandAsync(999, 5);
 
@@ -242,7 +238,7 @@ public class DemandForecastServiceTests
     {
         var items = Enumerable.Range(1, 3).Select(i =>
             _fixture.Build<Item>().With(x => x.Id, i).Create()).ToList();
-        _itemRepoMock.Setup(r => r.GetAllAsync()).ReturnsAsync(items);
+        SetupBoundedFind(_itemRepoMock, items);
 
         // All items get 10 days of transactions
         var allTx = items.SelectMany(item =>
@@ -253,8 +249,7 @@ public class DemandForecastServiceTests
                     .With(t => t.TransactionType, TransactionType.Sell)
                     .With(t => t.Quantity, 5)
                     .Create())).ToList();
-        _txRepoMock.Setup(r => r.FindAsync(It.IsAny<Expression<Func<StockTransaction, bool>>>()))
-            .ReturnsAsync(allTx.Where(t => t.ItemId == 1 || t.ItemId == 2 || t.ItemId == 3).ToList());
+        SetupBoundedFind(_txRepoMock, allTx);
 
         var result = await _sut.ForecastAllItemsAsync(5);
 
@@ -265,7 +260,7 @@ public class DemandForecastServiceTests
     [Fact]
     public async Task ForecastAllItemsAsync_EmptyItemList_ReturnsEmptyList()
     {
-        _itemRepoMock.Setup(r => r.GetAllAsync()).ReturnsAsync(new List<Item>());
+        SetupBoundedFind(_itemRepoMock, []);
 
         var result = await _sut.ForecastAllItemsAsync(30);
 
@@ -287,8 +282,7 @@ public class DemandForecastServiceTests
         var transactionRepo = new Mock<IRepository<StockTransaction>>();
         itemRepo.Setup(r => r.FindAsync(It.IsAny<Expression<Func<Item, bool>>>()))
             .ReturnsAsync(new[] { item });
-        transactionRepo.Setup(r => r.FindAsync(It.IsAny<Expression<Func<StockTransaction, bool>>>()))
-            .ReturnsAsync(transactions);
+        SetupBoundedFind(transactionRepo, transactions);
 
         using var cache = new MemoryCache(new MemoryCacheOptions());
         var service = new DemandForecastService(
@@ -304,7 +298,10 @@ public class DemandForecastServiceTests
 
         second.Should().BeSameAs(first);
         itemRepo.Verify(r => r.FindAsync(It.IsAny<Expression<Func<Item, bool>>>()), Times.Once);
-        transactionRepo.Verify(r => r.FindAsync(It.IsAny<Expression<Func<StockTransaction, bool>>>()), Times.Once);
+        transactionRepo.Verify(r => r.FindPageAsync(
+            It.IsAny<Expression<Func<StockTransaction, bool>>>(),
+            It.IsAny<Func<IQueryable<StockTransaction>, IOrderedQueryable<StockTransaction>>>(),
+            It.IsAny<int>()), Times.Once);
     }
 
     [Fact]
@@ -335,10 +332,7 @@ public class DemandForecastServiceTests
         itemRepository.Setup(repository => repository.FindAsync(It.IsAny<Expression<Func<Item, bool>>>() ))
             .ReturnsAsync(new[] { item });
         var transactionRepository = new Mock<IRepository<StockTransaction>>();
-        transactionRepository
-            .Setup(repository => repository.FindAsync(It.IsAny<Expression<Func<StockTransaction, bool>>>() ))
-            .Returns((Expression<Func<StockTransaction, bool>> filter) =>
-                Task.FromResult<IEnumerable<StockTransaction>>(transactions.Where(filter.Compile()).ToList()));
+        SetupBoundedFind(transactionRepository, transactions);
         using var scopedCache = new MemoryCache(new MemoryCacheOptions());
         var service = new DemandForecastService(
             transactionRepository.Object,
@@ -355,8 +349,10 @@ public class DemandForecastServiceTests
         companyOne.AverageDailyDemand.Should().Be(10);
         companyTwo.AverageDailyDemand.Should().Be(90);
         companyOneCached.Should().BeSameAs(companyOne);
-        transactionRepository.Verify(
-            repository => repository.FindAsync(It.IsAny<Expression<Func<StockTransaction, bool>>>()),
+        transactionRepository.Verify(repository => repository.FindPageAsync(
+                It.IsAny<Expression<Func<StockTransaction, bool>>>(),
+                It.IsAny<Func<IQueryable<StockTransaction>, IOrderedQueryable<StockTransaction>>>(),
+                It.IsAny<int>()),
             Times.Exactly(2));
     }
 
@@ -412,15 +408,23 @@ public class DemandForecastServiceTests
         var activeTransactionQueries = 0;
         var overlappedTransactionQueries = false;
 
-        itemRepo.Setup(r => r.GetAllAsync()).ReturnsAsync(items);
+        SetupBoundedFind(itemRepo, items);
         itemRepo.Setup(r => r.FindAsync(It.IsAny<Expression<Func<Item, bool>>>()))
             .ReturnsAsync(items);
 
         transactionRepo
-            .Setup(r => r.FindAsync(It.IsAny<Expression<Func<StockTransaction, bool>>>()))
-            .Returns((Expression<Func<StockTransaction, bool>> _) => ObserveTransactionsAsync());
+            .Setup(r => r.FindPageAsync(
+                It.IsAny<Expression<Func<StockTransaction, bool>>>(),
+                It.IsAny<Func<IQueryable<StockTransaction>, IOrderedQueryable<StockTransaction>>>(),
+                It.IsAny<int>()))
+            .Returns((Expression<Func<StockTransaction, bool>> predicate,
+                Func<IQueryable<StockTransaction>, IOrderedQueryable<StockTransaction>> orderBy,
+                int maxResults) => ObserveTransactionsAsync(predicate, orderBy, maxResults));
 
-        async Task<IEnumerable<StockTransaction>> ObserveTransactionsAsync()
+        async Task<IEnumerable<StockTransaction>> ObserveTransactionsAsync(
+            Expression<Func<StockTransaction, bool>> predicate,
+            Func<IQueryable<StockTransaction>, IOrderedQueryable<StockTransaction>> orderBy,
+            int maxResults)
         {
             if (Interlocked.Increment(ref activeTransactionQueries) > 1)
             {
@@ -430,7 +434,9 @@ public class DemandForecastServiceTests
             try
             {
                 await Task.Delay(10);
-                return transactions;
+                return orderBy(transactions.AsQueryable().Where(predicate))
+                    .Take(maxResults)
+                    .ToList();
             }
             finally
             {
@@ -471,6 +477,106 @@ public class DemandForecastServiceTests
         managedPrediction.Should().Be(8f);
         managedMae.Should().Be(8f);
         naiveMae.Should().Be(4f);
+    }
+
+    [Fact]
+    public async Task ForecastDemandAsync_RejectsRawTransactionOverflowInsteadOfReturningPartialForecast()
+    {
+        var item = new Item { Id = 7, ItemCode = "ROW-LIMIT" };
+        var transactions = Enumerable.Range(1, 3).Select(day => new StockTransaction
+        {
+            Id = day,
+            ItemId = item.Id,
+            TransactionType = TransactionType.Sell,
+            TransactionDate = DateTime.UtcNow.Date.AddDays(-day),
+            Quantity = 2
+        }).ToList();
+        var itemRepo = new Mock<IRepository<Item>>();
+        itemRepo.Setup(repository => repository.FindAsync(It.IsAny<Expression<Func<Item, bool>>>() ))
+            .ReturnsAsync([item]);
+        var txRepo = new Mock<IRepository<StockTransaction>>();
+        SetupBoundedFind(txRepo, transactions);
+        using var cache = new MemoryCache(new MemoryCacheOptions());
+        var service = new DemandForecastService(
+            txRepo.Object,
+            itemRepo.Object,
+            NullLogger<DemandForecastService>.Instance,
+            cache,
+            new TestTenantContext("test-tenant"),
+            Options.Create(new ForecastingOptions { MaxHistoricalTransactionsPerForecast = 2 }));
+
+        var act = () => service.ForecastDemandAsync(item.Id, 5);
+
+        var exception = await act.Should().ThrowAsync<ForecastResourceLimitExceededException>();
+        exception.Which.Resource.Should().Be(nameof(ForecastingOptions.MaxHistoricalTransactionsPerForecast));
+        exception.Which.Maximum.Should().Be(2);
+        exception.Which.ObservedAtLeast.Should().Be(3);
+        txRepo.Verify(repository => repository.FindPageAsync(
+            It.IsAny<Expression<Func<StockTransaction, bool>>>(),
+            It.IsAny<Func<IQueryable<StockTransaction>, IOrderedQueryable<StockTransaction>>>(),
+            3), Times.Once);
+    }
+
+    [Fact]
+    public async Task ForecastAllItemsAsync_RejectsCatalogOverflowInsteadOfReturningPartialList()
+    {
+        var items = Enumerable.Range(1, 3).Select(id => new Item { Id = id, ItemCode = $"ITEM-{id}" }).ToList();
+        var itemRepo = new Mock<IRepository<Item>>();
+        SetupBoundedFind(itemRepo, items);
+        var txRepo = new Mock<IRepository<StockTransaction>>();
+        using var cache = new MemoryCache(new MemoryCacheOptions());
+        var service = new DemandForecastService(
+            txRepo.Object,
+            itemRepo.Object,
+            NullLogger<DemandForecastService>.Instance,
+            cache,
+            new TestTenantContext("test-tenant"),
+            Options.Create(new ForecastingOptions { MaxItemsPerAllItemsForecast = 2 }));
+
+        var act = () => service.ForecastAllItemsAsync(5);
+
+        var exception = await act.Should().ThrowAsync<ForecastResourceLimitExceededException>();
+        exception.Which.Resource.Should().Be(nameof(ForecastingOptions.MaxItemsPerAllItemsForecast));
+        exception.Which.Maximum.Should().Be(2);
+        itemRepo.Verify(repository => repository.FindPageAsync(
+            It.IsAny<Expression<Func<Item, bool>>>(),
+            It.IsAny<Func<IQueryable<Item>, IOrderedQueryable<Item>>>(),
+            3), Times.Once);
+        txRepo.Verify(repository => repository.FindPageAsync(
+            It.IsAny<Expression<Func<StockTransaction, bool>>>(),
+            It.IsAny<Func<IQueryable<StockTransaction>, IOrderedQueryable<StockTransaction>>>(),
+            It.IsAny<int>()), Times.Never);
+    }
+
+    [Theory]
+    [InlineData(0, 250)]
+    [InlineData(250_001, 250)]
+    [InlineData(1, 0)]
+    [InlineData(1, 2_501)]
+    public void ForecastingOptions_RejectsResourceLimitsOutsideHardCeilings(
+        int maxHistoricalTransactions,
+        int maxAllItems)
+    {
+        ForecastingOptions.HasValidResourceLimits(new ForecastingOptions
+        {
+            MaxHistoricalTransactionsPerForecast = maxHistoricalTransactions,
+            MaxItemsPerAllItemsForecast = maxAllItems
+        }).Should().BeFalse();
+    }
+
+    private static void SetupBoundedFind<T>(Mock<IRepository<T>> repository, IEnumerable<T> values)
+        where T : class
+    {
+        repository.Setup(repo => repo.FindPageAsync(
+                It.IsAny<Expression<Func<T, bool>>>(),
+                It.IsAny<Func<IQueryable<T>, IOrderedQueryable<T>>>(),
+                It.IsAny<int>()))
+            .Returns((Expression<Func<T, bool>> predicate,
+                Func<IQueryable<T>, IOrderedQueryable<T>> orderBy,
+                int maxResults) => Task.FromResult<IEnumerable<T>>(
+                    orderBy(values.AsQueryable().Where(predicate))
+                        .Take(maxResults)
+                        .ToList()));
     }
 
     private sealed class FixedTimeProvider : TimeProvider

@@ -59,6 +59,21 @@ public class Repository<T> : IRepository<T> where T : class
     }
 
     /// <inheritdoc />
+    public virtual async Task<IEnumerable<T>> FindPageAsync(
+        Expression<Func<T, bool>> predicate,
+        Func<IQueryable<T>, IOrderedQueryable<T>> orderBy,
+        int maxResults)
+    {
+        ArgumentNullException.ThrowIfNull(predicate);
+        ArgumentNullException.ThrowIfNull(orderBy);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxResults);
+
+        return await orderBy(_dbSet.AsNoTracking().Where(predicate))
+            .Take(maxResults)
+            .ToListAsync();
+    }
+
+    /// <inheritdoc />
     public virtual async Task<IEnumerable<T>> GetPagedAsync(int page, int pageSize)
     {
         return await _dbSet.AsNoTracking()

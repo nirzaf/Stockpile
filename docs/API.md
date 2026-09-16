@@ -98,6 +98,12 @@ mutations. Webhook administration is restricted to `Admin` and `Manager`.
 | DELETE | `/api/v1/webhooks/{id}` | `Admin` or `Manager` | `204` or `404` |
 | GET | `/api/v1/forecast/{itemId}` | Any API JWT; AI limit | `200` |
 | GET | `/api/v1/forecast` | Any API JWT; AI limit | `200` |
+
+Forecast endpoints return `400 Bad Request` if the requested horizon, matching
+historical sell-row count, or all-item catalog size exceeds its configured limit.
+Over-limit forecasts are rejected, never silently truncated; see
+[`FORECASTING_RUNTIME.md`](FORECASTING_RUNTIME.md) for defaults and supported
+configuration ceilings.
 | GET | `/api/v1/anomalies` | Any API JWT; AI limit | `200` |
 
 The item list validates `page >= 1` and `1 <= pageSize <= 100`. Item update

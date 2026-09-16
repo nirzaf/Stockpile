@@ -4,6 +4,7 @@ using FluentValidation;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.Mvc;
+using Merconiq.Core.Exceptions;
 
 namespace Merconiq.Web;
 
@@ -73,6 +74,7 @@ public class GlobalExceptionHandler : IExceptionHandler
 
         var (statusCode, title) = exception switch
         {
+            ForecastResourceLimitExceededException => (HttpStatusCode.BadRequest, "Forecast resource limit exceeded"),
             ArgumentException => (HttpStatusCode.BadRequest, "Invalid argument"),
             InvalidOperationException => (HttpStatusCode.Conflict, "Operation failed"),
             DbUpdateException databaseException when DatabaseExceptionClassifier.IsUniqueConstraintViolation(databaseException)
@@ -94,7 +96,7 @@ public class GlobalExceptionHandler : IExceptionHandler
                 Title = title,
                 // The full exception is logged above for operators. API clients always
                 // receive a stable, non-sensitive message regardless of environment.
-                Detail = title,
+                Detail = exception is ForecastResourceLimitExceededException ? exception.Message : title,
                 Instance = httpContext.Request.Path
             };
 
