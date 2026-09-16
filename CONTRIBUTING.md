@@ -1,4 +1,4 @@
-# Contributing to Stockpile
+# Contributing to Merconiq
 
 Thank you for your interest in contributing! This document outlines the process for contributing to this open-source project.
 
@@ -10,7 +10,7 @@ Please read and follow our [Code of Conduct](CODE_OF_CONDUCT.md).
 
 ### Reporting Bugs
 
-- Search existing [issues](https://github.com/nirzaf/Stockpile/issues) to avoid duplicates
+- Search existing [issues](https://github.com/nirzaf/merconiq/issues) to avoid duplicates
 - Use the Bug Report template when creating a new issue
 - Include clear steps to reproduce, expected vs actual behavior, and environment details
 
@@ -25,11 +25,11 @@ Please read and follow our [Code of Conduct](CODE_OF_CONDUCT.md).
 1. **Fork** the repository
 2. **Create a branch** from the canonical repository's current `master` branch:
    ```bash
-   git remote add upstream https://github.com/nirzaf/stockpile.git  # once, if upstream is not configured
+   git remote add upstream https://github.com/nirzaf/merconiq.git  # once, if upstream is not configured
    git fetch upstream master
    git switch -c codex/issue-<number>-<short-description> upstream/master
    ```
-   If `upstream` already exists, keep its canonical URL and omit the `remote add` command. Contributors who work directly from the canonical repository may use `origin/master` only when `origin` is verified to be `https://github.com/nirzaf/stockpile.git`.
+   If `upstream` already exists, keep its canonical URL and omit the `remote add` command. Contributors who work directly from the canonical repository may use `origin/master` only when `origin` is verified to be `https://github.com/nirzaf/merconiq.git`.
 3. **Make changes** following our coding conventions
 4. **Add tests** for new functionality
 5. **Restore, build, and run all tests** to verify nothing is broken:
@@ -41,7 +41,7 @@ Please read and follow our [Code of Conduct](CODE_OF_CONDUCT.md).
    The repository pins the SDK to exactly **.NET 10.0.300** in `global.json` (`rollForward` is disabled); install that SDK before running these commands. A generic .NET 10 installation is not sufficient.
 6. **Run the PostgreSQL phase** when a change involves relational constraints, transactions, concurrency, persistence boundaries, migrations, or API behavior that depends on PostgreSQL:
    ```bash
-   RUN_POSTGRES_TESTS=true dotnet test InventoryManagementSystem.Tests/InventoryManagementSystem.Tests.csproj \
+   RUN_POSTGRES_TESTS=true dotnet test Merconiq.Tests/Merconiq.Tests.csproj \
      --no-build --configuration Release --filter "Category=PostgreSQL"
    ```
    The PostgreSQL phase uses Testcontainers to create a disposable `postgres:16-alpine` instance, so Docker must be installed and running in Linux-container mode; a locally installed PostgreSQL server alone is not sufficient for this command. InMemory tests are useful for fast unit coverage, but a skipped or InMemory-only test does not prove PostgreSQL behavior. Confirm that the PostgreSQL phase actually ran.
@@ -50,7 +50,7 @@ Please read and follow our [Code of Conduct](CODE_OF_CONDUCT.md).
    $previousRunPostgresTests = $env:RUN_POSTGRES_TESTS
    try {
      $env:RUN_POSTGRES_TESTS = "true"
-     dotnet test InventoryManagementSystem.Tests/InventoryManagementSystem.Tests.csproj --no-build --configuration Release --filter "Category=PostgreSQL"
+     dotnet test Merconiq.Tests/Merconiq.Tests.csproj --no-build --configuration Release --filter "Category=PostgreSQL"
    }
    finally {
      if ($null -eq $previousRunPostgresTests) { Remove-Item Env:RUN_POSTGRES_TESTS -ErrorAction SilentlyContinue }
@@ -61,11 +61,11 @@ Please read and follow our [Code of Conduct](CODE_OF_CONDUCT.md).
 8. **Commit** with descriptive conventional-commit messages.
 9. **Push only the issue branch** and open a Pull Request against `master`.
 
-### Stockpile review and merge runbook
+### Merconiq review and merge runbook
 
 For an engineering change, use one issue → one fresh `codex/issue-<number>-<short-description>` branch → one focused PR. Keep the PR linked to the real issue and record the tested commit, commands, and limitations. Do not bundle unrelated work or commit directly to `master`.
 
-After implementation and verification, mark the PR ready for review. Stockpile uses the existing native `chatgpt-codex-connector[bot]` integration. Request a review by commenting:
+After implementation and verification, mark the PR ready for review. Merconiq uses the existing native `chatgpt-codex-connector[bot]` integration. Request a review by commenting:
 
 ```text
 @codex review
@@ -85,9 +85,9 @@ Before merging, verify the current head and base, acceptance criteria, complete 
 REVIEWED_HEAD="<FULL_REVIEWED_HEAD_SHA>"
 REVIEWED_BASE_BRANCH="<REVIEWED_BASE_BRANCH>"
 REVIEWED_BASE="<FULL_REVIEWED_BASE_SHA>"
-CURRENT_HEAD="$(gh pr view <PR_NUMBER> --repo nirzaf/stockpile --json headRefOid --jq '.headRefOid')"
-CURRENT_BASE_BRANCH="$(gh pr view <PR_NUMBER> --repo nirzaf/stockpile --json baseRefName --jq '.baseRefName')"
-CURRENT_BASE="$(gh pr view <PR_NUMBER> --repo nirzaf/stockpile --json baseRefOid --jq '.baseRefOid')"
+CURRENT_HEAD="$(gh pr view <PR_NUMBER> --repo nirzaf/merconiq --json headRefOid --jq '.headRefOid')"
+CURRENT_BASE_BRANCH="$(gh pr view <PR_NUMBER> --repo nirzaf/merconiq --json baseRefName --jq '.baseRefName')"
+CURRENT_BASE="$(gh pr view <PR_NUMBER> --repo nirzaf/merconiq --json baseRefOid --jq '.baseRefOid')"
 if test "$CURRENT_HEAD" != "$REVIEWED_HEAD"; then
   printf 'PR head changed: expected %s, found %s. Re-review before merging.\n' "$REVIEWED_HEAD" "$CURRENT_HEAD"
   exit 1
@@ -96,11 +96,11 @@ if test "$CURRENT_BASE_BRANCH" != "$REVIEWED_BASE_BRANCH" || test "$CURRENT_BASE
   printf 'PR base changed: expected %s at %s, found %s at %s. Re-review before merging.\n' "$REVIEWED_BASE_BRANCH" "$REVIEWED_BASE" "$CURRENT_BASE_BRANCH" "$CURRENT_BASE"
   exit 1
 fi
-if ! ACTIVE_RULESETS="$(gh api "repos/nirzaf/stockpile/rulesets" --paginate --slurp)"; then
+if ! ACTIVE_RULESETS="$(gh api "repos/nirzaf/merconiq/rulesets" --paginate --slurp)"; then
   printf 'Could not inspect repository rulesets; do not merge until the target branch policy is known.\n'
   exit 1
 fi
-if ! DEFAULT_BRANCH="$(gh api "repos/nirzaf/stockpile" --jq '.default_branch')"; then
+if ! DEFAULT_BRANCH="$(gh api "repos/nirzaf/merconiq" --jq '.default_branch')"; then
   printf 'Could not inspect the repository default branch; do not merge until the target branch policy is known.\n'
   exit 1
 fi
@@ -145,7 +145,7 @@ else
     exit 1
   fi
 fi
-gh pr merge <PR_NUMBER> --repo nirzaf/stockpile --squash --match-head-commit "$REVIEWED_HEAD"
+gh pr merge <PR_NUMBER> --repo nirzaf/merconiq --squash --match-head-commit "$REVIEWED_HEAD"
 ```
 
 The head and base comparisons are preflight checks, not an atomic expected-base guard: GitHub CLI only provides `--match-head-commit` for the head. They intentionally require a fresh review whenever `master` advances or the PR is retargeted, so use this runbook serially and do not merge concurrently or place the PR in a merge queue. After merging, record the actual merge commit and its first parent as evidence of the base that was merged. Never use an admin/bypass merge, disable checks, force-push, or lower an approval requirement. Preserve any applicable owner approval or confirmation-codeword rule; do not invent one.
@@ -258,19 +258,19 @@ type(scope): description
 ## Project Structure
 
 ```
-├── InventoryManagementSystem.Core/         Domain layer
+├── Merconiq.Core/         Domain layer
 │   ├── Entities/                           Domain models
 │   ├── Interfaces/                         Service contracts
 │   └── Services/                           Business logic
-├── InventoryManagementSystem.Infrastructure/ Data access
+├── Merconiq.Infrastructure/ Data access
 │   ├── Data/                               DbContext, migrations, seed
 │   └── Repositories/                       Repository implementations
-├── InventoryManagementSystem.Web/          ASP.NET Core MVC
+├── Merconiq.Web/          ASP.NET Core MVC
 │   ├── Controllers/                        MVC controllers
 │   └── Views/                              Razor views
-└── InventoryManagementSystem.Tests/        Test projects
+└── Merconiq.Tests/        Test projects
 ```
 
 ## Questions?
 
-Open a [Discussion](https://github.com/nirzaf/Stockpile/discussions) or ask in an issue.
+Open a [Discussion](https://github.com/nirzaf/merconiq/discussions) or ask in an issue.

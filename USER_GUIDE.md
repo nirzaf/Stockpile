@@ -1,6 +1,6 @@
-# User Guide — Inventory Management System
+# User Guide — Merconiq
 
-Welcome to the **Inventory Management System (IMS)**. This guide is for the people who will actually **use** the application day-to-day to track items, stock levels, suppliers, locations, and purchase orders. It is written in plain language and assumes no technical background.
+Welcome to **Merconiq**. This guide is for the people who will actually **use** the application day-to-day to track items, stock levels, suppliers, locations, and purchase orders. It is written in plain language and assumes no technical background.
 
 If you are a developer looking for installation, API, or architecture information, please see the [README.md](README.md) instead.
 
@@ -35,7 +35,7 @@ If you are a developer looking for installation, API, or architecture informatio
 
 ## 1. What is this app?
 
-The Inventory Management System is a web application that helps you keep an accurate, real-time picture of:
+The Merconiq is a web application that helps you keep an accurate, real-time picture of:
 
 - **Items** — the products you sell or use (with codes, barcodes, prices, and suppliers).
 - **Stock** — how many units of each item you have, and **where** they are physically located.
@@ -377,4 +377,4 @@ If something is broken, unexpected, or unclear:
 
 ---
 
-*This guide covers the user-facing functionality of the Inventory Management System. For installation, configuration, and developer documentation, see [README.md](README.md).*
+*This guide covers the user-facing functionality of Merconiq. For installation, configuration, and developer documentation, see [README.md](README.md).*
