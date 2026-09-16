@@ -1,6 +1,6 @@
 # Project provenance
 
-Stockpile's supported history is the genuine commit and branch history in the
+Merconiq's supported history is the genuine commit and branch history in the
 repository. The file `synthetic-history.sh` is retained as a clearly labeled,
 non-supported utility for local history simulation experiments; it is not part
 of the application build, deployment, release, or contribution workflow.
