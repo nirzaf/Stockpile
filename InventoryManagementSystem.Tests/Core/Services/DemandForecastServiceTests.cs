@@ -321,4 +321,25 @@ public class DemandForecastServiceTests
 
         overlappedTransactionQueries.Should().BeFalse();
     }
+
+    [Fact]
+    public void ForecastingEvaluation_UsesChronologicalHoldoutAndReportsBaseline()
+    {
+        // The managed implementation forecasts the training mean. Keep the
+        // holdout strictly after training so this fixture cannot leak future data.
+        var observations = new[] { 4f, 6f, 8f, 10f, 12f, 14f, 16f, 18f };
+        var training = observations.Take(5).ToArray();
+        var holdout = observations.Skip(5).ToArray();
+
+        var managedPrediction = training.Average();
+        var naivePrediction = training[^1];
+        var managedMae = holdout.Average(value => Math.Abs(value - managedPrediction));
+        var naiveMae = holdout.Average(value => Math.Abs(value - naivePrediction));
+
+        training.Should().HaveCount(5);
+        holdout.Should().Equal(14f, 16f, 18f);
+        managedPrediction.Should().Be(8f);
+        managedMae.Should().Be(8f);
+        naiveMae.Should().Be(4f);
+    }
 }
