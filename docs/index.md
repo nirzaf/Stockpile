@@ -24,6 +24,7 @@ Welcome to the documentation site for **Stockpile** — a modern inventory manag
 | **[CHANGELOG](https://github.com/nirzaf/Stockpile/blob/master/CHANGELOG.md)** | Everyone | Version history and release notes. |
 | **[Contributing](https://github.com/nirzaf/Stockpile/blob/master/CONTRIBUTING.md)** | Contributors | How to file issues, open PRs, and follow the project's coding standards. |
 | **[Security](https://github.com/nirzaf/Stockpile/blob/master/SECURITY.md)** | Operators | Security policy and how to report vulnerabilities. |
+| **[Funding and OSS Eligibility](FUNDING_ELIGIBILITY.md)** | Maintainers | Source-dated public ledger for OSS programs, owner gates, and provider confirmation status. |
 
 ---
 
