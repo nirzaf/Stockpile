@@ -15,6 +15,7 @@ public class ItemServiceTests
 {
     private readonly Fixture _fixture = InventoryFixtureFactory.Create();
     private readonly Mock<IItemRepository> _repoMock = new();
+    private readonly Mock<IRepository<UnitOfMeasure>> _unitRepoMock = new();
     private readonly Mock<IUnitOfWork> _uowMock = new();
     private readonly IMemoryCache _cache = new MemoryCache(new MemoryCacheOptions());
     private readonly ItemService _sut;
@@ -26,7 +27,8 @@ public class ItemServiceTests
             _uowMock.Object,
             NullLogger<ItemService>.Instance,
             _cache,
-            new TestTenantContext("test-tenant"));
+            new TestTenantContext("test-tenant"),
+            _unitRepoMock.Object);
     }
 
     [Fact]
@@ -87,10 +89,10 @@ public class ItemServiceTests
 
         var tenantAService = new ItemService(
             tenantARepo.Object, _uowMock.Object, NullLogger<ItemService>.Instance, cache,
-            new TestTenantContext("tenant-a"));
+            new TestTenantContext("tenant-a"), _unitRepoMock.Object);
         var tenantBService = new ItemService(
             tenantBRepo.Object, _uowMock.Object, NullLogger<ItemService>.Instance, cache,
-            new TestTenantContext("tenant-b"));
+            new TestTenantContext("tenant-b"), _unitRepoMock.Object);
 
         (await tenantAService.GetAllAsync()).Single().ItemCode.Should().Be("TENANT-A");
         (await tenantBService.GetAllAsync()).Single().ItemCode.Should().Be("TENANT-B");
@@ -142,6 +144,20 @@ public class ItemServiceTests
         // Assert
         result.Should().BeEquivalentTo(item);
         _repoMock.Verify(r => r.AddAsync(item), Times.Once);
+    }
+
+    [Fact]
+    public async Task CreateAsync_rejects_unit_not_visible_to_current_tenant()
+    {
+        var item = new Item { ItemCode = "SKU-1", Rate = 10m, BaseUnitId = 42 };
+        _unitRepoMock.Setup(r => r.FindAsync(It.IsAny<System.Linq.Expressions.Expression<Func<UnitOfMeasure, bool>>>()))
+            .ReturnsAsync(Array.Empty<UnitOfMeasure>());
+
+        var act = () => _sut.CreateAsync(item);
+
+        await act.Should().ThrowAsync<ArgumentException>()
+            .WithMessage("Each item unit must exist and belong to the current tenant.");
+        _repoMock.Verify(r => r.AddAsync(It.IsAny<Item>()), Times.Never);
     }
 
     [Fact]

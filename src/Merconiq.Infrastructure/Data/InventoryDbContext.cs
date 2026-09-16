@@ -240,9 +240,18 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
             entity.Property(e => e.Rate).HasColumnType("decimal(18,2)");
             entity.Property(e => e.PurchaseToBaseFactor).HasColumnType("decimal(18,6)");
             entity.Property(e => e.SalesToBaseFactor).HasColumnType("decimal(18,6)");
-            entity.HasOne(e => e.BaseUnit).WithMany().HasForeignKey(e => e.BaseUnitId).OnDelete(DeleteBehavior.Restrict);
-            entity.HasOne(e => e.PurchaseUnit).WithMany().HasForeignKey(e => e.PurchaseUnitId).OnDelete(DeleteBehavior.Restrict);
-            entity.HasOne(e => e.SalesUnit).WithMany().HasForeignKey(e => e.SalesUnitId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(e => e.BaseUnit).WithMany()
+                .HasForeignKey(e => new { e.BaseUnitId, e.TenantId })
+                .HasPrincipalKey(e => new { e.Id, e.TenantId })
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(e => e.PurchaseUnit).WithMany()
+                .HasForeignKey(e => new { e.PurchaseUnitId, e.TenantId })
+                .HasPrincipalKey(e => new { e.Id, e.TenantId })
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(e => e.SalesUnit).WithMany()
+                .HasForeignKey(e => new { e.SalesUnitId, e.TenantId })
+                .HasPrincipalKey(e => new { e.Id, e.TenantId })
+                .OnDelete(DeleteBehavior.Restrict);
             entity.HasIndex(e => e.SupplierId);
             entity.Property(e => e.ReorderLevel).HasDefaultValue(10);
 
@@ -261,6 +270,7 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
             entity.Property(e => e.Name).HasMaxLength(100).IsRequired();
             entity.HasIndex(e => new { e.TenantId, e.Code }).IsUnique();
             entity.HasIndex(e => new { e.TenantId, e.ExternalId }).IsUnique();
+            entity.HasIndex(e => new { e.Id, e.TenantId }).IsUnique();
             entity.Property(e => e.DecimalPlaces).HasDefaultValue(0);
         });
 

@@ -12,8 +12,11 @@ public sealed class CreateItemCommandValidator : AbstractValidator<CreateItemCom
         RuleFor(command => command.Description).MaximumLength(500);
         RuleFor(command => command.Rate).GreaterThan(0);
         RuleFor(command => command.SupplierId).GreaterThan(0).When(command => command.SupplierId.HasValue);
-        RuleFor(command => command.PurchaseToBaseFactor).GreaterThan(0);
-        RuleFor(command => command.SalesToBaseFactor).GreaterThan(0);
+        RuleFor(command => command.BaseUnitId).GreaterThan(0).When(command => command.BaseUnitId.HasValue);
+        RuleFor(command => command.PurchaseUnitId).GreaterThan(0).When(command => command.PurchaseUnitId.HasValue);
+        RuleFor(command => command.SalesUnitId).GreaterThan(0).When(command => command.SalesUnitId.HasValue);
+        RuleFor(command => command.PurchaseToBaseFactor).GreaterThan(0).PrecisionScale(18, 6, true);
+        RuleFor(command => command.SalesToBaseFactor).GreaterThan(0).PrecisionScale(18, 6, true);
         RuleFor(command => command.QuantityPrecision).InclusiveBetween(0, 6);
     }
 }
@@ -26,9 +29,15 @@ public sealed class UpdateItemCommandValidator : AbstractValidator<UpdateItemCom
         RuleFor(command => command.Description).MaximumLength(500);
         RuleFor(command => command.Rate).GreaterThan(0);
         RuleFor(command => command.SupplierId).GreaterThan(0).When(command => command.SupplierId.HasValue);
-        RuleFor(command => command.PurchaseToBaseFactor).GreaterThan(0);
-        RuleFor(command => command.SalesToBaseFactor).GreaterThan(0);
-        RuleFor(command => command.QuantityPrecision).InclusiveBetween(0, 6);
+        RuleFor(command => command.BaseUnitId).GreaterThan(0).When(command => command.BaseUnitId.HasValue);
+        RuleFor(command => command.PurchaseUnitId).GreaterThan(0).When(command => command.PurchaseUnitId.HasValue);
+        RuleFor(command => command.SalesUnitId).GreaterThan(0).When(command => command.SalesUnitId.HasValue);
+        RuleFor(command => command.PurchaseToBaseFactor).GreaterThan(0).PrecisionScale(18, 6, true)
+            .When(command => command.PurchaseToBaseFactor.HasValue);
+        RuleFor(command => command.SalesToBaseFactor).GreaterThan(0).PrecisionScale(18, 6, true)
+            .When(command => command.SalesToBaseFactor.HasValue);
+        RuleFor(command => command.QuantityPrecision).InclusiveBetween(0, 6)
+            .When(command => command.QuantityPrecision.HasValue);
     }
 }
 

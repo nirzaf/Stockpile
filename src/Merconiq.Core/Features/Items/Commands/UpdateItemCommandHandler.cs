@@ -26,13 +26,14 @@ public class UpdateItemCommandHandler : IRequestHandler<UpdateItemCommand>
         item.Description = request.Description;
         item.Rate = request.Rate;
         item.SupplierId = request.SupplierId;
-        item.BaseUnitId = request.BaseUnitId;
-        item.PurchaseUnitId = request.PurchaseUnitId;
-        item.SalesUnitId = request.SalesUnitId;
-        item.PurchaseToBaseFactor = request.PurchaseToBaseFactor;
-        item.SalesToBaseFactor = request.SalesToBaseFactor;
-        item.QuantityPrecision = request.QuantityPrecision;
-        item.WholeUnitOnly = request.WholeUnitOnly;
+        if (request.BaseUnitId.HasValue) item.BaseUnitId = request.BaseUnitId;
+        if (request.PurchaseUnitId.HasValue) item.PurchaseUnitId = request.PurchaseUnitId;
+        if (request.SalesUnitId.HasValue) item.SalesUnitId = request.SalesUnitId;
+        if (request.PurchaseToBaseFactor.HasValue) item.PurchaseToBaseFactor = request.PurchaseToBaseFactor.Value;
+        if (request.SalesToBaseFactor.HasValue) item.SalesToBaseFactor = request.SalesToBaseFactor.Value;
+        if (request.QuantityPrecision.HasValue) item.QuantityPrecision = request.QuantityPrecision.Value;
+        if (request.WholeUnitOnly.HasValue) item.WholeUnitOnly = request.WholeUnitOnly.Value;
+        if (request.IsActive.HasValue) item.IsActive = request.IsActive.Value;
         await _itemService.UpdateAsync(item);
     }
 }
