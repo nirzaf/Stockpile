@@ -10,6 +10,10 @@ PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
 cd "$PROJECT_DIR"
 
+# Keep production selection explicit. docker-compose.override.yml is intentionally
+# not supported because implicit Development settings are unsafe for deployment.
+COMPOSE=(docker compose --file docker-compose.yml)
+
 # Parse flags
 DO_BUILD=false
 DO_MIGRATE=false
@@ -33,43 +37,46 @@ else
     echo "⚠️  No .env file found — required database and JWT settings must be exported"
 fi
 
+echo "🔍 Validating production Compose configuration..."
+"$PROJECT_DIR/scripts/validate-compose.sh" production
+
 # Pull latest images or build locally
 if [ "$DO_BUILD" = true ]; then
     echo "🔨 Building Docker images..."
-    docker compose build --no-cache
+    "${COMPOSE[@]}" build --no-cache
 else
     echo "📥 Pulling Docker images..."
-    docker compose pull 2>/dev/null || true
+    "${COMPOSE[@]}" pull 2>/dev/null || true
 fi
 
 # Start the database first when migrations were requested. Production migrations
 # run in the isolated SDK migrator service, never in the application process.
 if [ "$DO_MIGRATE" = true ]; then
     echo "🚀 Starting database..."
-    docker compose up -d --wait db
+    "${COMPOSE[@]}" up -d --wait db
 
     echo "🗄️  Running database migrations..."
-    docker compose --profile migrations run --rm migrator
+    "${COMPOSE[@]}" --profile migrations run --rm migrator
 
     echo "🚀 Starting application..."
-    docker compose up -d --wait app
+    "${COMPOSE[@]}" up -d --wait app
 else
     echo "🚀 Starting services..."
-    docker compose up -d --wait
+    "${COMPOSE[@]}" up -d --wait
 fi
 
 # Show status
 echo ""
 echo "📊 Service status:"
-docker compose ps
+"${COMPOSE[@]}" ps
 
 echo ""
 echo "✅ Deployment complete!"
 echo "   App:  http://localhost:${APP_PORT:-8080}"
-echo "   Logs: docker compose logs -f app"
+echo "   Logs: docker compose --file docker-compose.yml logs -f app"
 echo ""
 echo "   Useful commands:"
-echo "     docker compose logs -f app     # Follow app logs"
-echo "     docker compose restart app     # Restart the app"
-echo "     docker compose down            # Stop everything"
-echo "     docker compose down -v         # Stop + remove volumes"
+echo "     docker compose --file docker-compose.yml logs -f app     # Follow app logs"
+echo "     docker compose --file docker-compose.yml restart app     # Restart the app"
+echo "     docker compose --file docker-compose.yml down            # Stop everything"
+echo "     docker compose --file docker-compose.yml down -v         # Stop + remove volumes"
