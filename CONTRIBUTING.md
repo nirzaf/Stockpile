@@ -23,11 +23,13 @@ Please read and follow our [Code of Conduct](CODE_OF_CONDUCT.md).
 ### Pull Requests
 
 1. **Fork** the repository
-2. **Create a branch** from the current `master` branch:
+2. **Create a branch** from the canonical repository's current `master` branch:
    ```bash
-   git fetch origin master
-   git switch -c codex/issue-<number>-<short-description> origin/master
+   git remote add upstream https://github.com/nirzaf/stockpile.git  # once, if upstream is not configured
+   git fetch upstream master
+   git switch -c codex/issue-<number>-<short-description> upstream/master
    ```
+   If `upstream` already exists, keep its canonical URL and omit the `remote add` command. Contributors who work directly from the canonical repository may use `origin/master` only when `origin` is verified to be `https://github.com/nirzaf/stockpile.git`.
 3. **Make changes** following our coding conventions
 4. **Add tests** for new functionality
 5. **Restore, build, and run all tests** to verify nothing is broken:
@@ -41,7 +43,7 @@ Please read and follow our [Code of Conduct](CODE_OF_CONDUCT.md).
    RUN_POSTGRES_TESTS=true dotnet test InventoryManagementSystem.Tests/InventoryManagementSystem.Tests.csproj \
      --no-build --configuration Release --filter "Category=PostgreSQL"
    ```
-   InMemory tests are useful for fast unit coverage, but a skipped or InMemory-only test does not prove PostgreSQL behavior. Confirm that the PostgreSQL phase actually ran.
+   The PostgreSQL phase uses Testcontainers to create a disposable PostgreSQL instance, so a working Docker-compatible daemon is required; a locally installed PostgreSQL server alone is not sufficient for this command. InMemory tests are useful for fast unit coverage, but a skipped or InMemory-only test does not prove PostgreSQL behavior. Confirm that the PostgreSQL phase actually ran.
 7. **Inspect** `git diff --check`, the changed-file list, and the complete diff. Do not commit secrets, dumps, coverage output, or transient logs.
 8. **Commit** with descriptive conventional-commit messages.
 9. **Push only the issue branch** and open a Pull Request against `master`.
