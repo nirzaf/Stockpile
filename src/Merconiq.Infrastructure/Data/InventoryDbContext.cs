@@ -68,6 +68,7 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
 
     /// <summary>Company-owned operating branches.</summary>
     public DbSet<Branch> Branches { get; set; } = null!;
+    public DbSet<DocumentNumberSequence> DocumentNumberSequences { get; set; } = null!;
 
     /// <summary>
     /// Saves pending changes, stamping <see cref="AuditableEntity"/> timestamps, translating
@@ -468,6 +469,16 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
             entity.Property(e => e.LastError).HasMaxLength(4096);
             entity.HasIndex(e => new { e.TenantId, e.Scope, e.Key }).IsUnique();
             entity.HasIndex(e => e.ExpiresAt);
+        });
+
+        modelBuilder.Entity<DocumentNumberSequence>(entity =>
+        {
+            entity.HasQueryFilter(e => e.TenantId == CurrentTenantId);
+            entity.Property(e => e.TenantId).HasMaxLength(64).IsRequired();
+            entity.Property(e => e.DocumentType).HasMaxLength(64).IsRequired();
+            entity.Property(e => e.Prefix).HasMaxLength(32).IsRequired();
+            entity.Property(e => e.Version).HasColumnType("xid").ValueGeneratedOnAddOrUpdate().IsConcurrencyToken();
+            entity.HasIndex(e => new { e.TenantId, e.CompanyId, e.DocumentType, e.Period }).IsUnique();
         });
     }
 }
