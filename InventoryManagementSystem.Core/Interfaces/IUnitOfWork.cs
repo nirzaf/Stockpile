@@ -29,7 +29,11 @@ public interface IUnitOfWork
     /// <summary>Executes an operation inside a retryable transaction boundary.</summary>
     /// <param name="operation">The operation whose changes must commit atomically.</param>
     /// <param name="cancellationToken">A token used while creating and committing the transaction.</param>
-    Task ExecuteInTransactionAsync(Func<Task> operation, CancellationToken cancellationToken = default);
+    /// <param name="verifySucceeded">Optionally verifies durable success after an ambiguous commit.</param>
+    Task ExecuteInTransactionAsync(
+        Func<Task> operation,
+        CancellationToken cancellationToken = default,
+        Func<Task<bool>>? verifySucceeded = null);
 
     /// <summary>Clears the EF Core change tracker. Use after a failed <c>SaveChangesAsync</c> to retry.</summary>
     void ClearTracker();
