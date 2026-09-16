@@ -194,7 +194,7 @@ public sealed class PostgreSqlIntegrationTests
         {
             var deleteLegacyLocation = () => hardDelete.Locations
                 .IgnoreQueryFilters()
-                .Where(location => location.Id == legacyLocationId)
+                .Where(location => location.Id == companyALocationId)
                 .ExecuteDeleteAsync();
             var exception = await deleteLegacyLocation.Should().ThrowAsync<PostgresException>();
             exception.Which.SqlState.Should().Be(PostgresErrorCodes.ForeignKeyViolation);
