@@ -39,18 +39,46 @@ public sealed class IdempotencyKeyStore(
         }
 
         var ownsTransaction = !unitOfWork.HasActiveTransaction;
+        var concurrencyRetries = 3;
         try
         {
-            await unitOfWork.ExecuteInTransactionAsync(async () =>
+            while (true)
             {
-                await operation();
-                TrackRecord(record);
-                record.Status = IdempotencyRecordStatus.Completed;
-                record.ResponseStatusCode = StatusCodes.Status204NoContent;
-                record.CompletedAt = DateTimeOffset.UtcNow;
-                record.LeaseUntil = null;
-                record.LastError = null;
-            }, CancellationToken.None);
+                try
+                {
+                    await unitOfWork.ExecuteInTransactionAsync(async () =>
+                    {
+                        await operation();
+                        TrackRecord(record);
+                        record.Status = IdempotencyRecordStatus.Completed;
+                        record.ResponseStatusCode = StatusCodes.Status204NoContent;
+                        record.CompletedAt = DateTimeOffset.UtcNow;
+                        record.LeaseUntil = null;
+                        record.LastError = null;
+                    }, CancellationToken.None, async () =>
+                    {
+                        var completed = await context.IdempotencyRecords
+                            .AsNoTracking()
+                            .AnyAsync(item => item.Id == record.Id &&
+                                              item.Status == IdempotencyRecordStatus.Completed,
+                                CancellationToken.None);
+                        if (!completed)
+                        {
+                            context.ChangeTracker.Clear();
+                        }
+                        return completed;
+                    });
+                    break;
+                }
+                catch (InventoryManagementSystem.Core.Exceptions.ConcurrencyException) when (--concurrencyRetries > 0)
+                {
+                    // The complete keyed operation owns the transaction boundary.
+                    // Restart it after a conflict so StockService can never retry
+                    // inside a transaction that is already invalid.
+                    unitOfWork.ClearTracker();
+                    await Task.Delay(100, CancellationToken.None);
+                }
+            }
         }
         catch (Exception ex)
         {
@@ -79,10 +107,20 @@ public sealed class IdempotencyKeyStore(
 
     private void TrackRecord(IdempotencyRecord record)
     {
-        if (context.Entry(record).State == EntityState.Detached)
+        var entry = context.Entry(record);
+        if (entry.State == EntityState.Detached)
         {
-            context.IdempotencyRecords.Attach(record);
+            entry = context.IdempotencyRecords.Attach(record);
         }
+
+        // A retry can clear the tracker after this object was already populated
+        // with its completed values. Explicitly mark the completion columns so
+        // reattaching the object cannot turn them into an unchanged snapshot.
+        entry.Property(item => item.Status).IsModified = true;
+        entry.Property(item => item.ResponseStatusCode).IsModified = true;
+        entry.Property(item => item.CompletedAt).IsModified = true;
+        entry.Property(item => item.LeaseUntil).IsModified = true;
+        entry.Property(item => item.LastError).IsModified = true;
     }
 
     private async Task<IdempotencyRecord?> ClaimAsync(
