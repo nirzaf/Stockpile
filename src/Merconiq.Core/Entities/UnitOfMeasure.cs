@@ -6,6 +6,7 @@ namespace Merconiq.Core.Entities;
 public sealed class UnitOfMeasure : AuditableEntity, ISoftDelete
 {
     public int Id { get; set; }
+    public string ExternalId { get; set; } = string.Empty;
     public string Code { get; set; } = string.Empty;
     public string Name { get; set; } = string.Empty;
     public int DecimalPlaces { get; set; }

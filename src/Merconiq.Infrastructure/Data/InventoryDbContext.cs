@@ -266,8 +266,10 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
             entity.HasQueryFilter(e => !e.IsDeleted && e.TenantId == CurrentTenantId);
             entity.Property(e => e.TenantId).HasMaxLength(64).IsRequired();
             entity.Property(e => e.Code).HasMaxLength(32).IsRequired();
+            entity.Property(e => e.ExternalId).HasMaxLength(128).IsRequired();
             entity.Property(e => e.Name).HasMaxLength(100).IsRequired();
             entity.HasIndex(e => new { e.TenantId, e.Code }).IsUnique();
+            entity.HasIndex(e => new { e.TenantId, e.ExternalId }).IsUnique();
             entity.HasIndex(e => new { e.Id, e.TenantId }).IsUnique();
             entity.Property(e => e.DecimalPlaces).HasDefaultValue(0);
         });

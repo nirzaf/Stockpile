@@ -822,6 +822,11 @@ namespace Merconiq.Infrastructure.Migrations
                         .HasColumnType("integer")
                         .HasDefaultValue(0);
 
+                    b.Property<string>("ExternalId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
                     b.Property<bool>("IsDeleted")
                         .HasColumnType("boolean");
 
@@ -850,6 +855,9 @@ namespace Merconiq.Infrastructure.Migrations
                         .IsUnique();
 
                     b.HasIndex("TenantId", "Code")
+                        .IsUnique();
+
+                    b.HasIndex("TenantId", "ExternalId")
                         .IsUnique();
 
                     b.ToTable("UnitsOfMeasure");
