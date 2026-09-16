@@ -67,7 +67,10 @@ public class StockService : IStockService
             orderBy: q => q.OrderByDescending(t => t.TransactionDate));
     }
 
-    private async Task ExecuteWithRetryAsync(int itemId, Func<Task> action)
+    private async Task ExecuteWithRetryAsync(
+        int itemId,
+        Func<Task> action,
+        Func<Task<bool>> verifySucceeded)
     {
         // PostgreSQL surfaces an optimistic-concurrency conflict as a DbUpdateConcurrencyException
         // (driven by the StockInHand.xmin token). Three retries matches the default
@@ -76,17 +79,27 @@ public class StockService : IStockService
         int retries = 3;
         while (true)
         {
+            var ownsTransaction = !_unitOfWork.HasActiveTransaction;
             try
             {
-                await _unitOfWork.BeginTransactionAsync();
-                await action();
-                await CheckLowStockAsync(itemId);
-                await _unitOfWork.CommitTransactionAsync();
+                await _unitOfWork.ExecuteInTransactionAsync(async () =>
+                {
+                    await action();
+                    await CheckLowStockAsync(itemId);
+                }, CancellationToken.None, verifySucceeded);
                 break;
             }
             catch (InventoryManagementSystem.Core.Exceptions.ConcurrencyException ex)
             {
-                await _unitOfWork.RollbackTransactionAsync();
+                if (!ownsTransaction)
+                {
+                    // A keyed request is already inside IdempotencyKeyStore's
+                    // retryable outer boundary. Restarting here would reuse the
+                    // invalid transaction; the coordinator catches this exception
+                    // and reruns the complete movement and claim together.
+                    throw;
+                }
+                await _unitOfWork.RollbackTransactionAsync(CancellationToken.None);
                 if (--retries <= 0)
                 {
                     _logger.LogError(ex, "Concurrency conflict could not be resolved after retries.");
@@ -106,7 +119,10 @@ public class StockService : IStockService
             }
             catch
             {
-                await _unitOfWork.RollbackTransactionAsync();
+                if (ownsTransaction)
+                {
+                    await _unitOfWork.RollbackTransactionAsync(CancellationToken.None);
+                }
                 throw;
             }
         }
@@ -117,6 +133,7 @@ public class StockService : IStockService
     {
         if (quantity <= 0) throw new ArgumentException("Quantity must be positive");
 
+        StockTransaction? transaction = null;
         await ExecuteWithRetryAsync(itemId, async () =>
         {
             var existing = await GetByItemAndLocationAsync(itemId, locationId, batchNumber, expiryDate);
@@ -137,7 +154,7 @@ public class StockService : IStockService
                 });
             }
 
-            await _txRepo.AddAsync(new StockTransaction
+            transaction = new StockTransaction
             {
                 ItemId = itemId,
                 FromLocationId = locationId,
@@ -148,12 +165,13 @@ public class StockService : IStockService
                 BatchNumber = batchNumber,
                 ExpiryDate = expiryDate,
                 Notes = notes
-            });
+            };
+            await _txRepo.AddAsync(transaction);
 
             await _webhookDispatcher.EnqueueAsync(WebhookEventFactory.Create(_tenantContext, "Stock.Received",
                 new { ItemId = itemId, LocationId = locationId, Quantity = quantity, Notes = notes, BatchNumber = batchNumber, ExpiryDate = expiryDate }));
             await _unitOfWork.SaveChangesAsync();
-        });
+        }, () => VerifyTransactionCommitAsync(transaction));
 
         _logger.LogInformation("Received {Qty} of item {ItemId} at location {LocId}", quantity, itemId, locationId);
     }
@@ -164,6 +182,7 @@ public class StockService : IStockService
         if (quantity <= 0) throw new ArgumentException("Quantity must be positive");
         if (fromLocationId == toLocationId) throw new ArgumentException("Source and destination must be different");
 
+        StockTransaction? transaction = null;
         await ExecuteWithRetryAsync(itemId, async () =>
         {
             var source = await GetByItemAndLocationAsync(itemId, fromLocationId, batchNumber, expiryDate);
@@ -191,7 +210,7 @@ public class StockService : IStockService
                 });
             }
 
-            await _txRepo.AddAsync(new StockTransaction
+            transaction = new StockTransaction
             {
                 ItemId = itemId,
                 FromLocationId = fromLocationId,
@@ -202,12 +221,13 @@ public class StockService : IStockService
                 BatchNumber = batchNumber,
                 ExpiryDate = expiryDate,
                 Notes = notes
-            });
+            };
+            await _txRepo.AddAsync(transaction);
 
             await _webhookDispatcher.EnqueueAsync(WebhookEventFactory.Create(_tenantContext, "Stock.Transferred",
                 new { ItemId = itemId, FromLocationId = fromLocationId, ToLocationId = toLocationId, Quantity = quantity, Notes = notes, BatchNumber = batchNumber, ExpiryDate = expiryDate }));
             await _unitOfWork.SaveChangesAsync();
-        });
+        }, () => VerifyTransactionCommitAsync(transaction));
 
         _logger.LogInformation("Transferred {Qty} of item {ItemId} from {From} to {To}", quantity, itemId, fromLocationId, toLocationId);
     }
@@ -217,6 +237,7 @@ public class StockService : IStockService
     {
         if (quantity <= 0) throw new ArgumentException("Quantity must be positive");
 
+        StockTransaction? transaction = null;
         await ExecuteWithRetryAsync(itemId, async () =>
         {
             var stock = await GetByItemAndLocationAsync(itemId, locationId, batchNumber, expiryDate);
@@ -226,7 +247,7 @@ public class StockService : IStockService
             stock.Quantity -= quantity;
             await _stockRepo.UpdateAsync(stock);
 
-            await _txRepo.AddAsync(new StockTransaction
+            transaction = new StockTransaction
             {
                 ItemId = itemId,
                 FromLocationId = locationId,
@@ -236,12 +257,13 @@ public class StockService : IStockService
                 BatchNumber = batchNumber,
                 ExpiryDate = expiryDate,
                 Notes = notes
-            });
+            };
+            await _txRepo.AddAsync(transaction);
 
             await _webhookDispatcher.EnqueueAsync(WebhookEventFactory.Create(_tenantContext, "Stock.Sold",
                 new { ItemId = itemId, LocationId = locationId, Quantity = quantity, Notes = notes, BatchNumber = batchNumber, ExpiryDate = expiryDate }));
             await _unitOfWork.SaveChangesAsync();
-        });
+        }, () => VerifyTransactionCommitAsync(transaction));
 
         _logger.LogInformation("Sold {Qty} of item {ItemId} from location {LocId}", quantity, itemId, locationId);
     }
@@ -278,5 +300,25 @@ public class StockService : IStockService
             _logger.LogError(ex, "Error checking low stock level for item {ItemId}", itemId);
             throw;
         }
+    }
+
+    private async Task<bool> VerifyTransactionCommitAsync(StockTransaction? transaction)
+    {
+        if (transaction is null || transaction.Id == 0)
+        {
+            _unitOfWork.ClearTracker();
+            return false;
+        }
+
+        var exists = (await _txRepo.FindAsync(item => item.Id == transaction.Id)).Any();
+        if (!exists)
+        {
+            // SaveChanges has already accepted the first attempt's entity state. A
+            // false verification means that attempt was rolled back, so detach all
+            // stale instances before the execution strategy replays the operation.
+            _unitOfWork.ClearTracker();
+        }
+
+        return exists;
     }
 }

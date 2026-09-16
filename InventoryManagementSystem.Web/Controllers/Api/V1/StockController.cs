@@ -118,7 +118,8 @@ public class StockController : ControllerBase
                 scope,
                 idempotencyKey,
                 IdempotencyRequestHasher.Compute(command),
-                () => _mediator.Send(command));
+                () => _mediator.Send(command, HttpContext.RequestAborted),
+                HttpContext.RequestAborted);
         }
         return NoContent();
     }
@@ -154,7 +155,8 @@ public class StockController : ControllerBase
                 scope,
                 idempotencyKey,
                 IdempotencyRequestHasher.Compute(command),
-                () => _mediator.Send(command));
+                () => _mediator.Send(command, HttpContext.RequestAborted),
+                HttpContext.RequestAborted);
         }
         return NoContent();
     }
