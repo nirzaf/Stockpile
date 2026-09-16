@@ -262,5 +262,26 @@ public sealed class PostgreSqlIntegrationTests
         await act.Should().ThrowAsync<DbUpdateConcurrencyException>();
     }
 
+    [PostgreSqlFact]
+    public async Task Document_number_sequence_migration_is_discoverable_and_allocator_persists_numbers()
+    {
+        _fixture.EnsureEnabled();
+        var tenantId = Unique("document-number-tenant");
+        var documentType = Unique("INVOICE");
+
+        await using (var context = _fixture.CreateContext(tenantId))
+        {
+            var service = new DocumentNumberService(context, new UnitOfWork(context));
+
+            (await service.AllocateAsync(42, documentType, 2026, "INV-")).Should().Be("INV-2026-000001");
+            (await service.AllocateAsync(42, documentType, 2026, "IGNORED-")).Should().Be("INV-2026-000002");
+        }
+
+        await using var verify = _fixture.CreateContext(tenantId);
+        var sequence = await verify.DocumentNumberSequences.SingleAsync(item => item.DocumentType == documentType);
+        sequence.CompanyId.Should().Be(42);
+        sequence.NextNumber.Should().Be(3);
+    }
+
     private static string Unique(string prefix) => $"{prefix}-{Guid.NewGuid():N}";
 }
