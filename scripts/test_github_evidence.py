@@ -8,6 +8,7 @@ import datetime
 import sys
 import unittest
 from pathlib import Path
+from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -23,7 +24,7 @@ def fixture(name: str):
 
 
 class FixtureTransport:
-    def __init__(self, *, error_name: str | None = None, empty: bool = False, malformed_branch: bool = False, commits=None):
+    def __init__(self, *, error_name: str | None = None, empty: bool = False, malformed_branch: bool = False, commits: list[dict[str, Any]] | None = None):
         self.error_name = error_name
         self.empty = empty
         self.malformed_branch = malformed_branch
@@ -136,6 +137,16 @@ class GithubEvidenceTests(unittest.TestCase):
         self.assertEqual(report["metrics"]["commits_in_window"]["value"], 2)
         self.assertNotIn("since", transport.commit_queries[0])
         self.assertNotIn("until", transport.commit_queries[0])
+
+    def test_malformed_commit_metadata_is_unknown_not_an_exception(self):
+        report = collect_report(
+            client=GitHubClient(FixtureTransport(commits=[{"commit": None}]))
+        )
+
+        commits = report["metrics"]["commits_in_window"]
+        self.assertEqual(commits["status"], "unknown")
+        self.assertIsNone(commits["value"])
+        self.assertIn("malformed commit metadata", commits["reason"])
 
 
 if __name__ == "__main__":
