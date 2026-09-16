@@ -138,9 +138,14 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
             var auditEntry = new AuditEntry(entry)
             {
                 TableName = entry.Entity.GetType().Name,
-                UserId = username
+                UserId = username,
+                Action = entry.State switch
+                {
+                    EntityState.Added => "Insert",
+                    EntityState.Deleted => "Delete",
+                    _ => null!
+                }
             };
-            auditEntries.Add(auditEntry);
 
             foreach (var property in entry.Properties)
             {
@@ -180,6 +185,11 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
                         }
                         break;
                 }
+            }
+
+            if (!string.IsNullOrEmpty(auditEntry.Action))
+            {
+                auditEntries.Add(auditEntry);
             }
         }
 
