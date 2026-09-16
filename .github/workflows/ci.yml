@@ -74,7 +74,7 @@ jobs:
         env:
           RUN_POSTGRES_TESTS: "true"
         run: |
-          dotnet test InventoryManagementSystem.Tests/InventoryManagementSystem.Tests.csproj \
+          dotnet test Merconiq.Tests/Merconiq.Tests.csproj \
             --no-build --configuration Release \
             --verbosity normal --filter "Category=PostgreSQL"
 
