@@ -74,17 +74,23 @@ it is not part of the supported build or deployment path.
 
 ## Quick Start
 
-### Docker (recommended)
+### Docker local development
 
 ```bash
 git clone https://github.com/nirzaf/stockpile.git
 cd stockpile
-cp .env.example .env        # set DB_PASSWORD and JWT_SECRET; do not commit .env
-docker compose -f docker-compose.yml -f docker-compose.override.yml config --quiet
-docker compose -f docker-compose.yml -f docker-compose.override.yml up -d --wait
+cp .env.example .env        # edit credentials if desired
+./scripts/validate-compose.sh development
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --wait
 ```
 
 The app will be available at **http://localhost:8080**.
+The development file is explicit: it enables Development mode, publishes the
+local PostgreSQL port, mounts source directories, and enables the optional
+watch configuration. Set `DB_PASSWORD`, `JWT_SECRET`, `ADMIN_EMAIL`, and
+`ADMIN_PASSWORD` in `.env` when using the Development seed administrator;
+`validate-compose.sh` validates required database/JWT values without printing
+the resolved secrets.
 
 This is the local Development path. The override is selected explicitly and publishes
 development ports for local tooling; it is not a production deployment. Normal startup
@@ -211,13 +217,15 @@ The normal `SaveChangesAsync` path remains available for single-operation servic
 
 ## Deployment
 
-The Docker Compose path is the supported production-shaped path. It is deliberately
-separate from the development path above and requires explicit non-empty secrets:
+The Docker Compose production path is deliberately explicit and does not load a
+development override. It keeps PostgreSQL on the private Compose network (no
+host port is published), preserves the `pgdata` and `dataprotection` volumes,
+and requires non-empty database and JWT secrets:
 
 ```bash
 cp .env.example .env
 # Edit .env: DB_PASSWORD and JWT_SECRET.
-docker compose -f docker-compose.yml config
+./scripts/validate-compose.sh production
 docker compose -f docker-compose.yml --profile migrations run --rm migrator
 docker compose -f docker-compose.yml --profile bootstrap run --rm bootstrap-admin
 docker compose -f docker-compose.yml up -d --wait
@@ -236,7 +244,7 @@ values retain their documented behavior.
 # Publish
 dotnet publish -c Release -o ./publish
 
-# Docker Compose (production)
+# Docker Compose (production; the script selects docker-compose.yml explicitly)
 cp .env.example .env    # set DB_PASSWORD, JWT_SECRET, and one-shot bootstrap settings
 ./scripts/deploy.sh --migrate
 
