@@ -52,9 +52,10 @@ public static class IdentityExtensions
                     !string.Equals(principalTenant, tenantContext.TenantId, StringComparison.Ordinal))
                 {
                     context.RejectPrincipal();
+                    return Task.CompletedTask;
                 }
 
-                return Task.CompletedTask;
+                return SecurityStampValidator.ValidatePrincipalAsync(context);
             };
         });
 
