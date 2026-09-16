@@ -14,10 +14,6 @@
       "http://localhost:5069"
     ]
   },
-  "AdminSettings": {
-    "Email": "",
-    "Password": ""
-  },
   "JwtSettings": {
     "Secret": "",
     "Issuer": "InventoryManagementSystem",
