@@ -115,7 +115,7 @@ public static class EndpointExtensions
         })
             .WithName("GetWebhooks")
             .WithTags("Webhooks")
-            .RequireAuthorization(policy => policy.RequireRole("Admin", "Manager"));
+            .RequireAuthorization(CapabilityPolicies.View);
 
         v1.MapPost("/webhooks", async (
             WebhookSubscriptionRequest request,
@@ -140,7 +140,7 @@ public static class EndpointExtensions
         })
             .WithName("CreateWebhook")
             .WithTags("Webhooks")
-            .RequireAuthorization(policy => policy.RequireRole("Admin", "Manager"));
+            .RequireAuthorization(CapabilityPolicies.Edit);
 
         v1.MapPut("/webhooks/{id:int}", async (
             int id,
@@ -170,7 +170,7 @@ public static class EndpointExtensions
         })
             .WithName("UpdateWebhook")
             .WithTags("Webhooks")
-            .RequireAuthorization(policy => policy.RequireRole("Admin", "Manager"));
+            .RequireAuthorization(CapabilityPolicies.Edit);
 
         v1.MapDelete("/webhooks/{id:int}", async (
             int id,
@@ -189,7 +189,7 @@ public static class EndpointExtensions
         })
             .WithName("DeleteWebhook")
             .WithTags("Webhooks")
-            .RequireAuthorization(policy => policy.RequireRole("Admin", "Manager"));
+            .RequireAuthorization(CapabilityPolicies.Edit);
 
         v1.MapGet("/forecast/{itemId:int}", async (
             int itemId,
