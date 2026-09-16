@@ -10,10 +10,10 @@ From the repository root:
 
 ```bash
 python scripts/github_evidence.py \
-  --repo nirzaf/stockpile \
+  --repo nirzaf/merconiq \
   --as-of 2026-09-16T00:00:00Z \
   --days 30 \
-  --head-sha b1646978f51ac7493d70e1b701685d0e8fd7b7f2 \
+  --head-sha d4933428a1be9c56f71c5c43de698a7a761500ef \
   --format markdown \
   --output github-evidence.md
 ```
