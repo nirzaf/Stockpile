@@ -67,7 +67,7 @@ public class StockService : IStockService
             orderBy: q => q.OrderByDescending(t => t.TransactionDate));
     }
 
-    private async Task ExecuteWithRetryAsync(Func<Task> action)
+    private async Task ExecuteWithRetryAsync(int itemId, Func<Task> action)
     {
         // PostgreSQL surfaces an optimistic-concurrency conflict as a DbUpdateConcurrencyException
         // (driven by the StockInHand.xmin token). Three retries matches the default
@@ -78,11 +78,15 @@ public class StockService : IStockService
         {
             try
             {
+                await _unitOfWork.BeginTransactionAsync();
                 await action();
+                await CheckLowStockAsync(itemId);
+                await _unitOfWork.CommitTransactionAsync();
                 break;
             }
             catch (InventoryManagementSystem.Core.Exceptions.ConcurrencyException ex)
             {
+                await _unitOfWork.RollbackTransactionAsync();
                 if (--retries <= 0)
                 {
                     _logger.LogError(ex, "Concurrency conflict could not be resolved after retries.");
@@ -100,6 +104,11 @@ public class StockService : IStockService
                 // while still being fast enough for interactive UIs.
                 await Task.Delay(100);
             }
+            catch
+            {
+                await _unitOfWork.RollbackTransactionAsync();
+                throw;
+            }
         }
     }
 
@@ -108,7 +117,7 @@ public class StockService : IStockService
     {
         if (quantity <= 0) throw new ArgumentException("Quantity must be positive");
 
-        await ExecuteWithRetryAsync(async () =>
+        await ExecuteWithRetryAsync(itemId, async () =>
         {
             var existing = await GetByItemAndLocationAsync(itemId, locationId, batchNumber, expiryDate);
             if (existing != null)
@@ -147,7 +156,6 @@ public class StockService : IStockService
         });
 
         _logger.LogInformation("Received {Qty} of item {ItemId} at location {LocId}", quantity, itemId, locationId);
-        await CheckLowStockAsync(itemId);
     }
 
     /// <inheritdoc />
@@ -156,7 +164,7 @@ public class StockService : IStockService
         if (quantity <= 0) throw new ArgumentException("Quantity must be positive");
         if (fromLocationId == toLocationId) throw new ArgumentException("Source and destination must be different");
 
-        await ExecuteWithRetryAsync(async () =>
+        await ExecuteWithRetryAsync(itemId, async () =>
         {
             var source = await GetByItemAndLocationAsync(itemId, fromLocationId, batchNumber, expiryDate);
             if (source == null || source.Quantity < quantity)
@@ -202,7 +210,6 @@ public class StockService : IStockService
         });
 
         _logger.LogInformation("Transferred {Qty} of item {ItemId} from {From} to {To}", quantity, itemId, fromLocationId, toLocationId);
-        await CheckLowStockAsync(itemId);
     }
 
     /// <inheritdoc />
@@ -210,7 +217,7 @@ public class StockService : IStockService
     {
         if (quantity <= 0) throw new ArgumentException("Quantity must be positive");
 
-        await ExecuteWithRetryAsync(async () =>
+        await ExecuteWithRetryAsync(itemId, async () =>
         {
             var stock = await GetByItemAndLocationAsync(itemId, locationId, batchNumber, expiryDate);
             if (stock == null || stock.Quantity < quantity)
@@ -237,7 +244,6 @@ public class StockService : IStockService
         });
 
         _logger.LogInformation("Sold {Qty} of item {ItemId} from location {LocId}", quantity, itemId, locationId);
-        await CheckLowStockAsync(itemId);
     }
 
     private async Task CheckLowStockAsync(int itemId)
@@ -262,11 +268,15 @@ public class StockService : IStockService
                     TotalStock = totalStock,
                     ReorderLevel = item.ReorderLevel
                 }));
+                // EnqueueAsync adds durable delivery rows to this scoped context. Persist
+                // them after the movement save so they survive request completion.
+                await _unitOfWork.SaveChangesAsync();
             }
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error checking low stock level for item {ItemId}", itemId);
+            throw;
         }
     }
 }

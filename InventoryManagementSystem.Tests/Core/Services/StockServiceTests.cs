@@ -309,5 +309,7 @@ public class StockServiceTests
         payload.GetType().GetProperty("ItemCode")!.GetValue(payload).Should().Be("LOW-001");
         payload.GetType().GetProperty("TotalStock")!.GetValue(payload).Should().Be(10);
         payload.GetType().GetProperty("ReorderLevel")!.GetValue(payload).Should().Be(10);
+        _uowMock.Verify(u => u.BeginTransactionAsync(default), Times.Once);
+        _uowMock.Verify(u => u.CommitTransactionAsync(default), Times.Once);
     }
 }
