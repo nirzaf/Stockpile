@@ -110,8 +110,14 @@ if QUEUE_RULE_RESULT="$(printf '%s' "$ACTIVE_RULESETS" | jq -e --arg base_ref "r
     elif $selector == "~DEFAULT_BRANCH" then $ref == ("refs/heads/" + $default)
     elif ($selector | contains("*")) then
       ($selector
-        | gsub("([\\\\.^$+?()\\[\\]{}|])"; "\\\\\\1")
-        | gsub("\\\\*"; ".*")
+        | explode
+        | map(. as $code
+            | if $code == 42 then ".*"
+              elif ([92, 94, 36, 46, 43, 63, 40, 41, 91, 93, 123, 125, 124] | index($code)) != null
+                then "\\" + ([$code] | implode)
+              else [$code] | implode
+              end)
+        | join("")
         | "^" + . + "$") as $pattern
       | $ref | test($pattern)
     else $selector == $ref
