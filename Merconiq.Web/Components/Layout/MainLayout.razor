@@ -1,0 +1,81 @@
+@inherits LayoutComponentBase
+@inject IStringLocalizer<SharedResource> L
+@inject IJSRuntime JS
+
+<MudThemeProvider @bind-IsDarkMode="_isDarkMode" />
+<MudDialogProvider/>
+<MudSnackbarProvider/>
+
+<MudLayout>
+    <MudAppBar Elevation="1">
+        <MudText Typo="Typo.h6" Class="ml-3">@L["Merconiq"]</MudText>
+        <MudSpacer/>
+        <AuthorizeView>
+            <Authorized>
+                <MudText Typo="Typo.body2" Class="d-none d-md-flex mr-4">
+                    @context.User.Identity?.Name
+                </MudText>
+                <MudIconButton Icon="@(_isDarkMode ? Icons.Material.Filled.LightMode : Icons.Material.Filled.DarkMode)"
+                               Color="Color.Inherit" Size="Size.Small" OnClick="ToggleDarkMode"
+                               aria-label="Toggle dark mode" Class="mr-2" />
+                <form action="/Account/Logout" method="post">
+                    <AntiforgeryToken />
+                    <MudButton ButtonType="ButtonType.Submit" Variant="Variant.Outlined" Color="Color.Inherit" Size="Size.Small" StartIcon="@Icons.Material.Filled.Logout">
+                        @L["Logout"]
+                    </MudButton>
+                </form>
+            </Authorized>
+            <NotAuthorized>
+                <MudLink Href="/Account/Login" Color="Color.Inherit">@L["Login"]</MudLink>
+            </NotAuthorized>
+        </AuthorizeView>
+    </MudAppBar>
+    
+    <AuthorizeView>
+        <Authorized>
+            <MudDrawer Open="true" Elevation="1" ClipMode="DrawerClipMode.Always">
+                <NavMenu />
+            </MudDrawer>
+        </Authorized>
+    </AuthorizeView>
+
+    <MudMainContent>
+        <MudContainer MaxWidth="MaxWidth.Large" Class="my-4">
+            @Body
+        </MudContainer>
+    </MudMainContent>
+</MudLayout>
+
+<div id="blazor-error-ui">
+    @L["An unhandled error has occurred."]
+    <a href="" class="reload">@L["Reload"]</a>
+    <a class="dismiss" aria-label='@L["Dismiss"]'>🗙</a>
+</div>
+
+@code {
+    private bool _isDarkMode;
+    private bool _themeLoaded;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender)
+        {
+            return;
+        }
+
+        _isDarkMode = await JS.InvokeAsync<bool>("stockpileTheme.getDarkMode");
+        _themeLoaded = true;
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task ToggleDarkMode()
+    {
+        if (!_themeLoaded)
+        {
+            return;
+        }
+
+        _isDarkMode = !_isDarkMode;
+        await JS.InvokeVoidAsync("stockpileTheme.setDarkMode", _isDarkMode);
+    }
+}

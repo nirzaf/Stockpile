@@ -11,18 +11,18 @@ services:
       - "127.0.0.1:8080:8080"
       - "127.0.0.1:5000:5000"
     volumes:
-      - ./InventoryManagementSystem.Web:/src/InventoryManagementSystem.Web:ro
-      - ./InventoryManagementSystem.Core:/src/InventoryManagementSystem.Core:ro
-      - ./InventoryManagementSystem.Infrastructure:/src/InventoryManagementSystem.Infrastructure:ro
+      - ./Merconiq.Web:/src/Merconiq.Web:ro
+      - ./Merconiq.Core:/src/Merconiq.Core:ro
+      - ./Merconiq.Infrastructure:/src/Merconiq.Infrastructure:ro
       - app-logs:/app/logs
     develop:
       watch:
         - action: rebuild
-          path: ./InventoryManagementSystem.Web
+          path: ./Merconiq.Web
         - action: rebuild
-          path: ./InventoryManagementSystem.Core
+          path: ./Merconiq.Core
         - action: rebuild
-          path: ./InventoryManagementSystem.Infrastructure
+          path: ./Merconiq.Infrastructure
 
 volumes:
   app-logs:
