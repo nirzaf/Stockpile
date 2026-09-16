@@ -1,4 +1,5 @@
 using FluentAssertions;
+using InventoryManagementSystem.Core.Entities;
 using InventoryManagementSystem.Infrastructure.Data;
 using InventoryManagementSystem.Tests.Infrastructure;
 using InventoryManagementSystem.Web.Services;
@@ -65,6 +66,52 @@ public class IdempotencyKeyStoreTests
 
         await FluentActions.Invoking(() => store.ExecuteAsync("POST:/stock/receive", "request-3", "hash-b", () => Task.CompletedTask))
             .Should().ThrowAsync<InvalidOperationException>();
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WhenClaimIsHeld_HonorsCancellation()
+    {
+        await using var context = CreateContext();
+        context.IdempotencyRecords.Add(new IdempotencyRecord
+        {
+            TenantId = "test-tenant",
+            Scope = "POST:/stock/held",
+            Key = "request-held",
+            RequestHash = "hash-held",
+            LeaseUntil = DateTimeOffset.UtcNow.AddMinutes(1),
+            ExpiresAt = DateTimeOffset.UtcNow.AddHours(1)
+        });
+        await context.SaveChangesAsync();
+
+        var store = new IdempotencyKeyStore(context, new TestTenantContext("test-tenant"));
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(25));
+
+        await FluentActions.Invoking(() => store.ExecuteAsync(
+                "POST:/stock/held", "request-held", "hash-held", () => Task.CompletedTask, cancellation.Token))
+            .Should().ThrowAsync<OperationCanceledException>();
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WhenOperationFails_DoesNotFlushPendingBusinessChanges()
+    {
+        await using var context = CreateContext();
+        var store = new IdempotencyKeyStore(context, new TestTenantContext("test-tenant"));
+
+        await FluentActions.Invoking(() => store.ExecuteAsync(
+                "POST:/stock/failure", "request-failure", "hash-failure", () =>
+                {
+                    context.Items.Add(new Item
+                    {
+                        ItemCode = "UNCOMMITTED-FAILURE",
+                        Description = "Must not be flushed",
+                        Rate = 1m
+                    });
+                    throw new InvalidOperationException("expected failure");
+                }))
+            .Should().ThrowAsync<InvalidOperationException>();
+
+        (await context.Items.CountAsync(item => item.ItemCode == "UNCOMMITTED-FAILURE"))
+            .Should().Be(0);
     }
 
     private static InventoryDbContext CreateContext() => new(
