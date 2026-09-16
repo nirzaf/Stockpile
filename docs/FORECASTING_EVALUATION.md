@@ -38,3 +38,26 @@ must record the data source and date, item/day window, missing-day policy,
 forecast horizon, metric, sample count, failed cases, and limitations. If the
 SSA native runtime is unavailable on a target platform, the result remains
 unavailable rather than being represented as a successful SSA evaluation.
+
+## Bounded window and data-quality fixture
+
+`ForecastDemandAsync_UsesBoundedUtcHistoryAndReportsLimitMetadata` freezes the
+as-of time at 2026-01-10 UTC and configures a five-day history window (2026-01-06
+through 2026-01-10) and a seven-day maximum horizon. A sale of 1,000 units on
+2026-01-05 and a future sale of 2,000 units on 2026-01-11 are excluded. Inside
+the window, the synthetic sales are 4 units on Jan 6, and 8 units on each of Jan
+9 and Jan 10. A receipt and an internal transfer on Jan 8 are not demand. The
+chronological daily series is `[4, 0, 0, 8, 8]`, so the independently calculated
+managed mean is 4 units/day and a three-day forecast is `[4, 4, 4]`. The response
+reports the configured limits, observed date window, managed implementation
+version, and known limitations. The associated preparation test proves missing
+calendar days are zero-filled and receipts/transfers do not inflate sales.
+
+This fixture cannot evaluate return adjustments or stockout correction: the
+current movement model has no distinct return type and records fulfilled sales,
+not unmet demand or stock availability. A zero in the fixture is a missing
+recorded sale, not evidence that demand was satisfied. Those cases remain explicit
+known limitations rather than fabricated evaluation results. The same default
+managed implementation runs without native SSA dependencies. SSA remains an
+explicit opt-in; its native-runtime error path rethrows and never silently
+substitutes the managed model.
