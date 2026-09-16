@@ -41,4 +41,8 @@
     <WarningsAsErrors>$(WarningsAsErrors);AV0021;MUD0002</WarningsAsErrors>
   </PropertyGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="Merconiq.Tests" />
+  </ItemGroup>
+
 </Project>

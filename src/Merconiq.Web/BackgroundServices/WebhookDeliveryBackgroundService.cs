@@ -17,6 +17,8 @@ public sealed class WebhookDeliveryBackgroundService(
     ILogger<WebhookDeliveryBackgroundService> logger) : BackgroundService
 {
     private const int MaxAttempts = 5;
+    internal const int MaximumDiagnosticResponseBytes = 4096;
+    private const string TruncatedResponseMarker = "\n[truncated]";
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -105,15 +107,124 @@ public sealed class WebhookDeliveryBackgroundService(
                 request.Headers.Add("X-Inventory-Signature", Convert.ToHexString(hmac.ComputeHash(Encoding.UTF8.GetBytes(payload))).ToLowerInvariant());
             }
 
-            using var response = await httpClientFactory.CreateClient("Webhooks").SendAsync(request, cancellationToken);
-            await CompleteAsync(deliveryId, tenantId, response.StatusCode, await response.Content.ReadAsStringAsync(cancellationToken), null, cancellationToken);
+            var client = httpClientFactory.CreateClient("Webhooks");
+            using var requestTimeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            if (client.Timeout != Timeout.InfiniteTimeSpan)
+            {
+                requestTimeout.CancelAfter(client.Timeout);
+            }
+
+            using var response = await client.SendAsync(
+                request,
+                HttpCompletionOption.ResponseHeadersRead,
+                requestTimeout.Token);
+            var responseBody = await ReadDiagnosticResponseAsync(response.Content, secret, url, requestTimeout.Token);
+            await CompleteAsync(deliveryId, tenantId, response.StatusCode, responseBody, null, cancellationToken);
         }
-        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+        catch (HttpRequestException)
         {
-            await CompleteAsync(deliveryId, tenantId, null, null, ex.Message, cancellationToken);
+            await CompleteAsync(deliveryId, tenantId, null, null, "Webhook transport failed.", cancellationToken);
+        }
+        catch (TaskCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            await CompleteAsync(deliveryId, tenantId, null, null, "Webhook request timed out.", cancellationToken);
         }
 
         return true;
+    }
+
+    internal static async Task<string> ReadDiagnosticResponseAsync(
+        HttpContent content,
+        string? secret,
+        string url,
+        CancellationToken cancellationToken)
+    {
+        var maximumBytesToRead = MaximumDiagnosticResponseBytes + 1;
+        var buffer = new byte[1024];
+        using var responseBytes = new MemoryStream(capacity: maximumBytesToRead);
+        await using var responseStream = await content.ReadAsStreamAsync(cancellationToken);
+
+        while (responseBytes.Length < maximumBytesToRead)
+        {
+            var bytesRemaining = maximumBytesToRead - (int)responseBytes.Length;
+            var bytesRead = await responseStream.ReadAsync(
+                buffer.AsMemory(0, Math.Min(buffer.Length, bytesRemaining)),
+                cancellationToken);
+            if (bytesRead == 0)
+            {
+                break;
+            }
+
+            responseBytes.Write(buffer, 0, bytesRead);
+        }
+
+        var truncated = responseBytes.Length > MaximumDiagnosticResponseBytes;
+        var bytesToDecode = responseBytes.ToArray();
+        if (truncated)
+        {
+            var markerBytes = Encoding.UTF8.GetByteCount(TruncatedResponseMarker);
+            bytesToDecode = bytesToDecode[..(MaximumDiagnosticResponseBytes - markerBytes)];
+        }
+
+        var diagnostic = DecodeUtf8Prefix(bytesToDecode);
+        var redactionWindowBytes = Math.Max(
+            Encoding.UTF8.GetByteCount(url),
+            Encoding.UTF8.GetByteCount(secret ?? string.Empty));
+        if (!string.IsNullOrEmpty(url))
+        {
+            diagnostic = diagnostic.Replace(url, "[url]", StringComparison.Ordinal);
+        }
+
+        if (!string.IsNullOrEmpty(secret))
+        {
+            diagnostic = diagnostic.Replace(secret, new string('*', secret.Length), StringComparison.Ordinal);
+        }
+
+        if (truncated)
+        {
+            var markerBytes = Encoding.UTF8.GetByteCount(TruncatedResponseMarker);
+            var maximumSafePrefixBytes = Math.Max(
+                0,
+                MaximumDiagnosticResponseBytes - markerBytes - redactionWindowBytes);
+            diagnostic = TruncateUtf8(diagnostic, maximumSafePrefixBytes);
+        }
+
+        return truncated ? diagnostic + TruncatedResponseMarker : diagnostic;
+    }
+
+    private static string TruncateUtf8(string value, int maximumBytes)
+    {
+        var bytes = Encoding.UTF8.GetBytes(value);
+        if (bytes.Length <= maximumBytes)
+        {
+            return value;
+        }
+
+        var length = Math.Clamp(maximumBytes, 0, bytes.Length);
+        while (length > 0 && (bytes[length] & 0b1100_0000) == 0b1000_0000)
+        {
+            length--;
+        }
+
+        return Encoding.UTF8.GetString(bytes, 0, length);
+    }
+
+    private static string DecodeUtf8Prefix(byte[] bytes)
+    {
+        var strictUtf8 = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);
+        for (var length = bytes.Length; length >= Math.Max(0, bytes.Length - 3); length--)
+        {
+            try
+            {
+                return strictUtf8.GetString(bytes, 0, length);
+            }
+            catch (DecoderFallbackException)
+            {
+                // The response limit may split a multi-byte UTF-8 character. Drop only that partial suffix.
+            }
+        }
+
+        return string.Empty;
     }
 
     private async Task CompleteAsync(long id, string tenantId, HttpStatusCode? statusCode, string? responseBody, string? error, CancellationToken cancellationToken)
