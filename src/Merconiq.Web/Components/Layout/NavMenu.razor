@@ -1,5 +1,6 @@
 @inject IStringLocalizer<SharedResource> L
 @inject NavigationManager Nav
+@using Merconiq.Web.Security
 
 <MudNavMenu>
     <MudNavLink Href="/" Icon="@Icons.Material.Filled.Dashboard" Match="NavLinkMatch.All">@L["Dashboard"]</MudNavLink>
@@ -14,6 +15,11 @@
     <MudNavLink Href="/PurchaseOrders" Icon="@Icons.Material.Filled.Receipt">@L["Purchase Orders"]</MudNavLink>
     <MudNavLink Href="/Suppliers" Icon="@Icons.Material.Filled.Business">@L["Suppliers"]</MudNavLink>
     <MudNavLink Href="/Locations" Icon="@Icons.Material.Filled.LocationOn">@L["Locations"]</MudNavLink>
+    <AuthorizeView Policy="@CapabilityPolicies.View">
+        <Authorized>
+            <MudNavLink Href="/Organization/Companies" Icon="@Icons.Material.Filled.AccountBalance">Organization</MudNavLink>
+        </Authorized>
+    </AuthorizeView>
     <AuthorizeView Roles="Admin">
         <Authorized>
             <MudNavLink Href="/Users" Icon="@Icons.Material.Filled.People">User Management</MudNavLink>
