@@ -105,6 +105,40 @@ public sealed class OrganizationServiceTests
         location.BranchId.Should().BeNull();
     }
 
+    [Fact]
+    public async Task Company_base_currency_cannot_change_after_stock_activity()
+    {
+        await using var context = CreateContext(Guid.NewGuid().ToString(), "tenant-a");
+        var company = new Company { Code = "COMPANY", LegalName = "Company", BaseCurrency = "QAR" };
+        var branch = new Branch { Company = company, Code = "BRANCH", Name = "Branch" };
+        var location = new Location { Branch = branch, Name = "Warehouse" };
+        context.StockTransactions.Add(new StockTransaction { FromLocation = location, Quantity = 1 });
+        await context.SaveChangesAsync();
+        var service = CreateService(context, "tenant-a");
+
+        var act = () => service.UpdateCompanyAsync(company.Id,
+            new UpdateCompanyRequest(company.LegalName, null, null, null, "USD", null, true));
+
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("A company's base currency cannot change after posted stock activity.");
+        (await context.Companies.SingleAsync()).BaseCurrency.Should().Be("QAR");
+    }
+
+    [Fact]
+    public async Task Company_base_currency_can_change_before_stock_activity()
+    {
+        await using var context = CreateContext(Guid.NewGuid().ToString(), "tenant-a");
+        var company = new Company { Code = "COMPANY", LegalName = "Company", BaseCurrency = "QAR" };
+        context.Companies.Add(company);
+        await context.SaveChangesAsync();
+        var service = CreateService(context, "tenant-a");
+
+        await service.UpdateCompanyAsync(company.Id,
+            new UpdateCompanyRequest(company.LegalName, null, null, null, "USD", null, true));
+
+        (await context.Companies.SingleAsync()).BaseCurrency.Should().Be("USD");
+    }
+
     private static OrganizationService CreateService(InventoryDbContext context, string tenantId) => new(
         new Repository<Company>(context),
         new Repository<Branch>(context),

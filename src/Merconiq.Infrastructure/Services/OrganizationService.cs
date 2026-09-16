@@ -67,11 +67,15 @@ public sealed class OrganizationService(
             if (!request.IsActive && company.IsActive &&
                 await branches.Query().AnyAsync(b => b.CompanyId == id && b.IsActive))
                 throw new InvalidOperationException("Deactivate or reassign active branches before deactivating the company.");
+            var baseCurrency = NormalizeCurrency(request.BaseCurrency);
+            if (!string.Equals(company.BaseCurrency, baseCurrency, StringComparison.Ordinal) &&
+                await HasPostedStockActivityAsync(id))
+                throw new InvalidOperationException("A company's base currency cannot change after posted stock activity.");
             company.LegalName = NormalizeRequired(request.LegalName, "Legal name", 200);
             company.TradingName = NormalizeOptional(request.TradingName, 200);
             company.RegistrationNumber = NormalizeOptional(request.RegistrationNumber, 100);
             company.TaxIdentifier = NormalizeOptional(request.TaxIdentifier, 100);
-            company.BaseCurrency = NormalizeCurrency(request.BaseCurrency);
+            company.BaseCurrency = baseCurrency;
             company.CountryCode = NormalizeOptional(request.CountryCode, 2)?.ToUpperInvariant();
             company.IsActive = request.IsActive;
             await companies.UpdateAsync(company);
@@ -193,6 +197,20 @@ public sealed class OrganizationService(
         return company is { IsActive: true }
             ? company
             : throw new InvalidOperationException("The company does not exist in this tenant or is inactive.");
+    }
+
+    private async Task<bool> HasPostedStockActivityAsync(int companyId)
+    {
+        var branchIds = context.Branches
+            .Where(branch => branch.CompanyId == companyId)
+            .Select(branch => branch.Id);
+        var locationIds = context.Locations
+            .Where(location => location.BranchId.HasValue && branchIds.Contains(location.BranchId.Value))
+            .Select(location => location.Id);
+
+        return await context.StockTransactions.AnyAsync(transaction =>
+            locationIds.Contains(transaction.FromLocationId) ||
+            (transaction.ToLocationId.HasValue && locationIds.Contains(transaction.ToLocationId.Value)));
     }
 
     private Task ExecuteOrganizationWriteAsync(Func<Task> operation) =>
