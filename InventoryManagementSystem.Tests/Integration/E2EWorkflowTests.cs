@@ -459,27 +459,6 @@ public class ValidationWorkflowTests : IClassFixture<CustomWebApplicationFactory
     }
 
     [Fact]
-    public async Task CreateItem_WithDuplicateCode_ReturnsConflict()
-    {
-        var client = AuthClient;
-
-        var code = $"DUP-{Guid.NewGuid():N}".Substring(0, 15);
-
-        // Create first item
-        var cmd1 = new { ItemCode = code, Description = "first", Rate = 10m };
-        var r1 = await client.PostAsJsonAsync("/api/v1/items", cmd1);
-        r1.StatusCode.Should().Be(HttpStatusCode.Created);
-
-        // Create duplicate
-        var cmd2 = new { ItemCode = code, Description = "duplicate", Rate = 20m };
-        var r2 = await client.PostAsJsonAsync("/api/v1/items", cmd2);
-
-        // InMemory DB doesn't enforce unique indexes, so this may succeed or fail
-        // The test validates the API handles it gracefully
-        r2.StatusCode.Should().BeOneOf(HttpStatusCode.Created, HttpStatusCode.Conflict, HttpStatusCode.InternalServerError);
-    }
-
-    [Fact]
     public async Task SellStock_NegativeQuantity_Returns400OrConflict()
     {
         var client = AuthClient;

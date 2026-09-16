@@ -56,6 +56,12 @@ public class ItemService : IItemService
     public async Task<Item> CreateAsync(Item item)
     {
         _logger.LogInformation("Creating item {ItemCode}", item.ItemCode);
+        var existing = await _repo.FindAsync(candidate => candidate.ItemCode == item.ItemCode);
+        if (existing.Any())
+        {
+            throw new InvalidOperationException("An item with this code already exists for this tenant.");
+        }
+
         var created = await _repo.AddAsync(item);
         await _unitOfWork.SaveChangesAsync();
         _cache.Remove(TenantCacheKeys.AllItems(_tenantContext.TenantId));
