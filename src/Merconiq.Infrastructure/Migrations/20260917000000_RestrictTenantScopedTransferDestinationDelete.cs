@@ -36,7 +36,8 @@ namespace Merconiq.Infrastructure.Migrations
                 columns: new[] { "ToLocationId", "TenantId" },
                 principalTable: "Locations",
                 principalColumns: new[] { "Id", "TenantId" },
-                onDelete: ReferentialAction.SetNull);
+                // TenantId is required; reverting must not restore composite SET NULL semantics.
+                onDelete: ReferentialAction.Restrict);
         }
     }
 }
