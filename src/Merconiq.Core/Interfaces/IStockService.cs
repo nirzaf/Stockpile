@@ -1,4 +1,5 @@
 using Merconiq.Core.Entities;
+using Merconiq.Core.Models;
 
 namespace Merconiq.Core.Interfaces;
 
@@ -69,7 +70,36 @@ public interface IStockService
     /// <param name="notes">Optional free-text notes.</param>
     /// <param name="batchNumber">Optional lot/batch number.</param>
     /// <param name="expiryDate">Optional expiry date for perishable stock.</param>
+    /// <param name="reservationSourceLineReference">Optional source line being consumed.</param>
     /// <exception cref="Exceptions.ConcurrencyException">Thrown when concurrent updates are detected after retries are exhausted.</exception>
     /// <exception cref="InvalidOperationException">Thrown when the location has insufficient stock to sell.</exception>
-    Task SellStockAsync(int itemId, int locationId, int quantity, string? notes, string? batchNumber = null, DateTime? expiryDate = null);
+    Task SellStockAsync(
+        int itemId,
+        int locationId,
+        int quantity,
+        string? notes,
+        string? batchNumber = null,
+        DateTime? expiryDate = null,
+        string? reservationSourceLineReference = null);
+
+    /// <summary>Creates a lot-specific reservation for one source document line.</summary>
+    Task CreateReservationAsync(CreateStockReservationRequest request);
+
+    /// <summary>Releases an active reservation and returns its quantity to availability.</summary>
+    Task ReleaseReservationAsync(string sourceLineReference, string? reason = null);
+
+    /// <summary>Cancels an active reservation and returns its quantity to availability.</summary>
+    Task CancelReservationAsync(string sourceLineReference, string? reason = null);
+
+    /// <summary>Consumes reserved quantity through the normal atomic sale posting.</summary>
+    Task ConsumeReservationAsync(ConsumeStockReservationRequest request);
+
+    /// <summary>Gets one reservation by its stable source-line reference.</summary>
+    Task<StockReservationView?> GetReservationAsync(string sourceLineReference);
+
+    /// <summary>Gets on-hand, reserved, and available stock by lot.</summary>
+    Task<IEnumerable<StockAvailabilityView>> GetAvailabilityAsync(
+        int? itemId = null,
+        int? locationId = null,
+        IReadOnlyCollection<int>? companyIds = null);
 }

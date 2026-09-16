@@ -1,10 +1,10 @@
 using System.Net;
 using System.Text.Json;
 using FluentValidation;
+using Merconiq.Core.Exceptions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.Mvc;
-using Merconiq.Core.Exceptions;
 
 namespace Merconiq.Web;
 
@@ -76,6 +76,7 @@ public class GlobalExceptionHandler : IExceptionHandler
         {
             ForecastResourceLimitExceededException => (HttpStatusCode.BadRequest, "Forecast resource limit exceeded"),
             ArgumentException => (HttpStatusCode.BadRequest, "Invalid argument"),
+            StockAvailabilityConflictException => (HttpStatusCode.Conflict, "Stock availability conflict"),
             InvalidOperationException => (HttpStatusCode.Conflict, "Operation failed"),
             DbUpdateException databaseException when DatabaseExceptionClassifier.IsUniqueConstraintViolation(databaseException)
                 => (HttpStatusCode.Conflict, "Duplicate resource"),
@@ -94,9 +95,11 @@ public class GlobalExceptionHandler : IExceptionHandler
             {
                 Status = (int)statusCode,
                 Title = title,
-                // The full exception is logged above for operators. API clients always
-                // receive a stable, non-sensitive message regardless of environment.
-                Detail = exception is ForecastResourceLimitExceededException ? exception.Message : title,
+                // These domain errors contain safe, actionable details; other exceptions
+                // keep a stable generic response while the full error is logged above.
+                Detail = exception is ForecastResourceLimitExceededException or StockAvailabilityConflictException
+                    ? exception.Message
+                    : title,
                 Instance = httpContext.Request.Path
             };
 
