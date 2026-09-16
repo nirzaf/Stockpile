@@ -28,6 +28,15 @@ public class UnitOfWork : IUnitOfWork
         }
         catch (DbUpdateConcurrencyException ex)
         {
+            // ExecuteInTransactionAsync owns the retry boundary and translates the
+            // provider exception after its callback has unwound. Let it observe the
+            // original exception so a caller-owned coordinator can restart the whole
+            // operation instead of retrying inside an invalid transaction.
+            if (_executionStrategyTransactionActive)
+            {
+                throw;
+            }
+
             throw new ConcurrencyException("A concurrency conflict occurred while saving changes.", ex);
         }
     }
