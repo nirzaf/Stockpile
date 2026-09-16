@@ -377,4 +377,4 @@ If something is broken, unexpected, or unclear:
 
 ---
 
-*This guide covers the user-facing functionality of the Merconiq. For installation, configuration, and developer documentation, see [README.md](README.md).*
+*This guide covers the user-facing functionality of Merconiq. For installation, configuration, and developer documentation, see [README.md](README.md).*
