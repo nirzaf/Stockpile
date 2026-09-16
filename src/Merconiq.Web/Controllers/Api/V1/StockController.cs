@@ -29,6 +29,7 @@ public class StockController : ControllerBase
 
     /// <summary>Get all stock in hand</summary>
     [HttpGet("in-hand")]
+    [Authorize(Policy = CapabilityPolicies.View)]
     [ProducesResponseType(typeof(IEnumerable<StockInHand>), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetAll()
     {
@@ -38,6 +39,7 @@ public class StockController : ControllerBase
 
     /// <summary>Get stock at specific item/location</summary>
     [HttpGet("in-hand/{itemId:int}/{locationId:int}")]
+    [Authorize(Policy = CapabilityPolicies.View)]
     [ProducesResponseType(typeof(StockInHand), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> GetByItemAndLocation(
@@ -55,6 +57,7 @@ public class StockController : ControllerBase
 
     /// <summary>Get stock transactions with optional date filter</summary>
     [HttpGet("transactions")]
+    [Authorize(Policy = CapabilityPolicies.View)]
     [ProducesResponseType(typeof(IEnumerable<StockTransaction>), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetTransactions([FromQuery] DateTime? from, [FromQuery] DateTime? to)
     {
@@ -66,7 +69,7 @@ public class StockController : ControllerBase
     [HttpPost("receive")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
-    [Authorize(Roles = "Admin,Manager,Staff")]
+    [Authorize(Policy = CapabilityPolicies.Post)]
     public async Task<IActionResult> Receive([FromBody] ReceiveStockCommand command, [FromServices] IIdempotencyKeyStore idempotencyKeyStore, [FromServices] ITenantContext tenantContext)
     {
         var idempotencyKey = Request.Headers["Idempotency-Key"].ToString();
@@ -91,7 +94,7 @@ public class StockController : ControllerBase
     [HttpPost("transfer")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
-    [Authorize(Roles = "Admin,Manager,Staff")]
+    [Authorize(Policy = CapabilityPolicies.Post)]
     // This bearer-token API is not cookie-authenticated, so browser CSRF tokens do not apply.
     // Keep the explicit validation marker for static security analysis while opting out at runtime.
     [ValidateAntiForgeryToken]
@@ -128,7 +131,7 @@ public class StockController : ControllerBase
     [HttpPost("sell")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
-    [Authorize(Roles = "Admin,Manager,Staff")]
+    [Authorize(Policy = CapabilityPolicies.Post)]
     // This bearer-token API is not cookie-authenticated, so browser CSRF tokens do not apply.
     // Keep the explicit validation marker for static security analysis while opting out at runtime.
     [ValidateAntiForgeryToken]
