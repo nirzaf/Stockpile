@@ -79,5 +79,4 @@ document until that owner-authorized run is recorded in `docs/RELEASE_CANDIDATE.
 
 Related controls: [Docker workflow](../.github/workflows/docker.yml),
 [release-candidate evidence](RELEASE_CANDIDATE.md),
-[project provenance](PROVENANCE.md), and
-[third-party notices](THIRD_PARTY_NOTICES.md).
+[project provenance](PROVENANCE.md).
