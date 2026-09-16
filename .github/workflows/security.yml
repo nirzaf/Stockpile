@@ -5,9 +5,9 @@ on:
     branches: [master]
   push:
     branches: [master]
+    tags: ["v*"]
   schedule:
     - cron: '17 3 * * 1'
-    tags: ["v*"]
   workflow_dispatch:
 
 permissions:
