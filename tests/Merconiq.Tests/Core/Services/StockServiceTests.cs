@@ -18,6 +18,8 @@ public class StockServiceTests
     private readonly Mock<IRepository<StockInHand>> _stockRepoMock = new();
     private readonly Mock<IRepository<StockTransaction>> _txRepoMock = new();
     private readonly Mock<IRepository<Item>> _itemRepoMock = new();
+    private readonly Mock<IRepository<Location>> _locationRepoMock = new();
+    private readonly Mock<IRepository<Branch>> _branchRepoMock = new();
     private readonly Mock<IUnitOfWork> _uowMock = new();
     private readonly Mock<IWebhookDispatcher> _webhookDispatcherMock = new();
     private readonly StockService _sut;
@@ -26,6 +28,10 @@ public class StockServiceTests
     {
         _itemRepoMock.Setup(r => r.GetByIdAsync(It.IsAny<int>()))
             .ReturnsAsync((Item?)null);
+        _locationRepoMock.Setup(r => r.GetByIdAsync(It.IsAny<int>()))
+            .ReturnsAsync((int id) => new Location { Id = id });
+        _branchRepoMock.Setup(r => r.GetByIdAsync(It.IsAny<int>()))
+            .ReturnsAsync((Branch?)null);
         _uowMock
             .Setup(u => u.ExecuteInTransactionAsync(
                 It.IsAny<Func<Task>>(),
@@ -36,6 +42,8 @@ public class StockServiceTests
             _stockRepoMock.Object,
             _txRepoMock.Object,
             _itemRepoMock.Object,
+            _locationRepoMock.Object,
+            _branchRepoMock.Object,
             _uowMock.Object,
             _webhookDispatcherMock.Object,
             new TestTenantContext("test-tenant"),
@@ -179,6 +187,19 @@ public class StockServiceTests
     }
 
     [Fact]
+    public async Task ReceiveStockAsync_UnknownLocation_ThrowsBeforeWriting()
+    {
+        _locationRepoMock.Setup(r => r.GetByIdAsync(2)).ReturnsAsync((Location?)null);
+
+        var act = () => _sut.ReceiveStockAsync(1, 2, 1, null);
+
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("Location does not exist in the current tenant or is deleted.");
+        _stockRepoMock.Verify(r => r.AddAsync(It.IsAny<StockInHand>()), Times.Never);
+        _txRepoMock.Verify(r => r.AddAsync(It.IsAny<StockTransaction>()), Times.Never);
+    }
+
+    [Fact]
     public async Task ReceiveStockAsync_ConcurrencyConflict_ReloadsAndRetries()
     {
         var firstRead = new StockInHand { ItemId = 1, LocationId = 2, Quantity = 50 };
@@ -251,6 +272,42 @@ public class StockServiceTests
 
         await act.Should().ThrowAsync<ArgumentException>()
             .WithMessage("Source and destination must be different");
+    }
+
+    [Fact]
+    public async Task TransferStockAsync_CrossCompanyLocations_ThrowsBeforeWriting()
+    {
+        _locationRepoMock.Setup(r => r.GetByIdAsync(10)).ReturnsAsync(new Location
+        {
+            Id = 10,
+            BranchId = 100,
+            TenantId = "test-tenant"
+        });
+        _locationRepoMock.Setup(r => r.GetByIdAsync(20)).ReturnsAsync(new Location
+        {
+            Id = 20,
+            BranchId = 200,
+            TenantId = "test-tenant"
+        });
+        _branchRepoMock.Setup(r => r.GetByIdAsync(100)).ReturnsAsync(new Branch
+        {
+            Id = 100,
+            CompanyId = 1,
+            TenantId = "test-tenant"
+        });
+        _branchRepoMock.Setup(r => r.GetByIdAsync(200)).ReturnsAsync(new Branch
+        {
+            Id = 200,
+            CompanyId = 2,
+            TenantId = "test-tenant"
+        });
+
+        var act = () => _sut.TransferStockAsync(1, 10, 20, 1, null);
+
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("Cross-company stock transfers are not supported.");
+        _stockRepoMock.Verify(r => r.FindAsync(
+            It.IsAny<Expression<Func<StockInHand, bool>>>()), Times.Never);
     }
 
     [Fact]

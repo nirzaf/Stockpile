@@ -16,6 +16,8 @@ public class StockService : IStockService
     private readonly IRepository<StockInHand> _stockRepo;
     private readonly IRepository<StockTransaction> _txRepo;
     private readonly IRepository<Item> _itemRepo;
+    private readonly IRepository<Location> _locationRepo;
+    private readonly IRepository<Branch> _branchRepo;
     private readonly IUnitOfWork _unitOfWork;
     private readonly IWebhookDispatcher _webhookDispatcher;
     private readonly ITenantContext _tenantContext;
@@ -25,6 +27,8 @@ public class StockService : IStockService
         IRepository<StockInHand> stockRepo,
         IRepository<StockTransaction> txRepo,
         IRepository<Item> itemRepo,
+        IRepository<Location> locationRepo,
+        IRepository<Branch> branchRepo,
         IUnitOfWork unitOfWork,
         IWebhookDispatcher webhookDispatcher,
         ITenantContext tenantContext,
@@ -33,6 +37,8 @@ public class StockService : IStockService
         _stockRepo = stockRepo;
         _txRepo = txRepo;
         _itemRepo = itemRepo;
+        _locationRepo = locationRepo;
+        _branchRepo = branchRepo;
         _unitOfWork = unitOfWork;
         _webhookDispatcher = webhookDispatcher;
         _tenantContext = tenantContext;
@@ -140,6 +146,7 @@ public class StockService : IStockService
         StockTransaction? transaction = null;
         await ExecuteWithRetryAsync(itemId, async () =>
         {
+            await EnsureLocationUsableAsync(locationId);
             var existing = await GetByItemAndLocationAsync(itemId, locationId, batchNumber, expiryDate);
             if (existing != null)
             {
@@ -189,6 +196,9 @@ public class StockService : IStockService
         StockTransaction? transaction = null;
         await ExecuteWithRetryAsync(itemId, async () =>
         {
+            var sourceLocation = await EnsureLocationUsableAsync(fromLocationId);
+            var destinationLocation = await EnsureLocationUsableAsync(toLocationId);
+            await EnsureSameCompanyTransferAsync(sourceLocation, destinationLocation);
             var source = await GetByItemAndLocationAsync(itemId, fromLocationId, batchNumber, expiryDate);
             if (source == null || source.Quantity < quantity)
                 throw new InvalidOperationException("Insufficient stock at source location");
@@ -244,6 +254,7 @@ public class StockService : IStockService
         StockTransaction? transaction = null;
         await ExecuteWithRetryAsync(itemId, async () =>
         {
+            await EnsureLocationUsableAsync(locationId);
             var stock = await GetByItemAndLocationAsync(itemId, locationId, batchNumber, expiryDate);
             if (stock == null || stock.Quantity < quantity)
                 throw new InvalidOperationException("Insufficient stock for sale");
@@ -301,6 +312,38 @@ public class StockService : IStockService
             _logger.LogError(ex, "Error checking low stock level for item {ItemId}", item.Id);
             throw;
         }
+    }
+
+    private async Task<Location> EnsureLocationUsableAsync(int locationId)
+    {
+        var location = await _locationRepo.GetByIdAsync(locationId)
+            ?? throw new InvalidOperationException("Location does not exist in the current tenant or is deleted.");
+
+        if (location.BranchId is not int branchId)
+            return location;
+
+        var branch = await _branchRepo.GetByIdAsync(branchId)
+            ?? throw new InvalidOperationException("Location ownership is not valid for the current tenant.");
+        if (!branch.IsActive)
+            throw new InvalidOperationException("Locations owned by inactive branches cannot be used in stock operations.");
+        if (!string.Equals(branch.TenantId, location.TenantId, StringComparison.Ordinal))
+            throw new InvalidOperationException("Location ownership is not valid for the current tenant.");
+
+        location.Branch = branch;
+        return location;
+    }
+
+    private async Task EnsureSameCompanyTransferAsync(Location source, Location destination)
+    {
+        if (source.BranchId is null || destination.BranchId is null)
+            return;
+
+        var sourceBranch = source.Branch
+            ?? throw new InvalidOperationException("Location ownership is not valid for the current tenant.");
+        var destinationBranch = destination.Branch
+            ?? throw new InvalidOperationException("Location ownership is not valid for the current tenant.");
+        if (sourceBranch.CompanyId != destinationBranch.CompanyId)
+            throw new InvalidOperationException("Cross-company stock transfers are not supported.");
     }
 
     private async Task<bool> VerifyTransactionCommitAsync(StockTransaction? transaction)
