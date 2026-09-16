@@ -1,7 +1,11 @@
 @page "/Stock/Transactions"
 @using Microsoft.AspNetCore.Authorization
-@attribute [Authorize]
+@using Microsoft.AspNetCore.Components.Authorization
+@using Merconiq.Web.Security
+@attribute [Authorize(Policy = CapabilityPolicies.View)]
 @inject IStockService StockService
+@inject AuthenticationStateProvider AuthenticationStateProvider
+@inject ICurrentUserAuthorization CurrentUserAuthorization
 
 <PageTitle>Stock Transactions</PageTitle>
 
@@ -52,15 +56,25 @@
     private IEnumerable<StockTransaction> _transactions = new List<StockTransaction>();
     private DateTime? _fromDate;
     private DateTime? _toDate;
+    private IReadOnlyCollection<int> _companyIds = [];
+    private bool _isTenantAdmin;
 
     protected override async Task OnInitializedAsync()
     {
+        var authenticationState = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+        _isTenantAdmin = await CurrentUserAuthorization.IsTenantAdministratorAsync(authenticationState.User);
+        _companyIds = _isTenantAdmin
+            ? []
+            : (await CurrentUserAuthorization.GetAccessibleCompanyIdsAsync(
+                authenticationState.User, CompanyCapability.View)).ToArray();
         await LoadData();
     }
 
     private async Task LoadData()
     {
-        _transactions = await StockService.GetTransactionsAsync(_fromDate, _toDate);
+        _transactions = _isTenantAdmin
+            ? await StockService.GetTransactionsAsync(_fromDate, _toDate)
+            : await StockService.GetTransactionsForCompaniesAsync(_fromDate, _toDate, _companyIds);
     }
 
     private Color GetTypeColor(TransactionType type)

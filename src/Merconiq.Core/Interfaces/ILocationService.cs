@@ -9,6 +9,9 @@ public interface ILocationService
     /// <returns>A collection of locations.</returns>
     Task<IEnumerable<Location>> GetAllAsync();
 
+    /// <summary>Retrieves only locations assigned to the supplied authorized companies.</summary>
+    Task<IEnumerable<Location>> GetForCompaniesAsync(IReadOnlyCollection<int> companyIds);
+
     /// <summary>Gets a location by its identifier.</summary>
     /// <param name="id">The location identifier.</param>
     /// <returns>The location, or <see langword="null"/> if not found.</returns>

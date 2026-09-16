@@ -1,7 +1,11 @@
 @page "/Stock/Index"
 @using Microsoft.AspNetCore.Authorization
-@attribute [Authorize]
+@using Microsoft.AspNetCore.Components.Authorization
+@using Merconiq.Web.Security
+@attribute [Authorize(Policy = CapabilityPolicies.View)]
 @inject IStockService StockService
+@inject AuthenticationStateProvider AuthenticationStateProvider
+@inject ICurrentUserAuthorization CurrentUserAuthorization
 @inject ISnackbar Snackbar
 @inject IJSRuntime JS
 
@@ -12,9 +16,13 @@
     <div class="d-flex gap-2">
         <MudButton Variant="Variant.Outlined" Color="Color.Secondary" OnClick="ExportToCsv">Export CSV</MudButton>
         <MudButton Variant="Variant.Outlined" Color="Color.Info" OnClick="ExportToExcel">Export Excel</MudButton>
-        <MudButton Variant="Variant.Filled" Color="Color.Success" Href="/Stock/Receive">Receive Stock</MudButton>
-        <MudButton Variant="Variant.Filled" Color="Color.Info" Href="/Stock/Transfer">Transfer Stock</MudButton>
-        <MudButton Variant="Variant.Filled" Color="Color.Warning" Href="/Stock/Sell">Sell Stock</MudButton>
+        <AuthorizeView Policy="@CapabilityPolicies.Post">
+            <Authorized>
+                <MudButton Variant="Variant.Filled" Color="Color.Success" Href="/Stock/Receive">Receive Stock</MudButton>
+                <MudButton Variant="Variant.Filled" Color="Color.Info" Href="/Stock/Transfer">Transfer Stock</MudButton>
+                <MudButton Variant="Variant.Filled" Color="Color.Warning" Href="/Stock/Sell">Sell Stock</MudButton>
+            </Authorized>
+        </AuthorizeView>
     </div>
 </div>
 
@@ -46,7 +54,16 @@
 
     protected override async Task OnInitializedAsync()
     {
-        _stocks = await StockService.GetAllAsync();
+        var authenticationState = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+        if (await CurrentUserAuthorization.IsTenantAdministratorAsync(authenticationState.User))
+        {
+            _stocks = await StockService.GetAllAsync();
+            return;
+        }
+
+        var companyIds = await CurrentUserAuthorization.GetAccessibleCompanyIdsAsync(
+            authenticationState.User, CompanyCapability.View);
+        _stocks = await StockService.GetForCompaniesAsync(companyIds.ToArray());
     }
 
     private bool FilterFunc(StockInHand element) => FilterFunc(element, _searchString);

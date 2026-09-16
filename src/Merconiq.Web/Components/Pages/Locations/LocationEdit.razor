@@ -1,7 +1,12 @@
 @page "/Locations/Edit/{Id:int}"
 @using Microsoft.AspNetCore.Authorization
-@attribute [Authorize]
+@using Microsoft.AspNetCore.Components.Authorization
+@using Merconiq.Web.Security
+@attribute [Authorize(Policy = CapabilityPolicies.Administer)]
 @inject ILocationService LocationService
+@inject IOrganizationService OrganizationService
+@inject AuthenticationStateProvider AuthenticationStateProvider
+@inject ICurrentUserAuthorization CurrentUserAuthorization
 @inject ISnackbar Snackbar
 @inject NavigationManager Nav
 
@@ -10,7 +15,11 @@
 <MudText Typo="Typo.h4" Color="Color.Primary" Class="mb-3">Edit Location</MudText>
 <MudDivider Class="mb-4" />
 
-@if (_location == null)
+@if (_errorMessage is not null)
+{
+    <MudAlert Severity="Severity.Error" Variant="Variant.Outlined">@_errorMessage</MudAlert>
+}
+else if (_location == null)
 {
     <MudProgressCircular Color="Color.Primary" Indeterminate="true" />
 }
@@ -21,6 +30,12 @@ else
             <MudPaper Elevation="1" Class="pa-4">
                 <EditForm Model="@_location" OnValidSubmit="OnValidSubmit">
                     <DataAnnotationsValidator />
+                    <MudSelect T="int" @bind-Value="_branchId" Label="Company branch" Required="true" RequiredError="A branch is required." Class="mb-3">
+                        @foreach (var branch in _branches)
+                        {
+                            <MudSelectItem T="int" Value="@branch.Id">@branch.Company?.Code / @branch.Code — @branch.Name</MudSelectItem>
+                        }
+                    </MudSelect>
                     <MudTextField @bind-Value="_location.Name" Label="Name" Required="true" For="@(() => _location.Name)" Class="mb-3" />
                     <MudTextField @bind-Value="_location.Address" Label="Address" Lines="3" For="@(() => _location.Address)" Class="mb-3" />
 
@@ -39,10 +54,38 @@ else
     public int Id { get; set; }
 
     private Location? _location;
+    private IReadOnlyList<Branch> _branches = [];
+    private int _branchId;
+    private string? _errorMessage;
 
     protected override async Task OnInitializedAsync()
     {
+        var principal = (await AuthenticationStateProvider.GetAuthenticationStateAsync()).User;
         _location = await LocationService.GetByIdAsync(Id);
+        if (_location is null)
+        {
+            _errorMessage = "Location not found in the current tenant.";
+            return;
+        }
+
+        if (!await CurrentUserAuthorization.CanAccessLocationAsync(
+                principal, Id, CompanyCapability.Administer))
+        {
+            _location = null;
+            _errorMessage = "You are not authorized to administer this location.";
+            return;
+        }
+
+        _branchId = _location.BranchId ?? 0;
+        var companyIds = await CurrentUserAuthorization.GetAccessibleCompanyIdsAsync(
+            principal, CompanyCapability.Administer);
+        var branches = new List<Branch>();
+        foreach (var companyId in companyIds)
+        {
+            branches.AddRange(await OrganizationService.GetBranchesAsync(companyId));
+        }
+
+        _branches = branches;
     }
 
     private async Task OnValidSubmit()
@@ -51,13 +94,22 @@ else
         {
             try
             {
+                var principal = (await AuthenticationStateProvider.GetAuthenticationStateAsync()).User;
+                if (_branchId <= 0 || !await CurrentUserAuthorization.CanAssignLocationBranchAsync(
+                        principal, _location.Id, _branchId))
+                {
+                    _errorMessage = "You are no longer authorized to assign this location to the selected branch.";
+                    return;
+                }
+
+                _location.BranchId = _branchId;
                 await LocationService.UpdateAsync(_location);
                 Snackbar.Add("Location updated successfully", Severity.Success);
                 Nav.NavigateTo("/Locations");
             }
             catch (Exception ex)
             {
-                Snackbar.Add(ex.Message, Severity.Error);
+                _errorMessage = ex.Message;
             }
         }
     }

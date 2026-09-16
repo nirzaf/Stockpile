@@ -1,7 +1,11 @@
 @page "/Locations"
 @using Microsoft.AspNetCore.Authorization
-@attribute [Authorize]
+@using Microsoft.AspNetCore.Components.Authorization
+@using Merconiq.Web.Security
+@attribute [Authorize(Policy = CapabilityPolicies.View)]
 @inject ILocationService LocationService
+@inject AuthenticationStateProvider AuthenticationStateProvider
+@inject ICurrentUserAuthorization CurrentUserAuthorization
 @inject ISnackbar Snackbar
 @inject IDialogService DialogService
 
@@ -9,8 +13,16 @@
 
 <div class="d-flex justify-space-between align-center mb-4">
     <MudText Typo="Typo.h4" Color="Color.Primary">Locations</MudText>
-    <MudButton Variant="Variant.Filled" Color="Color.Primary" Href="/Locations/Create">Add New Location</MudButton>
+    @if (_canCreate)
+    {
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" Href="/Locations/Create">Add New Location</MudButton>
+    }
 </div>
+
+@if (_message is not null)
+{
+    <MudAlert Severity="Severity.Info" Class="mb-3">@_message</MudAlert>
+}
 
 <MudTable Items="@_locations" Dense="true" Hover="true" Striped="true" Filter="new Func<Location,bool>(FilterFunc)">
     <ToolBarContent>
@@ -26,8 +38,11 @@
         <MudTd DataLabel="Name">@context.Name</MudTd>
         <MudTd DataLabel="Address">@context.Address</MudTd>
         <MudTd DataLabel="Actions" Style="text-align:right">
-            <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Warning" Href="@($"/Locations/Edit/{context.Id}")" Class="mr-2">Edit</MudButton>
-            <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Error" OnClick="@(() => DeleteLocation(context))">Delete</MudButton>
+            @if (_manageableLocationIds.Contains(context.Id))
+            {
+                <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Warning" Href="@($"/Locations/Edit/{context.Id}")" Class="mr-2">Edit</MudButton>
+                <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Error" OnClick="@(() => DeleteLocation(context))">Delete</MudButton>
+            }
         </MudTd>
     </RowTemplate>
     <PagerContent>
@@ -37,16 +52,40 @@
 
 @code {
     private IEnumerable<Location> _locations = new List<Location>();
+    private readonly HashSet<int> _manageableLocationIds = [];
     private string _searchString = "";
+    private string? _message;
+    private bool _canCreate;
 
     protected override async Task OnInitializedAsync()
     {
-        await LoadData();
+        await LoadDataAsync();
     }
 
-    private async Task LoadData()
+    private async Task LoadDataAsync()
     {
-        _locations = await LocationService.GetAllAsync();
+        var principal = (await AuthenticationStateProvider.GetAuthenticationStateAsync()).User;
+        var isTenantAdmin = await CurrentUserAuthorization.IsTenantAdministratorAsync(principal);
+        var accessibleCompanyIds = await CurrentUserAuthorization.GetAccessibleCompanyIdsAsync(
+            principal, CompanyCapability.View);
+        _locations = isTenantAdmin
+            ? await LocationService.GetAllAsync()
+            : await LocationService.GetForCompaniesAsync(accessibleCompanyIds.ToArray());
+        _manageableLocationIds.Clear();
+        foreach (var location in _locations)
+        {
+            if (await CurrentUserAuthorization.CanAccessLocationAsync(
+                    principal, location.Id, CompanyCapability.Administer))
+            {
+                _manageableLocationIds.Add(location.Id);
+            }
+        }
+
+        _canCreate = (await CurrentUserAuthorization.GetAccessibleCompanyIdsAsync(
+            principal, CompanyCapability.Administer)).Count > 0;
+        _message = _locations.Any()
+            ? null
+            : "No locations are assigned to your companies. Legacy unassigned locations are visible only to a tenant administrator.";
     }
 
     private bool FilterFunc(Location element) => FilterFunc(element, _searchString);
@@ -70,9 +109,18 @@
         {
             try
             {
+                var principal = (await AuthenticationStateProvider.GetAuthenticationStateAsync()).User;
+                if (!await CurrentUserAuthorization.CanAccessLocationAsync(
+                        principal, location.Id, CompanyCapability.Administer))
+                {
+                    Snackbar.Add("You are no longer authorized to administer this location.", Severity.Error);
+                    await LoadDataAsync();
+                    return;
+                }
+
                 await LocationService.DeleteAsync(location.Id);
                 Snackbar.Add("Location deleted successfully", Severity.Success);
-                await LoadData();
+                await LoadDataAsync();
             }
             catch (Exception ex)
             {

@@ -89,7 +89,7 @@ public class StockWorkflowTests : IClassFixture<CustomWebApplicationFactory>
         using (var scope = _factory.Services.CreateScope())
         {
             var db = scope.ServiceProvider.GetRequiredService<InventoryDbContext>();
-            loc2 = new Location { Name = "WF-LOC-DST" };
+            loc2 = new Location { Name = "WF-LOC-DST", BranchId = loc1.BranchId };
             db.Locations.Add(loc2);
             await db.SaveChangesAsync();
         }
@@ -161,7 +161,7 @@ public class StockWorkflowTests : IClassFixture<CustomWebApplicationFactory>
         using (var scope = _factory.Services.CreateScope())
         {
             var db = scope.ServiceProvider.GetRequiredService<InventoryDbContext>();
-            loc2 = new Location { Name = "ML-LOC2" };
+            loc2 = new Location { Name = "ML-LOC2", BranchId = loc1.BranchId };
             db.Locations.Add(loc2);
             await db.SaveChangesAsync();
         }
@@ -192,8 +192,23 @@ public class StockWorkflowTests : IClassFixture<CustomWebApplicationFactory>
     {
         using var scope = _factory.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<InventoryDbContext>();
+        var company = new Company
+        {
+            Code = $"WF-{Guid.NewGuid():N}".Substring(0, 10),
+            LegalName = "Workflow company"
+        };
+        db.Companies.Add(company);
+        await db.SaveChangesAsync();
+        var branch = new Branch
+        {
+            CompanyId = company.Id,
+            Code = $"BR-{Guid.NewGuid():N}".Substring(0, 10),
+            Name = "Workflow branch"
+        };
+        db.Branches.Add(branch);
+        await db.SaveChangesAsync();
         var item = new Item { ItemCode = $"WF-{Guid.NewGuid():N}".Substring(0, 12), Description = "WF item", Rate = 10m };
-        var loc = new Location { Name = $"WF-{Guid.NewGuid():N}".Substring(0, 12) };
+        var loc = new Location { Name = $"WF-{Guid.NewGuid():N}".Substring(0, 12), BranchId = branch.Id };
         db.Items.Add(item);
         db.Locations.Add(loc);
         await db.SaveChangesAsync();

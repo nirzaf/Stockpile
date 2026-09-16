@@ -6,7 +6,11 @@ namespace Merconiq.Web.Security;
 /// <summary>Builds the stable claims shared by API JWT creation and its tests.</summary>
 public static class JwtClaimsFactory
 {
-    public static IReadOnlyList<Claim> Create(ApplicationUser user, string tenantId, IEnumerable<string> roles)
+    public static IReadOnlyList<Claim> Create(
+        ApplicationUser user,
+        string tenantId,
+        IEnumerable<string> roles,
+        string securityStampClaimType = "AspNet.Identity.SecurityStamp")
     {
         var claims = new List<Claim>
         {
@@ -25,6 +29,11 @@ public static class JwtClaimsFactory
         }
 
         claims.AddRange(distinctRoles.Select(role => new Claim(ClaimTypes.Role, role)));
+        if (!string.IsNullOrWhiteSpace(user.SecurityStamp))
+        {
+            claims.Add(new Claim(securityStampClaimType, user.SecurityStamp));
+        }
+
         return claims;
     }
 }

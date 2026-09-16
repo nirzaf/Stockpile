@@ -19,6 +19,8 @@ public class GetAllStockQueryHandler : IRequestHandler<GetAllStockQuery, IEnumer
     public async Task<IEnumerable<StockInHand>> Handle(GetAllStockQuery request, CancellationToken cancellationToken)
     {
         _logger.LogDebug("Handling GetAllStockQuery");
-        return await _stockService.GetAllAsync();
+        return request.CompanyIds is null
+            ? await _stockService.GetAllAsync()
+            : await _stockService.GetForCompaniesAsync(request.CompanyIds);
     }
 }

@@ -1,8 +1,11 @@
 @page "/Organization/Companies"
 @using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Components.Authorization
 @using Merconiq.Web.Security
 @attribute [Authorize(Policy = CapabilityPolicies.View)]
 @inject IOrganizationService OrganizationService
+@inject AuthenticationStateProvider AuthenticationStateProvider
+@inject ICurrentUserAuthorization CurrentUserAuthorization
 @inject ILogger<CompanyIndex> Logger
 
 <PageTitle>Companies</PageTitle>
@@ -15,7 +18,7 @@
 </MudStack>
 
 <MudAlert Severity="Severity.Info" Variant="Variant.Outlined" Class="mb-4">
-    Company management is tenant-scoped. Selecting a company here does not change transaction access or authorization.
+    Company and branch records are limited by your company membership. Choosing a company never grants additional access.
 </MudAlert>
 
 <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="mb-4" Wrap="Wrap.Wrap">
@@ -23,7 +26,7 @@
                   ValueChanged="SearchChangedAsync" Immediate="true" DebounceInterval="300"
                   Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Search"
                   Clearable="true" Class="flex-grow-1" />
-    <AuthorizeView Policy="@CapabilityPolicies.Edit">
+    <AuthorizeView Roles="Admin">
         <Authorized>
             <MudButton Variant="Variant.Filled" Color="Color.Primary"
                        StartIcon="@Icons.Material.Filled.Add"
@@ -131,7 +134,10 @@ else
         _errorMessage = null;
         try
         {
-            var companies = await OrganizationService.GetCompaniesAsync(search);
+            var authenticationState = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+            var companyIds = await CurrentUserAuthorization.GetAccessibleCompanyIdsAsync(
+                authenticationState.User, CompanyCapability.View);
+            var companies = await OrganizationService.GetCompaniesAsync(search, companyIds.ToArray());
             if (IsCurrentLoad(version, search))
                 _companies = companies;
         }

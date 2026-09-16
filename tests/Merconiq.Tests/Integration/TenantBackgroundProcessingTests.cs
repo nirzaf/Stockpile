@@ -52,10 +52,19 @@ public class TenantBackgroundProcessingTests
         public Task<DemandForecastResult> ForecastDemandAsync(int itemId, int horizonDays = 30) =>
             throw new NotSupportedException();
 
+        public Task<DemandForecastResult> ForecastDemandForCompaniesAsync(
+            int itemId,
+            int horizonDays,
+            IReadOnlyCollection<int> companyIds) => throw new NotSupportedException();
+
         public Task<IReadOnlyList<DemandForecastResult>> ForecastAllItemsAsync(int horizonDays = 30)
         {
             observedTenants.Add(tenantContext.TenantId);
             return Task.FromResult<IReadOnlyList<DemandForecastResult>>([]);
         }
+
+        public Task<IReadOnlyList<DemandForecastResult>> ForecastAllItemsForCompaniesAsync(
+            int horizonDays,
+            IReadOnlyCollection<int> companyIds) => throw new NotSupportedException();
     }
 }

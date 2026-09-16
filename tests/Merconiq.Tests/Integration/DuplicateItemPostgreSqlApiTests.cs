@@ -6,17 +6,16 @@ using System.Text;
 using FluentAssertions;
 using Merconiq.Core.Entities;
 using Merconiq.Infrastructure.Data;
+using Merconiq.Web.Security;
 using Merconiq.Web.Tenancy;
-using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
-using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
 
 namespace Merconiq.Tests.Integration;
@@ -62,6 +61,8 @@ public sealed class DuplicateItemPostgreSqlApiTests : IDisposable
 
 internal sealed class PostgreSqlItemApiFactory(PostgreSqlIntegrationFixture fixture) : WebApplicationFactory<Merconiq.Web.Program>
 {
+    private const string TestUserId = "postgres-duplicate-item-admin";
+    private const string TestTenantId = "test-tenant";
     private const string TestJwtSecret = "testing-only-jwt-secret-with-at-least-32-bytes";
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
@@ -81,24 +82,17 @@ internal sealed class PostgreSqlItemApiFactory(PostgreSqlIntegrationFixture fixt
                 context.SetTenant("test-tenant");
                 return context;
             });
-            services.AddAuthentication(options =>
-            {
-                options.DefaultAuthenticateScheme = "Test";
-                options.DefaultChallengeScheme = "Test";
-            }).AddScheme<AuthenticationSchemeOptions, TestAuthHandler>("Test", _ => { });
         });
     }
 
     public HttpClient CreateAuthenticatedClient()
     {
+        var user = EnsureAdminUser();
         var client = CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
         var tokenHandler = new JwtSecurityTokenHandler();
         var token = tokenHandler.CreateToken(new SecurityTokenDescriptor
         {
-            Subject = new ClaimsIdentity([
-                new Claim("tenant_id", "test-tenant"),
-                new Claim(ClaimTypes.Role, "Admin")
-            ]),
+            Subject = new ClaimsIdentity(JwtClaimsFactory.Create(user, TestTenantId, ["Admin"])),
             Expires = DateTime.UtcNow.AddMinutes(5),
             Issuer = "Merconiq",
             Audience = "Merconiq",
@@ -108,8 +102,50 @@ internal sealed class PostgreSqlItemApiFactory(PostgreSqlIntegrationFixture fixt
         });
         client.DefaultRequestHeaders.Authorization =
             new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", tokenHandler.WriteToken(token));
-        client.DefaultRequestHeaders.Add("X-Test-Auth", "true");
-        client.DefaultRequestHeaders.Add("X-Test-Role", "Admin");
         return client;
+    }
+
+    private ApplicationUser EnsureAdminUser()
+    {
+        using var scope = Services.CreateScope();
+        var userManager = scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
+        var roleManager = scope.ServiceProvider.GetRequiredService<RoleManager<IdentityRole>>();
+        var user = userManager.FindByIdAsync(TestUserId).GetAwaiter().GetResult();
+        if (user is null)
+        {
+            user = new ApplicationUser
+            {
+                Id = TestUserId,
+                UserName = "postgres-duplicate-item-admin@test-tenant.test",
+                Email = "postgres-duplicate-item-admin@test-tenant.test",
+                EmailConfirmed = true,
+                TenantId = TestTenantId
+            };
+            var create = userManager.CreateAsync(user).GetAwaiter().GetResult();
+            if (!create.Succeeded)
+            {
+                throw new InvalidOperationException(string.Join("; ", create.Errors.Select(error => error.Code)));
+            }
+        }
+
+        if (!roleManager.RoleExistsAsync("Admin").GetAwaiter().GetResult())
+        {
+            var createRole = roleManager.CreateAsync(new IdentityRole("Admin")).GetAwaiter().GetResult();
+            if (!createRole.Succeeded)
+            {
+                throw new InvalidOperationException(string.Join("; ", createRole.Errors.Select(error => error.Code)));
+            }
+        }
+
+        if (!userManager.IsInRoleAsync(user, "Admin").GetAwaiter().GetResult())
+        {
+            var addRole = userManager.AddToRoleAsync(user, "Admin").GetAwaiter().GetResult();
+            if (!addRole.Succeeded)
+            {
+                throw new InvalidOperationException(string.Join("; ", addRole.Errors.Select(error => error.Code)));
+            }
+        }
+
+        return userManager.FindByIdAsync(TestUserId).GetAwaiter().GetResult()!;
     }
 }

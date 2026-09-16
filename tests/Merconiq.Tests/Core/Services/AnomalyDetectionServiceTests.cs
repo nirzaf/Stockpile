@@ -99,6 +99,31 @@ public class AnomalyDetectionServiceTests
     }
 
     [Fact]
+    public async Task DetectAnomaliesForCompaniesAsync_ExcludesMovementsFromOtherCompanies()
+    {
+        Expression<Func<StockTransaction, bool>>? filter = null;
+        _txRepoMock.Setup(repository => repository.FindAsync(It.IsAny<Expression<Func<StockTransaction, bool>>>() ))
+            .Callback<Expression<Func<StockTransaction, bool>>>(predicate => filter = predicate)
+            .ReturnsAsync(new List<StockTransaction>());
+        _itemRepoMock.Setup(repository => repository.GetAllAsync()).ReturnsAsync(new List<Item>());
+
+        await _sut.DetectAnomaliesForCompaniesAsync(null, null, [11]);
+
+        filter.Should().NotBeNull();
+        var isAllowed = filter!.Compile();
+        isAllowed(new StockTransaction
+        {
+            ToLocationId = null,
+            FromLocation = new Location { Branch = new Branch { CompanyId = 11 } }
+        }).Should().BeTrue();
+        isAllowed(new StockTransaction
+        {
+            ToLocationId = null,
+            FromLocation = new Location { Branch = new Branch { CompanyId = 12 } }
+        }).Should().BeFalse();
+    }
+
+    [Fact]
     public async Task DetectAnomaliesAsync_EmptyItemDictionary_UsesFallbackName()
     {
         // Transactions exist for item ID 99 but item doesn't exist in item repo

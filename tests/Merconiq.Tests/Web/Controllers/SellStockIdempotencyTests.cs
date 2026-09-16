@@ -1,8 +1,11 @@
+using System.Security.Claims;
 using FluentAssertions;
+using Merconiq.Core.Entities;
 using Merconiq.Core.Features.Stock.Commands;
 using Merconiq.Core.Interfaces;
 using Merconiq.Tests.Infrastructure;
 using Merconiq.Web.Controllers.Api.V1;
+using Merconiq.Web.Security;
 using MediatR;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
@@ -56,7 +59,11 @@ public class SellStockIdempotencyTests
 
     private static StockController CreateController(Mock<IMediator> mediator)
     {
-        return new StockController(mediator.Object)
+        var authorization = new Mock<ICurrentUserAuthorization>();
+        authorization.Setup(a => a.CanAccessLocationAsync(
+                It.IsAny<ClaimsPrincipal>(), It.IsAny<int>(), It.IsAny<CompanyCapability>()))
+            .ReturnsAsync(true);
+        return new StockController(mediator.Object, authorization.Object)
         {
             ControllerContext = new ControllerContext
             {

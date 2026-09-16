@@ -143,6 +143,54 @@ public class StockServiceTests
     }
 
     [Fact]
+    public async Task GetTransactionsForCompanies_IncludesLocationMovementsAndOnlySameCompanyTransfers()
+    {
+        StockTransaction CreateTransaction(int id, TransactionType type, int fromCompanyId, int? toCompanyId)
+        {
+            return new StockTransaction
+            {
+                Id = id,
+                TransactionType = type,
+                TransactionDate = DateTime.UtcNow.AddMinutes(-id),
+                FromLocation = new Location
+                {
+                    Id = id * 10,
+                    Branch = new Branch { CompanyId = fromCompanyId }
+                },
+                ToLocationId = toCompanyId.HasValue ? id * 10 + 1 : null,
+                ToLocation = toCompanyId.HasValue
+                    ? new Location
+                    {
+                        Id = id * 10 + 1,
+                        Branch = new Branch { CompanyId = toCompanyId.Value }
+                    }
+                    : null
+            };
+        }
+
+        var transactions = new[]
+        {
+            CreateTransaction(1, TransactionType.Receive, 101, null),
+            CreateTransaction(2, TransactionType.Sell, 101, null),
+            CreateTransaction(3, TransactionType.Transfer, 101, 202),
+            CreateTransaction(4, TransactionType.Transfer, 101, 101)
+        };
+        _txRepoMock.Setup(repository => repository.FindAsync(
+                It.IsAny<Expression<Func<StockTransaction, bool>>>(),
+                It.IsAny<Func<IQueryable<StockTransaction>, IOrderedQueryable<StockTransaction>>>() ))
+            .Returns((Expression<Func<StockTransaction, bool>> predicate,
+                Func<IQueryable<StockTransaction>, IOrderedQueryable<StockTransaction>> orderBy) =>
+            {
+                var rows = orderBy(transactions.AsQueryable().Where(predicate)).ToArray();
+                return Task.FromResult<IEnumerable<StockTransaction>>(rows);
+            });
+
+        var result = await _sut.GetTransactionsForCompaniesAsync(null, null, [101]);
+
+        result.Select(transaction => transaction.Id).Should().BeEquivalentTo(new[] { 1, 2, 4 });
+    }
+
+    [Fact]
     public async Task ReceiveStockAsync_ExistingStock_IncrementsQuantity()
     {
         var existing = _fixture.Create<StockInHand>();
@@ -265,6 +313,9 @@ public class StockServiceTests
     [Fact]
     public async Task TransferStockAsync_Success_UpdatesBothLocations()
     {
+        _locations.Single(location => location.Id == 10).BranchId = 301;
+        _locations.Single(location => location.Id == 20).BranchId = 301;
+        _branches.Add(new Branch { Id = 301, CompanyId = 401, TenantId = "test-tenant" });
         var source = _fixture.Create<StockInHand>();
         source.ItemId = 1;
         source.LocationId = 10;
@@ -296,6 +347,9 @@ public class StockServiceTests
     [Fact]
     public async Task TransferStockAsync_InsufficientStock_Throws()
     {
+        _locations.Single(location => location.Id == 10).BranchId = 301;
+        _locations.Single(location => location.Id == 20).BranchId = 301;
+        _branches.Add(new Branch { Id = 301, CompanyId = 401, TenantId = "test-tenant" });
         var source = _fixture.Create<StockInHand>();
         source.ItemId = 1;
         source.LocationId = 10;
@@ -366,7 +420,7 @@ public class StockServiceTests
     }
 
     [Fact]
-    public async Task TransferStockAsync_MappedToUnmappedLegacyLocation_IsAllowed()
+    public async Task TransferStockAsync_MappedToUnmappedLegacyLocation_IsRejected()
     {
         _locations.Add(new Location { Id = 201, BranchId = 301, TenantId = "test-tenant" });
         _branches.Add(new Branch { Id = 301, CompanyId = 401, TenantId = "test-tenant" });
@@ -376,11 +430,12 @@ public class StockServiceTests
             .Returns((Expression<Func<StockInHand, bool>> predicate) =>
                 Task.FromResult<IEnumerable<StockInHand>>(new[] { source }.Where(predicate.Compile()).ToArray()));
 
-        await _sut.TransferStockAsync(1, 201, 20, 2, null);
+        var act = () => _sut.TransferStockAsync(1, 201, 20, 2, null);
 
-        source.Quantity.Should().Be(3);
-        _stockRepoMock.Verify(repository => repository.AddAsync(It.Is<StockInHand>(stock =>
-            stock.LocationId == 20 && stock.Quantity == 2)), Times.Once);
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("Both locations must be assigned to an active company before stock can be transferred.");
+        source.Quantity.Should().Be(5);
+        _stockRepoMock.Verify(repository => repository.AddAsync(It.IsAny<StockInHand>()), Times.Never);
     }
 
     [Fact]

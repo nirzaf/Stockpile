@@ -19,6 +19,9 @@ public class GetStockTransactionsQueryHandler : IRequestHandler<GetStockTransact
     public async Task<IEnumerable<StockTransaction>> Handle(GetStockTransactionsQuery request, CancellationToken cancellationToken)
     {
         _logger.LogDebug("Handling GetStockTransactionsQuery from={From}, to={To}", request.From, request.To);
-        return await _stockService.GetTransactionsAsync(request.From, request.To);
+        return request.CompanyIds is null
+            ? await _stockService.GetTransactionsAsync(request.From, request.To)
+            : await _stockService.GetTransactionsForCompaniesAsync(
+                request.From, request.To, request.CompanyIds);
     }
 }

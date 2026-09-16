@@ -119,8 +119,10 @@ public sealed class PostgreSqlIntegrationTests
         await using (var legacyOperation = _fixture.CreateContext(tenantA))
         {
             var stockService = CreateStockService(legacyOperation, tenantA);
-            await stockService.TransferStockAsync(
+            var legacyTransfer = () => stockService.TransferStockAsync(
                 itemId, companyALocationId, legacyLocationId, 1, "legacy-unmapped");
+            await legacyTransfer.Should().ThrowAsync<InvalidOperationException>()
+                .WithMessage("Both locations must be assigned to an active company before stock can be transferred.");
         }
 
         await using (var crossCompanyOperation = _fixture.CreateContext(tenantA))
@@ -151,11 +153,11 @@ public sealed class PostgreSqlIntegrationTests
         await using (var verify = _fixture.CreateContext(tenantA))
         {
             (await verify.StockInHand.SingleAsync(stock => stock.ItemId == itemId && stock.LocationId == companyALocationId))
-                .Quantity.Should().Be(8);
+                .Quantity.Should().Be(9);
             (await verify.StockInHand.SingleAsync(stock => stock.ItemId == itemId && stock.LocationId == sameCompanyLocationId))
                 .Quantity.Should().Be(1);
-            (await verify.StockInHand.SingleAsync(stock => stock.ItemId == itemId && stock.LocationId == legacyLocationId))
-                .Quantity.Should().Be(1);
+            (await verify.StockInHand.AnyAsync(stock => stock.ItemId == itemId && stock.LocationId == legacyLocationId))
+                .Should().BeFalse();
             (await verify.StockInHand.AnyAsync(stock => stock.ItemId == itemId && stock.LocationId == companyBLocationId))
                 .Should().BeFalse();
         }
@@ -192,7 +194,7 @@ public sealed class PostgreSqlIntegrationTests
         {
             var deleteLegacyLocation = () => hardDelete.Locations
                 .IgnoreQueryFilters()
-                .Where(location => location.Id == legacyLocationId)
+                .Where(location => location.Id == companyALocationId)
                 .ExecuteDeleteAsync();
             var exception = await deleteLegacyLocation.Should().ThrowAsync<PostgresException>();
             exception.Which.SqlState.Should().Be(PostgresErrorCodes.ForeignKeyViolation);

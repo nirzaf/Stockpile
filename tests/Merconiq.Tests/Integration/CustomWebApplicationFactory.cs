@@ -15,6 +15,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
+using Merconiq.Web.Security;
 using Merconiq.Web.Tenancy;
 
 namespace Merconiq.Tests.Integration;
@@ -55,6 +56,15 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Merconiq.Web.Pr
 
     public HttpClient CreateAuthenticatedClient(string role = "Admin", string tenantId = "test-tenant")
     {
+        var user = tenantId == "test-tenant"
+            ? EnsureAuthenticatedTestUser(role, tenantId)
+            : new ApplicationUser
+            {
+                Id = TestUserId(role, tenantId),
+                UserName = $"{role.ToLowerInvariant()}@{tenantId}.test",
+                SecurityStamp = "test-security-stamp"
+            };
+
         var client = CreateClient(new WebApplicationFactoryClientOptions
         {
             AllowAutoRedirect = false
@@ -63,13 +73,8 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Merconiq.Web.Pr
         var tokenHandler = new JwtSecurityTokenHandler();
         var token = tokenHandler.CreateToken(new SecurityTokenDescriptor
         {
-            Subject = new ClaimsIdentity(new[]
-            {
-                new Claim(ClaimTypes.Name, "testuser@test.com"),
-                new Claim(ClaimTypes.NameIdentifier, "1"),
-                new Claim(ClaimTypes.Role, role),
-                new Claim("tenant_id", tenantId)
-            }),
+            Subject = new ClaimsIdentity(
+                JwtClaimsFactory.Create(user, tenantId, [role])),
             Expires = DateTime.UtcNow.AddMinutes(5),
             Issuer = "Merconiq",
             Audience = "Merconiq",
@@ -84,6 +89,53 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Merconiq.Web.Pr
         client.DefaultRequestHeaders.Add("X-Test-Role", role);
         return client;
     }
+
+    private ApplicationUser EnsureAuthenticatedTestUser(string role, string tenantId)
+    {
+        using var scope = Services.CreateScope();
+        var userManager = scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
+        var roleManager = scope.ServiceProvider.GetRequiredService<RoleManager<IdentityRole>>();
+        var userId = TestUserId(role, tenantId);
+        var user = userManager.FindByIdAsync(userId).GetAwaiter().GetResult();
+        if (user is null)
+        {
+            user = new ApplicationUser
+            {
+                Id = userId,
+                UserName = $"{role.ToLowerInvariant()}@{tenantId}.test",
+                Email = $"{role.ToLowerInvariant()}@{tenantId}.test",
+                EmailConfirmed = true,
+                TenantId = tenantId
+            };
+            var createResult = userManager.CreateAsync(user).GetAwaiter().GetResult();
+            if (!createResult.Succeeded)
+            {
+                throw new InvalidOperationException(string.Join("; ", createResult.Errors.Select(error => error.Code)));
+            }
+        }
+
+        if (!roleManager.RoleExistsAsync(role).GetAwaiter().GetResult())
+        {
+            var roleResult = roleManager.CreateAsync(new IdentityRole(role)).GetAwaiter().GetResult();
+            if (!roleResult.Succeeded)
+            {
+                throw new InvalidOperationException(string.Join("; ", roleResult.Errors.Select(error => error.Code)));
+            }
+        }
+
+        if (!userManager.IsInRoleAsync(user, role).GetAwaiter().GetResult())
+        {
+            var addRoleResult = userManager.AddToRoleAsync(user, role).GetAwaiter().GetResult();
+            if (!addRoleResult.Succeeded)
+            {
+                throw new InvalidOperationException(string.Join("; ", addRoleResult.Errors.Select(error => error.Code)));
+            }
+        }
+
+        return userManager.FindByIdAsync(userId).GetAwaiter().GetResult()!;
+    }
+
+    private static string TestUserId(string role, string tenantId) => $"test-user-{tenantId}-{role}";
 
     public HttpClient CreateUnauthenticatedClient()
     {

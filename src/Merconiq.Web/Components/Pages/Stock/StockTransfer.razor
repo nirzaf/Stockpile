@@ -1,9 +1,13 @@
 @page "/Stock/Transfer"
 @using Microsoft.AspNetCore.Authorization
-@attribute [Authorize]
+@using Microsoft.AspNetCore.Components.Authorization
+@using Merconiq.Web.Security
+@attribute [Authorize(Policy = CapabilityPolicies.Post)]
 @inject IStockService StockService
 @inject IItemService ItemService
 @inject ILocationService LocationService
+@inject AuthenticationStateProvider AuthenticationStateProvider
+@inject ICurrentUserAuthorization CurrentUserAuthorization
 @inject ISnackbar Snackbar
 @inject NavigationManager Nav
 
@@ -68,7 +72,17 @@
     protected override async Task OnInitializedAsync()
     {
         _items = await ItemService.GetAllAsync();
-        _locations = await LocationService.GetAllAsync();
+        var authenticationState = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+        if (await CurrentUserAuthorization.IsTenantAdministratorAsync(authenticationState.User))
+        {
+            _locations = await LocationService.GetAllAsync();
+        }
+        else
+        {
+            var companyIds = await CurrentUserAuthorization.GetAccessibleCompanyIdsAsync(
+                authenticationState.User, CompanyCapability.View);
+            _locations = await LocationService.GetForCompaniesAsync(companyIds.ToArray());
+        }
     }
 
     private async Task SubmitForm()
@@ -84,6 +98,17 @@
 
             try
             {
+                var authenticationState = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+                if (!await CurrentUserAuthorization.CanAccessTransferAsync(
+                        authenticationState.User,
+                        _fromLocationId,
+                        _toLocationId,
+                        CompanyCapability.Post))
+                {
+                    Snackbar.Add("You no longer have posting access to both locations in the same company.", Severity.Error);
+                    return;
+                }
+
                 await StockService.TransferStockAsync(_itemId, _fromLocationId, _toLocationId, _quantity, _notes);
                 Snackbar.Add($"Transferred {_quantity} units successfully.", Severity.Success);
                 Nav.NavigateTo("/Stock/Index");

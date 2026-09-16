@@ -232,6 +232,59 @@ public class DemandForecastServiceTests
     }
 
     [Fact]
+    public async Task ForecastDemandForCompaniesAsync_FiltersHistoryAndSeparatesCompanyCacheEntries()
+    {
+        var item = new Item { Id = 7, ItemCode = "SCOPED-001" };
+        var transactions = Enumerable.Range(1, 10).SelectMany(day => new[]
+        {
+            new StockTransaction
+            {
+                ItemId = 7,
+                TransactionType = TransactionType.Sell,
+                TransactionDate = DateTime.UtcNow.Date.AddDays(-day),
+                Quantity = 10,
+                FromLocation = new Location { Branch = new Branch { CompanyId = 1 } }
+            },
+            new StockTransaction
+            {
+                ItemId = 7,
+                TransactionType = TransactionType.Sell,
+                TransactionDate = DateTime.UtcNow.Date.AddDays(-day),
+                Quantity = 90,
+                FromLocation = new Location { Branch = new Branch { CompanyId = 2 } }
+            }
+        }).ToList();
+
+        var itemRepository = new Mock<IRepository<Item>>();
+        itemRepository.Setup(repository => repository.FindAsync(It.IsAny<Expression<Func<Item, bool>>>() ))
+            .ReturnsAsync(new[] { item });
+        var transactionRepository = new Mock<IRepository<StockTransaction>>();
+        transactionRepository
+            .Setup(repository => repository.FindAsync(It.IsAny<Expression<Func<StockTransaction, bool>>>() ))
+            .Returns((Expression<Func<StockTransaction, bool>> filter) =>
+                Task.FromResult<IEnumerable<StockTransaction>>(transactions.Where(filter.Compile()).ToList()));
+        using var scopedCache = new MemoryCache(new MemoryCacheOptions());
+        var service = new DemandForecastService(
+            transactionRepository.Object,
+            itemRepository.Object,
+            NullLogger<DemandForecastService>.Instance,
+            scopedCache,
+            new TestTenantContext("test-tenant"),
+            Options.Create(new ForecastingOptions()));
+
+        var companyOne = await service.ForecastDemandForCompaniesAsync(7, 5, [1]);
+        var companyTwo = await service.ForecastDemandForCompaniesAsync(7, 5, [2]);
+        var companyOneCached = await service.ForecastDemandForCompaniesAsync(7, 5, [1]);
+
+        companyOne.AverageDailyDemand.Should().Be(10);
+        companyTwo.AverageDailyDemand.Should().Be(90);
+        companyOneCached.Should().BeSameAs(companyOne);
+        transactionRepository.Verify(
+            repository => repository.FindAsync(It.IsAny<Expression<Func<StockTransaction, bool>>>()),
+            Times.Exactly(2));
+    }
+
+    [Fact]
     public void BuildDailyDemand_ignores_transfers_and_fills_missing_calendar_days()
     {
         var start = new DateTime(2026, 1, 1);

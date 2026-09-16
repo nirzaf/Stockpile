@@ -1,12 +1,21 @@
 @page "/PurchaseOrders"
 @using Microsoft.AspNetCore.Authorization
-@attribute [Authorize]
+@using Microsoft.AspNetCore.Components.Authorization
+@using Merconiq.Web.Security
+@attribute [Authorize(Policy = CapabilityPolicies.TenantAdministrator)]
 @inject IPurchaseOrderService POService
+@inject AuthenticationStateProvider AuthenticationStateProvider
+@inject ICurrentUserAuthorization CurrentUserAuthorization
 @inject ISnackbar Snackbar
 @inject IDialogService DialogService
 @inject IJSRuntime JS
 
 <PageTitle>Purchase Orders</PageTitle>
+
+@if (_message is not null)
+{
+    <MudAlert Severity="Severity.Warning" Class="mb-3">@_message</MudAlert>
+}
 
 <div class="d-flex justify-space-between align-center mb-4">
     <MudText Typo="Typo.h4" Color="Color.Primary">Purchase Orders</MudText>
@@ -51,6 +60,7 @@
 @code {
     private IEnumerable<PurchaseOrder> _orders = new List<PurchaseOrder>();
     private string _searchString = "";
+    private string? _message;
 
     protected override async Task OnInitializedAsync()
     {
@@ -59,6 +69,14 @@
 
     private async Task LoadData()
     {
+        if (!await IsTenantAdministratorAsync())
+        {
+            _orders = [];
+            _message = "Purchase orders remain tenant-scoped until company ownership is implemented; tenant administrator access is required.";
+            return;
+        }
+
+        _message = null;
         _orders = await POService.GetAllAsync();
     }
 
@@ -86,6 +104,12 @@
 
     private async Task ExportToCsv()
     {
+        if (!await IsTenantAdministratorAsync())
+        {
+            Snackbar.Add("Tenant administrator access is required to export tenant-wide purchase orders.", Severity.Error);
+            return;
+        }
+
         var bytes = ExportFileBuilder.CreateCsv(ExportHeaders, ExportRows());
         await JS.InvokeVoidAsync("downloadFile", "PurchaseOrders_Export.csv", "text/csv", bytes);
         Snackbar.Add("Exported successfully", Severity.Success);
@@ -93,6 +117,12 @@
 
     private async Task ExportToExcel()
     {
+        if (!await IsTenantAdministratorAsync())
+        {
+            Snackbar.Add("Tenant administrator access is required to export tenant-wide purchase orders.", Severity.Error);
+            return;
+        }
+
         var bytes = ExportFileBuilder.CreateExcel("Purchase Orders", ExportHeaders, ExportRows());
         await JS.InvokeVoidAsync("downloadFile", "PurchaseOrders_Export.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", bytes);
         Snackbar.Add("Exported successfully", Severity.Success);
@@ -117,6 +147,12 @@
         {
             try
             {
+                if (!await IsTenantAdministratorAsync())
+                {
+                    Snackbar.Add("Tenant administrator access is required to change tenant-wide purchase orders.", Severity.Error);
+                    return;
+                }
+
                 await POService.DeleteAsync(po.Id);
                 Snackbar.Add("Purchase Order deleted successfully", Severity.Success);
                 await LoadData();
@@ -126,5 +162,11 @@
                 Snackbar.Add(ex.Message, Severity.Error);
             }
         }
+    }
+
+    private async Task<bool> IsTenantAdministratorAsync()
+    {
+        var principal = (await AuthenticationStateProvider.GetAuthenticationStateAsync()).User;
+        return await CurrentUserAuthorization.IsTenantAdministratorAsync(principal);
     }
 }

@@ -11,8 +11,19 @@ public interface IDemandForecastService
     /// <returns>The forecast result, including historical context and predicted values.</returns>
     Task<DemandForecastResult> ForecastDemandAsync(int itemId, int horizonDays = 30);
 
+    /// <summary>Forecasts an item using only movements owned by the specified companies.</summary>
+    Task<DemandForecastResult> ForecastDemandForCompaniesAsync(
+        int itemId,
+        int horizonDays,
+        IReadOnlyCollection<int> companyIds);
+
     /// <summary>Forecasts demand for every item with sufficient transaction history.</summary>
     /// <param name="horizonDays">The forecast horizon in days. Defaults to 30.</param>
     /// <returns>A read-only list of per-item forecast results.</returns>
     Task<IReadOnlyList<DemandForecastResult>> ForecastAllItemsAsync(int horizonDays = 30);
+
+    /// <summary>Forecasts all items using movements owned by the specified companies.</summary>
+    Task<IReadOnlyList<DemandForecastResult>> ForecastAllItemsForCompaniesAsync(
+        int horizonDays,
+        IReadOnlyCollection<int> companyIds);
 }

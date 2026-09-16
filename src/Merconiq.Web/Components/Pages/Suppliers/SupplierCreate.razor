@@ -1,11 +1,20 @@
 @page "/Suppliers/Create"
 @using Microsoft.AspNetCore.Authorization
-@attribute [Authorize]
+@using Microsoft.AspNetCore.Components.Authorization
+@using Merconiq.Web.Security
+@attribute [Authorize(Policy = CapabilityPolicies.Edit)]
 @inject ISupplierService SupplierService
+@inject AuthenticationStateProvider AuthenticationStateProvider
+@inject ICurrentUserAuthorization CurrentUserAuthorization
 @inject ISnackbar Snackbar
 @inject NavigationManager Nav
 
 <PageTitle>Create Supplier</PageTitle>
+
+@if (_message is not null)
+{
+    <MudAlert Severity="Severity.Error" Class="mb-3">@_message</MudAlert>
+}
 
 <MudText Typo="Typo.h4" Color="Color.Primary" Class="mb-3">Create Supplier</MudText>
 <MudDivider Class="mb-4" />
@@ -32,18 +41,35 @@
 
 @code {
     private Supplier _supplier = new();
+    private string? _message;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var principal = (await AuthenticationStateProvider.GetAuthenticationStateAsync()).User;
+        if (!await CurrentUserAuthorization.HasCompanyCapabilityAsync(principal, CompanyCapability.Edit))
+        {
+            _message = "An active Edit grant is required to create shared supplier masters.";
+        }
+    }
 
     private async Task OnValidSubmit()
     {
         try
         {
+            var principal = (await AuthenticationStateProvider.GetAuthenticationStateAsync()).User;
+            if (!await CurrentUserAuthorization.HasCompanyCapabilityAsync(principal, CompanyCapability.Edit))
+            {
+                _message = "Your Edit grant is no longer active.";
+                return;
+            }
+
             await SupplierService.CreateAsync(_supplier);
             Snackbar.Add("Supplier created successfully", Severity.Success);
             Nav.NavigateTo("/Suppliers");
         }
         catch (Exception ex)
         {
-            Snackbar.Add(ex.Message, Severity.Error);
+            _message = ex.Message;
         }
     }
 }

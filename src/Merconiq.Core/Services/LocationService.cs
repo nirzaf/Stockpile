@@ -22,6 +22,18 @@ public class LocationService : ILocationService
     public async Task<IEnumerable<Location>> GetAllAsync() => await _repo.GetAllAsync();
 
     /// <inheritdoc />
+    public async Task<IEnumerable<Location>> GetForCompaniesAsync(IReadOnlyCollection<int> companyIds)
+    {
+        if (companyIds.Count == 0)
+        {
+            return [];
+        }
+
+        return await _repo.FindAsync(location =>
+            location.Branch != null && companyIds.Contains(location.Branch.CompanyId));
+    }
+
+    /// <inheritdoc />
     public async Task<Location?> GetByIdAsync(int id) => await _repo.GetByIdAsync(id);
 
     /// <inheritdoc />

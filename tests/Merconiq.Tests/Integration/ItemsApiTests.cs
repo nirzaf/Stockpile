@@ -4,6 +4,7 @@ using System.Text.Json;
 using FluentAssertions;
 using Merconiq.Core.Entities;
 using Merconiq.Infrastructure.Data;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Merconiq.Tests.Integration;
@@ -28,6 +29,29 @@ public class ItemsApiTests : IClassFixture<CustomWebApplicationFactory>
         db.Items.Add(item);
         await db.SaveChangesAsync();
         return item;
+    }
+
+    private async Task GrantViewerAccessAsync()
+    {
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<InventoryDbContext>();
+        var users = scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
+        var viewer = (await users.FindByNameAsync("viewer@test-tenant.test"))!;
+        var company = new Company
+        {
+            Code = $"VIEW-{Guid.NewGuid():N}"[..12],
+            LegalName = "Viewer company"
+        };
+        db.Companies.Add(company);
+        await db.SaveChangesAsync();
+        db.CompanyMemberships.Add(new CompanyMembership
+        {
+            CompanyId = company.Id,
+            UserId = viewer.Id,
+            Capabilities = CompanyCapability.View,
+            IsActive = true
+        });
+        await db.SaveChangesAsync();
     }
 
     [Fact]
@@ -114,6 +138,7 @@ public class ItemsApiTests : IClassFixture<CustomWebApplicationFactory>
     public async Task ItemReads_Viewer_returns200()
     {
         var client = _factory.CreateAuthenticatedClient("Viewer");
+        await GrantViewerAccessAsync();
         var item = await SeedItemAsync($"VIEWER-{Guid.NewGuid():N}".Substring(0, 20));
 
         var responses = new[]
@@ -130,6 +155,7 @@ public class ItemsApiTests : IClassFixture<CustomWebApplicationFactory>
     public async Task ItemCreate_Viewer_is_forbidden()
     {
         var client = _factory.CreateAuthenticatedClient("Viewer");
+        await GrantViewerAccessAsync();
 
         var response = await client.PostAsJsonAsync("/api/v1/items", new
         {
@@ -145,6 +171,7 @@ public class ItemsApiTests : IClassFixture<CustomWebApplicationFactory>
     public async Task ItemUpdate_Viewer_is_forbidden()
     {
         var client = _factory.CreateAuthenticatedClient("Viewer");
+        await GrantViewerAccessAsync();
 
         var response = await client.PutAsJsonAsync("/api/v1/items/1", new
         {
@@ -161,6 +188,7 @@ public class ItemsApiTests : IClassFixture<CustomWebApplicationFactory>
     public async Task ItemDelete_Viewer_is_forbidden()
     {
         var client = _factory.CreateAuthenticatedClient("Viewer");
+        await GrantViewerAccessAsync();
 
         var response = await client.DeleteAsync("/api/v1/items/1");
 
@@ -216,6 +244,7 @@ public class ItemsApiTests : IClassFixture<CustomWebApplicationFactory>
     public async Task ItemImport_Viewer_is_forbidden()
     {
         var client = _factory.CreateAuthenticatedClient("Viewer");
+        await GrantViewerAccessAsync();
         var request = new
         {
             Csv = "external_id,item_code,description,rate,base_unit_external_id,purchase_unit_external_id,sales_unit_external_id,purchase_to_base_factor,sales_to_base_factor,quantity_precision,whole_unit_only\nitem-1,SKU-1,Widget,12.50,,,,1,1,2,false",

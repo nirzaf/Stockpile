@@ -13,4 +13,5 @@ public sealed class Company : AuditableEntity
     public string? CountryCode { get; set; }
     public bool IsActive { get; set; } = true;
     public ICollection<Branch> Branches { get; set; } = new List<Branch>();
+    public ICollection<CompanyMembership> Memberships { get; set; } = new List<CompanyMembership>();
 }

@@ -10,4 +10,5 @@ public class ApplicationUser : IdentityUser, ITenantScoped
     public string? FirstName { get; set; }
     public string? LastName { get; set; }
     public string? DisplayName => $"{FirstName} {LastName}".Trim();
+    public ICollection<CompanyMembership> CompanyMemberships { get; set; } = new List<CompanyMembership>();
 }

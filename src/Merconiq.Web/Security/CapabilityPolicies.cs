@@ -3,6 +3,7 @@ namespace Merconiq.Web.Security;
 /// <summary>Named authorization capabilities used by server endpoints.</summary>
 public static class CapabilityPolicies
 {
+    public const string TenantAdministrator = "Tenant.Administrator";
     public const string View = "Capability.View";
     public const string Edit = "Capability.Edit";
     public const string Approve = "Capability.Approve";

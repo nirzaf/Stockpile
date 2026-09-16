@@ -49,6 +49,18 @@ public class StockService : IStockService
     public async Task<IEnumerable<StockInHand>> GetAllAsync() => await _stockRepo.GetAllAsync();
 
     /// <inheritdoc />
+    public async Task<IEnumerable<StockInHand>> GetForCompaniesAsync(IReadOnlyCollection<int> companyIds)
+    {
+        if (companyIds.Count == 0)
+        {
+            return [];
+        }
+
+        return await _stockRepo.FindAsync(stock =>
+            stock.Location.Branch != null && companyIds.Contains(stock.Location.Branch.CompanyId));
+    }
+
+    /// <inheritdoc />
     public async Task<StockInHand?> GetByItemAndLocationAsync(
         int itemId,
         int locationId,
@@ -70,6 +82,29 @@ public class StockService : IStockService
         return await _txRepo.FindAsync(t =>
             (!from.HasValue || t.TransactionDate >= from.Value) &&
             (!to.HasValue || t.TransactionDate <= to.Value),
+            orderBy: q => q.OrderByDescending(t => t.TransactionDate));
+    }
+
+    /// <inheritdoc />
+    public async Task<IEnumerable<StockTransaction>> GetTransactionsForCompaniesAsync(
+        DateTime? from,
+        DateTime? to,
+        IReadOnlyCollection<int> companyIds)
+    {
+        if (companyIds.Count == 0)
+        {
+            return [];
+        }
+
+        return await _txRepo.FindAsync(t =>
+                (!from.HasValue || t.TransactionDate >= from.Value) &&
+                (!to.HasValue || t.TransactionDate <= to.Value) &&
+                t.FromLocation.Branch != null &&
+                companyIds.Contains(t.FromLocation.Branch.CompanyId) &&
+                (t.ToLocationId == null ||
+                 (t.ToLocation != null &&
+                  t.ToLocation.Branch != null &&
+                  t.FromLocation.Branch.CompanyId == t.ToLocation.Branch.CompanyId)),
             orderBy: q => q.OrderByDescending(t => t.TransactionDate));
     }
 
@@ -343,10 +378,10 @@ public class StockService : IStockService
         return location;
     }
 
-    private async Task EnsureSameCompanyTransferAsync(Location source, Location destination)
+    private Task EnsureSameCompanyTransferAsync(Location source, Location destination)
     {
         if (source.BranchId is null || destination.BranchId is null)
-            return;
+            throw new InvalidOperationException("Both locations must be assigned to an active company before stock can be transferred.");
 
         var sourceBranch = source.Branch
             ?? throw new InvalidOperationException("Location ownership is not valid for the current tenant.");
@@ -354,6 +389,8 @@ public class StockService : IStockService
             ?? throw new InvalidOperationException("Location ownership is not valid for the current tenant.");
         if (sourceBranch.CompanyId != destinationBranch.CompanyId)
             throw new InvalidOperationException("Cross-company stock transfers are not supported.");
+
+        return Task.CompletedTask;
     }
 
     private async Task<bool> VerifyTransactionCommitAsync(StockTransaction? transaction)

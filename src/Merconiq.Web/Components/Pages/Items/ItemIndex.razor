@@ -1,7 +1,11 @@
 @page "/Items"
 @using Microsoft.AspNetCore.Authorization
-@attribute [Authorize]
+@using Microsoft.AspNetCore.Components.Authorization
+@using Merconiq.Web.Security
+@attribute [Authorize(Policy = CapabilityPolicies.View)]
 @inject IItemService ItemService
+@inject AuthenticationStateProvider AuthenticationStateProvider
+@inject ICurrentUserAuthorization CurrentUserAuthorization
 @inject ISnackbar Snackbar
 @inject IDialogService DialogService
 @inject NavigationManager Nav
@@ -9,12 +13,20 @@
 
 <PageTitle>Items</PageTitle>
 
+@if (_message is not null)
+{
+    <MudAlert Severity="Severity.Warning" Class="mb-3">@_message</MudAlert>
+}
+
 <div class="d-flex justify-space-between align-center mb-4">
     <MudText Typo="Typo.h4" Color="Color.Primary">Items</MudText>
     <div>
         <MudButton Variant="Variant.Filled" Color="Color.Secondary" OnClick="ExportToCsv" Class="mr-2">Export to CSV</MudButton>
         <MudButton Variant="Variant.Filled" Color="Color.Info" OnClick="ExportToExcel" Class="mr-2">Export to Excel</MudButton>
-        <MudButton Variant="Variant.Filled" Color="Color.Primary" Href="/Items/Create">Add New Item</MudButton>
+        @if (_canEdit)
+        {
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" Href="/Items/Create">Add New Item</MudButton>
+        }
     </div>
 </div>
 
@@ -39,8 +51,11 @@
         <MudTd DataLabel="Supplier">@context.Supplier?.Name</MudTd>
         <MudTd DataLabel="Actions" Style="text-align:right">
             <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Info" Href="@($"/Items/Details/{context.Id}")" Class="mr-2">Details</MudButton>
-            <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Warning" Href="@($"/Items/Edit/{context.Id}")" Class="mr-2">Edit</MudButton>
-            <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Error" OnClick="@(() => DeleteItem(context))">Delete</MudButton>
+            @if (_canEdit)
+            {
+                <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Warning" Href="@($"/Items/Edit/{context.Id}")" Class="mr-2">Edit</MudButton>
+                <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Error" OnClick="@(() => DeleteItem(context))">Delete</MudButton>
+            }
         </MudTd>
     </RowTemplate>
     <PagerContent>
@@ -51,14 +66,27 @@
 @code {
     private IEnumerable<Item> _items = new List<Item>();
     private string _searchString = "";
+    private bool _canEdit;
+    private string? _message;
 
     protected override async Task OnInitializedAsync()
     {
+        var principal = (await AuthenticationStateProvider.GetAuthenticationStateAsync()).User;
+        _canEdit = await CurrentUserAuthorization.HasCompanyCapabilityAsync(principal, CompanyCapability.Edit);
         await LoadData();
     }
 
     private async Task LoadData()
     {
+        var principal = (await AuthenticationStateProvider.GetAuthenticationStateAsync()).User;
+        if (!await CurrentUserAuthorization.HasCompanyCapabilityAsync(principal, CompanyCapability.View))
+        {
+            _items = [];
+            _message = "An active company membership is required to view shared item masters.";
+            return;
+        }
+
+        _message = null;
         _items = await ItemService.GetAllAsync();
     }
 
@@ -90,6 +118,13 @@
         {
             try
             {
+                var principal = (await AuthenticationStateProvider.GetAuthenticationStateAsync()).User;
+                if (!await CurrentUserAuthorization.HasCompanyCapabilityAsync(principal, CompanyCapability.Edit))
+                {
+                    Snackbar.Add("An active Edit grant is required to change shared item masters.", Severity.Error);
+                    return;
+                }
+
                 await ItemService.DeleteAsync(item.Id);
                 Snackbar.Add("Item deleted successfully", Severity.Success);
                 await LoadData();
@@ -103,6 +138,7 @@
 
     private async Task ExportToCsv()
     {
+        if (!await CanViewItemsAsync()) return;
         var rows = _items.Select(item => new object?[]
         {
             item.ItemCode, item.Barcode, item.Description, item.Rate, item.ReorderLevel, item.Supplier?.Name
@@ -114,6 +150,7 @@
 
     private async Task ExportToExcel()
     {
+        if (!await CanViewItemsAsync()) return;
         var rows = _items.Select(item => new object?[]
         {
             item.ItemCode, item.Barcode, item.Description, item.Rate, item.ReorderLevel, item.Supplier?.Name
@@ -125,4 +162,16 @@
 
     private static readonly string[] ItemExportHeaders =
         ["Item Code", "Barcode", "Description", "Rate", "Reorder Level", "Supplier"];
+
+    private async Task<bool> CanViewItemsAsync()
+    {
+        var principal = (await AuthenticationStateProvider.GetAuthenticationStateAsync()).User;
+        var allowed = await CurrentUserAuthorization.HasCompanyCapabilityAsync(principal, CompanyCapability.View);
+        if (!allowed)
+        {
+            Snackbar.Add("An active View grant is required to export shared item masters.", Severity.Error);
+        }
+
+        return allowed;
+    }
 }

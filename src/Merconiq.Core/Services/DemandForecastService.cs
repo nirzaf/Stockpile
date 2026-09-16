@@ -47,36 +47,61 @@ public class DemandForecastService : IDemandForecastService
     }
 
     /// <inheritdoc />
-    public async Task<DemandForecastResult> ForecastDemandAsync(int itemId, int horizonDays = 30)
+    public Task<DemandForecastResult> ForecastDemandAsync(int itemId, int horizonDays = 30) =>
+        ForecastDemandForScopeAsync(itemId, horizonDays, null);
+
+    public Task<DemandForecastResult> ForecastDemandForCompaniesAsync(
+        int itemId,
+        int horizonDays,
+        IReadOnlyCollection<int> companyIds) =>
+        ForecastDemandForScopeAsync(itemId, horizonDays, companyIds);
+
+    private async Task<DemandForecastResult> ForecastDemandForScopeAsync(
+        int itemId,
+        int horizonDays,
+        IReadOnlyCollection<int>? companyIds)
     {
-        var cacheKey = TenantCacheKeys.ForecastForItem(_tenantContext.TenantId, itemId, horizonDays);
+        var cacheKey = TenantCacheKeys.ForecastForItem(_tenantContext.TenantId, itemId, horizonDays, companyIds);
         if (_cache.TryGetValue(cacheKey, out DemandForecastResult? cachedResult) && cachedResult != null)
         {
             _logger.LogDebug("Returning cached forecast for item {ItemId}", itemId);
             return cachedResult;
         }
 
-        var result = await GenerateForecastAsync(itemId, horizonDays);
+        var result = await GenerateForecastAsync(itemId, horizonDays, companyIds);
         _cache.Set(cacheKey, result, ForecastCacheDuration);
         return result;
     }
 
     /// <inheritdoc />
-    public async Task<IReadOnlyList<DemandForecastResult>> ForecastAllItemsAsync(int horizonDays = 30)
+    public Task<IReadOnlyList<DemandForecastResult>> ForecastAllItemsAsync(int horizonDays = 30) =>
+        ForecastAllItemsForScopeAsync(horizonDays, null);
+
+    public Task<IReadOnlyList<DemandForecastResult>> ForecastAllItemsForCompaniesAsync(
+        int horizonDays,
+        IReadOnlyCollection<int> companyIds) =>
+        ForecastAllItemsForScopeAsync(horizonDays, companyIds);
+
+    private async Task<IReadOnlyList<DemandForecastResult>> ForecastAllItemsForScopeAsync(
+        int horizonDays,
+        IReadOnlyCollection<int>? companyIds)
     {
-        var cacheKey = TenantCacheKeys.ForecastForAllItems(_tenantContext.TenantId, horizonDays);
+        var cacheKey = TenantCacheKeys.ForecastForAllItems(_tenantContext.TenantId, horizonDays, companyIds);
         if (_cache.TryGetValue(cacheKey, out IReadOnlyList<DemandForecastResult>? cachedResult) && cachedResult != null)
         {
             _logger.LogDebug("Returning cached forecasts for all items");
             return cachedResult;
         }
 
-        var results = await GenerateForecastAllItemsAsync(horizonDays);
+        var results = await GenerateForecastAllItemsAsync(horizonDays, companyIds);
         _cache.Set(cacheKey, results, ForecastCacheDuration);
         return results;
     }
 
-    private async Task<DemandForecastResult> GenerateForecastAsync(int itemId, int horizonDays = 30)
+    private async Task<DemandForecastResult> GenerateForecastAsync(
+        int itemId,
+        int horizonDays,
+        IReadOnlyCollection<int>? companyIds)
     {
         var item = (await _itemRepo.FindAsync(i => i.Id == itemId)).FirstOrDefault();
 
@@ -90,7 +115,9 @@ public class DemandForecastService : IDemandForecastService
 
         var transactions = await _txRepo.FindAsync(t =>
             t.ItemId == itemId &&
-            t.TransactionType == TransactionType.Sell);
+            t.TransactionType == TransactionType.Sell &&
+            (companyIds == null || (t.FromLocation.Branch != null &&
+                companyIds.Contains(t.FromLocation.Branch.CompanyId))));
 
         var dailyDemand = DemandForecastDataPreparation.BuildDailyDemand(transactions);
 
@@ -184,7 +211,9 @@ public class DemandForecastService : IDemandForecastService
         }
     }
 
-    private async Task<IReadOnlyList<DemandForecastResult>> GenerateForecastAllItemsAsync(int horizonDays = 30)
+    private async Task<IReadOnlyList<DemandForecastResult>> GenerateForecastAllItemsAsync(
+        int horizonDays,
+        IReadOnlyCollection<int>? companyIds)
     {
         var items = await _itemRepo.GetAllAsync();
         
@@ -193,7 +222,9 @@ public class DemandForecastService : IDemandForecastService
         {
             try
             {
-                var forecast = await ForecastDemandAsync(item.Id, horizonDays);
+                var forecast = companyIds is null
+                    ? await ForecastDemandAsync(item.Id, horizonDays)
+                    : await ForecastDemandForCompaniesAsync(item.Id, horizonDays, companyIds);
                 if (forecast.ForecastedValues.Count > 0)
                 {
                     results.Add(forecast);

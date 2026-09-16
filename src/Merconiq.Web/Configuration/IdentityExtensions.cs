@@ -1,3 +1,4 @@
+using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text;
 using Merconiq.Core.Entities;
@@ -8,6 +9,7 @@ using Merconiq.Web.Tenancy;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.IdentityModel.Tokens;
+using Microsoft.Extensions.Options;
 
 namespace Merconiq.Web.Configuration;
 
@@ -28,6 +30,12 @@ public static class IdentityExtensions
         services.AddSingleton<HostTenantResolver>();
         services.AddScoped<AdminBootstrapService>();
         services.AddScoped<CurrentUserAuthorization>();
+        services.AddScoped<ICurrentUserAuthorization>(serviceProvider =>
+            serviceProvider.GetRequiredService<CurrentUserAuthorization>());
+        services.AddScoped<Microsoft.AspNetCore.Authorization.IAuthorizationHandler,
+            CompanyCapabilityAuthorizationHandler>();
+        services.AddScoped<Microsoft.AspNetCore.Authorization.IAuthorizationHandler,
+            TenantAdministratorAuthorizationHandler>();
 
         services.AddIdentity<ApplicationUser, IdentityRole>(options =>
         {
@@ -117,7 +125,7 @@ public static class IdentityExtensions
             };
             options.Events = new JwtBearerEvents
             {
-                OnTokenValidated = context =>
+                OnTokenValidated = async context =>
                 {
                     var tenantContext = context.HttpContext.RequestServices.GetRequiredService<ITenantContext>();
                     var tokenTenant = context.Principal?.FindFirst("tenant_id")?.Value;
@@ -125,26 +133,59 @@ public static class IdentityExtensions
                         !string.Equals(tokenTenant, tenantContext.TenantId, StringComparison.Ordinal))
                     {
                         context.Fail("The token tenant does not match the request tenant.");
+                        return;
                     }
 
-                    return Task.CompletedTask;
+                    var identity = context.HttpContext.RequestServices.GetRequiredService<IOptions<IdentityOptions>>().Value;
+                    var userId = context.Principal?.FindFirstValue(ClaimTypes.NameIdentifier);
+                    var tokenSecurityStamp = context.Principal?.FindFirstValue(
+                        identity.ClaimsIdentity.SecurityStampClaimType);
+                    if (string.IsNullOrWhiteSpace(userId) || string.IsNullOrWhiteSpace(tokenSecurityStamp))
+                    {
+                        context.Fail("The token does not contain the required user and security-stamp claims.");
+                        return;
+                    }
+
+                    var userManager = context.HttpContext.RequestServices.GetRequiredService<UserManager<ApplicationUser>>();
+                    var user = await userManager.FindByIdAsync(userId);
+                    if (user is null || !string.Equals(user.TenantId, tenantContext.TenantId, StringComparison.Ordinal) ||
+                        !string.Equals(tokenSecurityStamp,
+                            await userManager.GetSecurityStampAsync(user), StringComparison.Ordinal))
+                    {
+                        context.Fail("The token user, tenant, or security stamp is no longer current.");
+                    }
                 }
             };
         });
 
         services.AddAuthorization(options =>
         {
+            options.AddPolicy(CapabilityPolicies.TenantAdministrator, policy => policy
+                .RequireAuthenticatedUser()
+                .AddRequirements(new TenantAdministratorRequirement()));
             options.AddPolicy("Api", policy =>
             {
                 policy.AddAuthenticationSchemes(JwtBearerDefaults.AuthenticationScheme);
                 policy.RequireAuthenticatedUser();
             });
-            options.AddPolicy(CapabilityPolicies.View, policy => policy.RequireAuthenticatedUser());
-            options.AddPolicy(CapabilityPolicies.Edit, policy => policy.RequireRole("Admin", "Manager"));
-            options.AddPolicy(CapabilityPolicies.Approve, policy => policy.RequireRole("Admin"));
-            options.AddPolicy(CapabilityPolicies.Post, policy => policy.RequireRole("Admin", "Manager", "Staff"));
-            options.AddPolicy(CapabilityPolicies.Reverse, policy => policy.RequireRole("Admin"));
-            options.AddPolicy(CapabilityPolicies.Administer, policy => policy.RequireRole("Admin"));
+            options.AddPolicy(CapabilityPolicies.View, policy => policy
+                .RequireAuthenticatedUser()
+                .AddRequirements(new CompanyCapabilityRequirement(CompanyCapability.View)));
+            options.AddPolicy(CapabilityPolicies.Edit, policy =>
+                policy.RequireRole("Admin", "Manager", "Buyer", "CompanyAdmin")
+                    .AddRequirements(new CompanyCapabilityRequirement(CompanyCapability.Edit)));
+            options.AddPolicy(CapabilityPolicies.Approve, policy =>
+                policy.RequireRole("Admin", "Accountant")
+                    .AddRequirements(new CompanyCapabilityRequirement(CompanyCapability.Approve)));
+            options.AddPolicy(CapabilityPolicies.Post, policy =>
+                policy.RequireRole("Admin", "Manager", "Staff", "Operator", "Accountant", "Cashier")
+                    .AddRequirements(new CompanyCapabilityRequirement(CompanyCapability.Post)));
+            options.AddPolicy(CapabilityPolicies.Reverse, policy =>
+                policy.RequireRole("Admin", "Accountant")
+                    .AddRequirements(new CompanyCapabilityRequirement(CompanyCapability.Reverse)));
+            options.AddPolicy(CapabilityPolicies.Administer, policy =>
+                policy.RequireRole("Admin", "CompanyAdmin")
+                    .AddRequirements(new CompanyCapabilityRequirement(CompanyCapability.Administer)));
         });
 
         return services;

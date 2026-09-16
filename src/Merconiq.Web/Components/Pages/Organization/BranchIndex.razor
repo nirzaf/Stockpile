@@ -1,8 +1,11 @@
 @page "/Organization/Companies/{CompanyId:int}/Branches"
 @using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Components.Authorization
 @using Merconiq.Web.Security
 @attribute [Authorize(Policy = CapabilityPolicies.View)]
 @inject IOrganizationService OrganizationService
+@inject AuthenticationStateProvider AuthenticationStateProvider
+@inject ICurrentUserAuthorization CurrentUserAuthorization
 @inject ILogger<BranchIndex> Logger
 
 <PageTitle>Branches</PageTitle>
@@ -142,6 +145,14 @@ else
         _company = null;
         try
         {
+            var authenticationState = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+            if (!await CurrentUserAuthorization.CanAccessCompanyAsync(
+                    authenticationState.User, companyId, CompanyCapability.View))
+            {
+                _errorMessage = "You do not have view access to this company.";
+                return;
+            }
+
             var company = await OrganizationService.GetCompanyAsync(companyId);
             if (!IsCurrentLoad(version, companyId, _search))
                 return;

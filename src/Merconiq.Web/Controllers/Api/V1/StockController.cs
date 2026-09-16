@@ -21,10 +21,12 @@ namespace Merconiq.Web.Controllers.Api.V1;
 public class StockController : ControllerBase
 {
     private readonly IMediator _mediator;
+    private readonly ICurrentUserAuthorization _authorization;
 
-    public StockController(IMediator mediator)
+    public StockController(IMediator mediator, ICurrentUserAuthorization authorization)
     {
         _mediator = mediator;
+        _authorization = authorization;
     }
 
     /// <summary>Get all stock in hand</summary>
@@ -33,7 +35,10 @@ public class StockController : ControllerBase
     [ProducesResponseType(typeof(IEnumerable<StockInHand>), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetAll()
     {
-        var stock = await _mediator.Send(new GetAllStockQuery());
+        var companyIds = await _authorization.GetAccessibleCompanyIdsAsync(User, CompanyCapability.View);
+        var isTenantAdmin = await _authorization.IsTenantAdministratorAsync(User);
+        var stock = await _mediator.Send(new GetAllStockQuery(
+            isTenantAdmin ? null : companyIds.ToArray()));
         return Ok(ApiResponse<IEnumerable<StockInHand>>.CreateSuccess(stock));
     }
 
@@ -48,6 +53,16 @@ public class StockController : ControllerBase
         [FromQuery] string? batchNumber,
         [FromQuery] DateTime? expiryDate)
     {
+        if (!await _authorization.CanAccessLocationAsync(User, locationId, CompanyCapability.View))
+        {
+            if (await _authorization.IsTenantAdministratorAsync(User))
+            {
+                return NotFound(ApiResponse<object>.CreateFailure("Location not found."));
+            }
+
+            return Forbid();
+        }
+
         var stock = await _mediator.Send(
             new GetStockByItemAndLocationQuery(itemId, locationId, batchNumber, expiryDate));
         return stock is null
@@ -61,7 +76,10 @@ public class StockController : ControllerBase
     [ProducesResponseType(typeof(IEnumerable<StockTransaction>), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetTransactions([FromQuery] DateTime? from, [FromQuery] DateTime? to)
     {
-        var transactions = await _mediator.Send(new GetStockTransactionsQuery(from, to));
+        var companyIds = await _authorization.GetAccessibleCompanyIdsAsync(User, CompanyCapability.View);
+        var isTenantAdmin = await _authorization.IsTenantAdministratorAsync(User);
+        var transactions = await _mediator.Send(new GetStockTransactionsQuery(
+            from, to, isTenantAdmin ? null : companyIds.ToArray()));
         return Ok(ApiResponse<IEnumerable<StockTransaction>>.CreateSuccess(transactions));
     }
 
@@ -72,6 +90,11 @@ public class StockController : ControllerBase
     [Authorize(Policy = CapabilityPolicies.Post)]
     public async Task<IActionResult> Receive([FromBody] ReceiveStockCommand command, [FromServices] IIdempotencyKeyStore idempotencyKeyStore, [FromServices] ITenantContext tenantContext)
     {
+        if (!await _authorization.CanAccessLocationAsync(User, command.LocationId, CompanyCapability.Post))
+        {
+            return Forbid();
+        }
+
         var idempotencyKey = Request.Headers["Idempotency-Key"].ToString();
         if (idempotencyKey.Length > 200)
         {
@@ -104,6 +127,17 @@ public class StockController : ControllerBase
         [FromServices] IIdempotencyKeyStore idempotencyKeyStore,
         [FromServices] ITenantContext tenantContext)
     {
+        if (command.FromLocationId == command.ToLocationId)
+        {
+            return BadRequest(ApiResponse<object>.CreateFailure("Source and destination must be different."));
+        }
+
+        if (!await _authorization.CanAccessTransferAsync(
+                User, command.FromLocationId, command.ToLocationId, CompanyCapability.Post))
+        {
+            return Forbid();
+        }
+
         var idempotencyKey = Request.Headers["Idempotency-Key"].ToString();
         if (idempotencyKey.Length > 200)
         {
@@ -141,6 +175,11 @@ public class StockController : ControllerBase
         [FromServices] IIdempotencyKeyStore idempotencyKeyStore,
         [FromServices] ITenantContext tenantContext)
     {
+        if (!await _authorization.CanAccessLocationAsync(User, command.LocationId, CompanyCapability.Post))
+        {
+            return Forbid();
+        }
+
         var idempotencyKey = Request.Headers["Idempotency-Key"].ToString();
         if (idempotencyKey.Length > 200)
         {
