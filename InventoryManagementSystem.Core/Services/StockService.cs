@@ -90,6 +90,10 @@ public class StockService : IStockService
             {
                 if (!ownsTransaction)
                 {
+                    // A keyed request is already inside IdempotencyKeyStore's
+                    // retryable outer boundary. Restarting here would reuse the
+                    // invalid transaction; the coordinator catches this exception
+                    // and reruns the complete movement and claim together.
                     throw;
                 }
                 await _unitOfWork.RollbackTransactionAsync(CancellationToken.None);

@@ -69,7 +69,7 @@ public sealed class IdempotencyPostgreSqlIntegrationTests
                 new TestTenantContext(tenantId),
                 new UnitOfWork(context));
 
-            await FluentActions.Invoking(() => store.ExecuteAsync(scope, key, hash, () =>
+            await FluentActions.Invoking(() => store.ExecuteAsync(scope, key, hash, async () =>
             {
                 context.Items.Add(new Item
                 {
@@ -77,6 +77,7 @@ public sealed class IdempotencyPostgreSqlIntegrationTests
                     Description = "rolled back with claim",
                     Rate = 1m
                 });
+                await context.SaveChangesAsync();
                 throw new InvalidOperationException("expected operation failure");
             })).Should().ThrowAsync<InvalidOperationException>();
         }
