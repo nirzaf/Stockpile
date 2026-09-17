@@ -261,7 +261,7 @@ public class StockServiceTests
             stock.LocationId == 2 &&
             stock.Quantity == 30 &&
             stock.BatchNumber == "LOT-001" &&
-            stock.ExpiryDate == expiryDate)), Times.Once);
+            stock.ExpiryDate == StockLotExpiryDate.Normalize(expiryDate))), Times.Once);
     }
 
     [Fact]

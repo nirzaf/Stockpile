@@ -77,12 +77,33 @@ public class StockService : IStockService
         string? batchNumber = null,
         DateTime? expiryDate = null)
     {
-        var results = await _stockRepo.FindAsync(s =>
-            s.ItemId == itemId &&
-            s.LocationId == locationId &&
-            s.BatchNumber == batchNumber &&
-            s.ExpiryDate == expiryDate);
-        return results.FirstOrDefault();
+        expiryDate = StockLotExpiryDate.Normalize(expiryDate);
+        IEnumerable<StockInHand> results;
+        if (expiryDate is DateTime expiryDayStart)
+        {
+            var expiryDayEnd = expiryDayStart.AddDays(1);
+            results = await _stockRepo.FindAsync(s =>
+                s.ItemId == itemId &&
+                s.LocationId == locationId &&
+                s.BatchNumber == batchNumber &&
+                s.ExpiryDate >= expiryDayStart &&
+                s.ExpiryDate < expiryDayEnd);
+        }
+        else
+        {
+            results = await _stockRepo.FindAsync(s =>
+                s.ItemId == itemId &&
+                s.LocationId == locationId &&
+                s.BatchNumber == batchNumber &&
+                s.ExpiryDate == null);
+        }
+
+        var matchingRows = results.Take(2).ToArray();
+        if (matchingRows.Length > 1)
+            throw new StockAvailabilityConflictException(
+                "Multiple stock rows match the same lot expiry date; reconcile inventory before changing it.");
+
+        return matchingRows.FirstOrDefault();
     }
 
     /// <inheritdoc />
@@ -195,6 +216,7 @@ public class StockService : IStockService
     {
         if (quantity <= 0) throw new ArgumentException("Quantity must be positive");
         if (unitCost is < 0) throw new ArgumentException("Unit cost must be non-negative");
+        expiryDate = StockLotExpiryDate.Normalize(expiryDate);
         if (unitCost.HasValue && (batchNumber is not null || expiryDate.HasValue))
             throw new InvalidOperationException("Valuation is scoped to unbatched stock.");
 
@@ -252,6 +274,8 @@ public class StockService : IStockService
     {
         if (quantity <= 0) throw new ArgumentException("Quantity must be positive");
         if (fromLocationId == toLocationId) throw new ArgumentException("Source and destination must be different");
+        expiryDate = StockLotExpiryDate.Normalize(expiryDate);
+        EnsureLotNotExpired(expiryDate);
 
         StockTransaction? transaction = null;
         await ExecuteWithRetryAsync(itemId, async () =>
@@ -320,6 +344,8 @@ public class StockService : IStockService
         string? reservationSourceLineReference = null)
     {
         if (quantity <= 0) throw new ArgumentException("Quantity must be positive");
+        expiryDate = StockLotExpiryDate.Normalize(expiryDate);
+        EnsureLotNotExpired(expiryDate);
 
         StockTransaction? transaction = null;
         await ExecuteWithRetryAsync(itemId, async () =>
@@ -400,6 +426,7 @@ public class StockService : IStockService
     public async Task CreateReservationAsync(CreateStockReservationRequest request)
     {
         ArgumentNullException.ThrowIfNull(request);
+        request = request with { ExpiryDate = StockLotExpiryDate.Normalize(request.ExpiryDate) };
         EnsureReservationRequest(request.Quantity, request.SourceLineReference);
         EnsureReservationFields(request.BatchNumber, null);
         EnsureReservationRepository();
@@ -413,12 +440,11 @@ public class StockService : IStockService
         await ExecuteWithRetryAsync(request.ItemId, async () =>
         {
             await EnsureLocationUsableAsync(request.LocationId);
-            await ReleaseExpiredReservationsAsync(request.ItemId, request.LocationId);
-
             var existing = await FindReservationAsync(sourceLineReference);
             if (existing is not null)
             {
                 if (existing.Status == StockReservationStatus.Active &&
+                    existing.ExpiresAt > now &&
                     existing.ItemId == request.ItemId && existing.LocationId == request.LocationId &&
                     existing.Quantity == request.Quantity &&
                     (request.ExpiresAt is null || existing.ExpiresAt == expiresAt) &&
@@ -426,8 +452,21 @@ public class StockService : IStockService
                      existing.BatchNumber == request.BatchNumber && existing.ExpiryDate == request.ExpiryDate))
                     return;
 
+                if (existing.Status == StockReservationStatus.Active && existing.ExpiresAt <= now)
+                    await ReleaseExpiredReservationsAsync(request.ItemId, request.LocationId);
+
                 throw new InvalidOperationException("The source line already has a different or closed reservation.");
             }
+
+            EnsureLotNotExpired(request.ExpiryDate);
+            if (request.BatchNumber is null && !request.ExpiryDate.HasValue)
+            {
+                var selectedLot = await SelectStockForReservationAsync(
+                    request.ItemId, request.LocationId, request.BatchNumber, request.ExpiryDate);
+                if (selectedLot is not null)
+                    EnsureLotNotExpired(selectedLot.ExpiryDate);
+            }
+            await ReleaseExpiredReservationsAsync(request.ItemId, request.LocationId);
 
             var stock = await SelectStockForReservationAsync(request.ItemId, request.LocationId,
                 request.BatchNumber, request.ExpiryDate);
@@ -475,6 +514,7 @@ public class StockService : IStockService
             ?? throw new KeyNotFoundException("Reservation not found.");
         if (reservation.Status != StockReservationStatus.Active)
             throw new StockAvailabilityConflictException("Reservation is not active.");
+        EnsureLotNotExpired(reservation.ExpiryDate);
         if (reservation.ExpiresAt <= DateTimeOffset.UtcNow)
         {
             await ReleaseReservationAsync(sourceLineReference, "Expired");
@@ -523,16 +563,20 @@ public class StockService : IStockService
             (!itemId.HasValue || row.ItemId == itemId.Value) &&
             (!locationId.HasValue || row.LocationId == locationId.Value));
         var reservedByLot = reservations
-            .GroupBy(row => (row.ItemId, row.LocationId, row.BatchNumber, row.ExpiryDate))
+            .GroupBy(row => (row.ItemId, row.LocationId, row.BatchNumber,
+                ExpiryDate: StockLotExpiryDate.Normalize(row.ExpiryDate)))
             .ToDictionary(group => group.Key, group => group.Sum(Remaining));
 
         return stock
-            .Select(row =>
+            .GroupBy(row => (row.ItemId, row.LocationId, row.BatchNumber,
+                ExpiryDate: StockLotExpiryDate.Normalize(row.ExpiryDate)))
+            .Select(group =>
             {
-                var key = (row.ItemId, row.LocationId, row.BatchNumber, row.ExpiryDate);
+                var key = group.Key;
                 var reserved = reservedByLot.GetValueOrDefault(key);
-                return new StockAvailabilityView(row.ItemId, row.LocationId, row.BatchNumber, row.ExpiryDate,
-                    row.Quantity, reserved, Math.Max(0, row.Quantity - reserved));
+                var onHand = group.Sum(row => row.Quantity);
+                return new StockAvailabilityView(key.ItemId, key.LocationId, key.BatchNumber, key.ExpiryDate,
+                    onHand, reserved, Math.Max(0, onHand - reserved));
             })
             .OrderBy(row => row.ItemId)
             .ThenBy(row => row.LocationId)
@@ -740,6 +784,14 @@ public class StockService : IStockService
         if (reserved < 0 || reserved > stock.Quantity || stock.Quantity - reserved < quantity)
             throw new StockAvailabilityConflictException(
                 $"Insufficient available stock for {operation}; reserved stock cannot be used.");
+    }
+
+    private static void EnsureLotNotExpired(DateTime? expiryDate)
+    {
+        if (expiryDate.HasValue &&
+            DateOnly.FromDateTime(expiryDate.Value) < DateOnly.FromDateTime(DateTime.UtcNow))
+            throw new StockAvailabilityConflictException(
+                "The selected stock lot has expired and cannot be reserved, sold, or transferred.");
     }
 
     private void EnsureReservationRepository()
