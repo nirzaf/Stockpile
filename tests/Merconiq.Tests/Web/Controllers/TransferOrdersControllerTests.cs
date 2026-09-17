@@ -65,6 +65,81 @@ public sealed class TransferOrdersControllerTests
     }
 
     [Fact]
+    public async Task Dispatch_checks_post_access_before_rejecting_invalid_quantity()
+    {
+        var order = new TransferOrderView(
+            7, Guid.NewGuid(), "TO-2026-00001", 41, 3, 4, DateTime.UtcNow,
+            TransferOrderStatus.Approved, null, []);
+        var transfers = new Mock<ITransferOrderService>();
+        transfers.Setup(service => service.GetByIdAsync(7, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(order);
+        var authorization = new Mock<ICurrentUserAuthorization>();
+        authorization.Setup(service => service.CanAccessTransferAsync(
+                It.IsAny<ClaimsPrincipal>(), 3, 4, CompanyCapability.Post))
+            .ReturnsAsync(false);
+        var controller = CreateController(
+            transfers.Object, authorization.Object, Mock.Of<IIdempotencyKeyStore>());
+        controller.ControllerContext.HttpContext.User = new ClaimsPrincipal(new ClaimsIdentity(
+            [new Claim(ClaimTypes.NameIdentifier, "warehouse-user")], "test"));
+
+        var result = await controller.Dispatch(7, 12, new DispatchTransferOrderRequest(0), CancellationToken.None);
+
+        result.Should().BeOfType<ForbidResult>();
+        authorization.Verify(service => service.CanAccessTransferAsync(
+            It.IsAny<ClaimsPrincipal>(), 3, 4, CompanyCapability.Post), Times.Once);
+        transfers.Verify(service => service.DispatchAsync(
+            It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string>(),
+            It.IsAny<StockMutationScope>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task Dispatch_returns_bad_request_for_invalid_quantity_after_authorization()
+    {
+        var order = new TransferOrderView(
+            7, Guid.NewGuid(), "TO-2026-00001", 41, 3, 4, DateTime.UtcNow,
+            TransferOrderStatus.Approved, null, []);
+        var transfers = new Mock<ITransferOrderService>();
+        transfers.Setup(service => service.GetByIdAsync(7, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(order);
+        var authorization = new Mock<ICurrentUserAuthorization>();
+        authorization.Setup(service => service.CanAccessTransferAsync(
+                It.IsAny<ClaimsPrincipal>(), 3, 4, CompanyCapability.Post))
+            .ReturnsAsync(true);
+        var idempotency = new Mock<IIdempotencyKeyStore>();
+        var controller = CreateController(transfers.Object, authorization.Object, idempotency.Object);
+        controller.ControllerContext.HttpContext.User = new ClaimsPrincipal(new ClaimsIdentity(
+            [new Claim(ClaimTypes.NameIdentifier, "warehouse-user")], "test"));
+
+        var result = await controller.Dispatch(7, 12, new DispatchTransferOrderRequest(0), CancellationToken.None);
+
+        result.Should().BeOfType<BadRequestObjectResult>();
+        authorization.Verify(service => service.CanAccessTransferAsync(
+            It.IsAny<ClaimsPrincipal>(), 3, 4, CompanyCapability.Post), Times.Once);
+        idempotency.Verify(store => store.ExecuteAsync(
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<Func<Task>>(),
+            It.IsAny<CancellationToken>()), Times.Never);
+        transfers.Verify(service => service.DispatchAsync(
+            It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string>(),
+            It.IsAny<StockMutationScope>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task Dispatch_checks_actor_identity_before_rejecting_invalid_quantity()
+    {
+        var transfers = new Mock<ITransferOrderService>();
+        var authorization = new Mock<ICurrentUserAuthorization>();
+        var controller = CreateController(
+            transfers.Object, authorization.Object, Mock.Of<IIdempotencyKeyStore>());
+
+        var result = await controller.Dispatch(7, 12, new DispatchTransferOrderRequest(0), CancellationToken.None);
+
+        result.Should().BeOfType<UnauthorizedObjectResult>();
+        transfers.Verify(service => service.GetByIdAsync(7, It.IsAny<CancellationToken>()), Times.Never);
+        authorization.Verify(service => service.CanAccessTransferAsync(
+            It.IsAny<ClaimsPrincipal>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<CompanyCapability>()), Times.Never);
+    }
+
+    [Fact]
     public async Task Dispatch_replay_reads_the_persisted_result_when_the_claim_skips_execution()
     {
         var order = new TransferOrderView(

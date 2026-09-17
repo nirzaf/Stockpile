@@ -100,8 +100,11 @@ public sealed class TransferOrdersController(
         [FromBody] DispatchTransferOrderRequest request,
         CancellationToken cancellationToken)
     {
-        if (request is null || request.Quantity <= 0)
-            return BadRequest(ApiResponse<object>.CreateFailure("Dispatch quantity must be positive."));
+        var dispatchedBy = User.FindFirstValue(ClaimTypes.NameIdentifier) ??
+                           User.FindFirstValue("sub") ??
+                           User.Identity?.Name;
+        if (string.IsNullOrWhiteSpace(dispatchedBy))
+            return Unauthorized(ApiResponse<object>.CreateFailure("An authenticated dispatcher identity is required."));
 
         var order = await transferOrders.GetByIdAsync(id, cancellationToken);
         if (order is null)
@@ -109,18 +112,14 @@ public sealed class TransferOrdersController(
         if (!await authorization.CanAccessTransferAsync(
                 User, order.FromLocationId, order.ToLocationId, CompanyCapability.Post))
             return Forbid();
+        if (request is null || request.Quantity <= 0)
+            return BadRequest(ApiResponse<object>.CreateFailure("Dispatch quantity must be positive."));
 
         var idempotencyKey = Request.Headers["Idempotency-Key"].ToString();
         if (string.IsNullOrWhiteSpace(idempotencyKey))
             return BadRequest(ApiResponse<object>.CreateFailure("Idempotency-Key is required for dispatch."));
         if (idempotencyKey.Length > 200)
             return BadRequest(ApiResponse<object>.CreateFailure("Idempotency-Key must be 200 characters or fewer."));
-
-        var dispatchedBy = User.FindFirstValue(ClaimTypes.NameIdentifier) ??
-                           User.FindFirstValue("sub") ??
-                           User.Identity?.Name;
-        if (string.IsNullOrWhiteSpace(dispatchedBy))
-            return Unauthorized(ApiResponse<object>.CreateFailure("An authenticated dispatcher identity is required."));
 
         var scope = CreateMutationScope(
             order.CompanyId, order.FromLocationId, order.ToLocationId, CompanyCapability.Post);
