@@ -12,7 +12,7 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace Merconiq.Infrastructure.Migrations
 {
     [DbContext(typeof(InventoryDbContext))]
-    [Migration("20260917180000_AddCompanyCurrencyScale")]
+    [Migration("20260917190000_AddCompanyCurrencyScale")]
     partial class AddCompanyCurrencyScale
     {
         /// <inheritdoc />

@@ -70,6 +70,16 @@ public class PurchaseOrderService : IPurchaseOrderService
         if (purchaseOrder.CurrencyScale is < 0 or > 4)
             throw new ArgumentOutOfRangeException(nameof(purchaseOrder.CurrencyScale));
 
+        // Line scale is derived from the document currency. Normalize it before
+        // the request hash is checked so retries use the same canonical inputs.
+        foreach (var detail in details)
+            detail.CurrencyScale = purchaseOrder.CurrencyScale;
+
+        var replay = await _documentIdentityService.TryReplayPurchaseOrderAsync(
+            purchaseOrder, details, idempotencyKey, cancellationToken);
+        if (replay is not null)
+            return replay;
+
         var calculationInputs = new List<DocumentLineAmount>(details.Count);
         foreach (var detail in details)
         {

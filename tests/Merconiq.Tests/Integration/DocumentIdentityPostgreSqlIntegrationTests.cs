@@ -259,7 +259,7 @@ public sealed class DocumentIdentityPostgreSqlIntegrationTests(PostgreSqlIntegra
         {
             PONumber = "TAX-SNAPSHOT-001",
             SupplierId = supplier.Id,
-            CurrencyScale = 2
+            CurrencyScale = 3
         };
         var detail = new OrderDetail
         {
@@ -277,6 +277,7 @@ public sealed class DocumentIdentityPostgreSqlIntegrationTests(PostgreSqlIntegra
 
         var storedRule = await context.TaxRules.SingleAsync(value => value.Id == rule.Id);
         storedRule.RatePercent = 20m;
+        storedRule.EffectiveToUtc = DateTime.UtcNow.AddSeconds(-1);
         await context.SaveChangesAsync();
 
         await using (var replayContext = fixture.CreateContext(tenantId))
@@ -298,7 +299,7 @@ public sealed class DocumentIdentityPostgreSqlIntegrationTests(PostgreSqlIntegra
                 {
                     PONumber = "TAX-SNAPSHOT-001",
                     SupplierId = supplier.Id,
-                    CurrencyScale = 2
+                    CurrencyScale = 3
                 },
                 [new OrderDetail { ItemId = item.Id, Quantity = 1, UnitPrice = 100m, TaxRuleId = rule.Id }],
                 requestKey);
@@ -312,7 +313,9 @@ public sealed class DocumentIdentityPostgreSqlIntegrationTests(PostgreSqlIntegra
             .SingleAsync(value => value.Id == created.Id);
         storedOrder.TotalAmount.Should().Be(115m);
         storedOrder.TaxAmount.Should().Be(15m);
+        storedOrder.CurrencyScale.Should().Be(3);
         storedOrder.OrderDetails.Single().TaxRatePercent.Should().Be(15m);
+        storedOrder.OrderDetails.Single().CurrencyScale.Should().Be(3);
         storedOrder.OrderDetails.Single().GrossAmount.Should().Be(115m);
     }
 
@@ -353,7 +356,7 @@ public sealed class DocumentIdentityPostgreSqlIntegrationTests(PostgreSqlIntegra
                 await using (var insertOrder = new NpgsqlCommand(
                     """
                     INSERT INTO "PurchaseOrders" ("PONumber", "OrderDate", "SupplierId", "TotalAmount", "Status", "Notes", "TenantId", "CreatedAt")
-                    VALUES (@number, @date, @supplier, 2.00, 'Pending', NULL, @tenant, now())
+                    VALUES (@number, @date, @supplier, 2.01, 'Pending', NULL, @tenant, now())
                     RETURNING "Id"
                     """,
                     seedConnection))
@@ -368,12 +371,13 @@ public sealed class DocumentIdentityPostgreSqlIntegrationTests(PostgreSqlIntegra
                 await using var insertLine = new NpgsqlCommand(
                     """
                     INSERT INTO "OrderDetails" ("PurchaseOrderId", "ItemId", "Quantity", "UnitPrice", "TenantId", "CreatedAt")
-                    VALUES (@order, @item, 1, 2.00, @tenant, now())
+                    VALUES (@order, @item, 1, 1.005, @tenant, now())
                     """,
                     seedConnection);
                 insertLine.Parameters.AddWithValue("order", purchaseOrderId);
                 insertLine.Parameters.AddWithValue("item", item.Id);
                 insertLine.Parameters.AddWithValue("tenant", tenantId);
+                await insertLine.ExecuteNonQueryAsync();
                 await insertLine.ExecuteNonQueryAsync();
             }
 
@@ -391,19 +395,48 @@ public sealed class DocumentIdentityPostgreSqlIntegrationTests(PostgreSqlIntegra
             mapped.DocumentIdentity.HumanNumber.Should().Be("EXISTING-PO-731");
             mapped.DocumentIdentity.CompanyId.Should().BeNull();
             mapped.DocumentIdentity.Status.Should().Be(DocumentLifecycleStatus.Active);
-            mapped.TotalAmount.Should().Be(2m);
-            mapped.NetAmount.Should().Be(2m);
+            mapped.TotalAmount.Should().Be(2.02m);
+            mapped.NetAmount.Should().Be(2.02m);
             mapped.DiscountAmount.Should().Be(0m);
             mapped.TaxAmount.Should().Be(0m);
             mapped.CurrencyScale.Should().Be(2);
             mapped.CalculationVersion.Should().Be(DocumentAmountCalculator.CalculationVersion);
-            mapped.OrderDetails.Should().ContainSingle();
-            mapped.OrderDetails.Single().DocumentLineId.Value.Should().NotBeEmpty();
-            mapped.OrderDetails.Single().DocumentLineIdentity!.DocumentId.Should().Be(mapped.DocumentId);
-            mapped.OrderDetails.Single().DocumentLineIdentity!.CompanyId.Should().BeNull();
-            mapped.OrderDetails.Single().GrossAmount.Should().Be(2m);
-            mapped.OrderDetails.Single().TaxAmount.Should().Be(0m);
-            mapped.OrderDetails.Single().CalculationVersion.Should().Be(DocumentAmountCalculator.CalculationVersion);
+            mapped.OrderDetails.Should().HaveCount(2);
+            mapped.OrderDetails.Sum(line => line.GrossAmount).Should().Be(mapped.TotalAmount);
+            mapped.OrderDetails.Should().OnlyContain(line => line.DocumentLineId.Value != Guid.Empty);
+            mapped.OrderDetails.Should().OnlyContain(line => line.DocumentLineIdentity!.DocumentId == mapped.DocumentId);
+            mapped.OrderDetails.Should().OnlyContain(line => line.DocumentLineIdentity!.CompanyId == null);
+            mapped.OrderDetails.Should().OnlyContain(line => line.GrossAmount == 1.01m &&
+                line.TaxAmount == 0m &&
+                line.CalculationVersion == DocumentAmountCalculator.CalculationVersion);
+
+            await migrator.MigrateAsync("20260917170000_AddTaxRulesAndAmountSnapshots");
+            context.ChangeTracker.Clear();
+            (await context.PurchaseOrders.AsNoTracking()
+                .Where(order => order.Id == purchaseOrderId)
+                .Select(order => order.TotalAmount)
+                .SingleAsync()).Should().Be(2.01m);
+
+            await migrator.MigrateAsync();
+            context.ChangeTracker.Clear();
+            (await context.PurchaseOrders.AsNoTracking()
+                .Where(order => order.Id == purchaseOrderId)
+                .Select(order => order.TotalAmount)
+                .SingleAsync()).Should().Be(2.02m);
+
+            context.TaxRules.Add(new TaxRule
+            {
+                Code = "ROLLBACK-GUARD",
+                Category = TaxCategory.Standard,
+                RatePercent = 5m,
+                CalculationMode = TaxCalculationMode.Exclusive,
+                EffectiveFromUtc = DateTime.UtcNow,
+                IsActive = true
+            });
+            await context.SaveChangesAsync();
+            await FluentActions.Invoking(() => migrator.MigrateAsync("20260917170000_AddTaxRulesAndAmountSnapshots"))
+                .Should().ThrowAsync<PostgresException>();
+            (await context.TaxRules.CountAsync()).Should().Be(1);
         }
         finally
         {

@@ -19,6 +19,7 @@ public sealed class TaxRulesControllerTests
             .Setup(value => value.FindAsync(It.IsAny<Expression<Func<TaxRule, bool>>>()))
             .ReturnsAsync([]);
         var unitOfWork = new Mock<IUnitOfWork>();
+        SetupTransaction(unitOfWork);
         var controller = new TaxRulesController(repository.Object, unitOfWork.Object);
         var effectiveFrom = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc);
 
@@ -55,6 +56,7 @@ public sealed class TaxRulesControllerTests
                 }
             ]);
         var unitOfWork = new Mock<IUnitOfWork>();
+        SetupTransaction(unitOfWork);
         var controller = new TaxRulesController(repository.Object, unitOfWork.Object);
 
         var result = await controller.Create(new TaxRuleRequest(
@@ -86,5 +88,33 @@ public sealed class TaxRulesControllerTests
             null));
 
         result.Should().BeOfType<Microsoft.AspNetCore.Mvc.BadRequestObjectResult>();
+    }
+
+    [Fact]
+    public void TaxRuleEndpointsRequireTenantAdministratorAuthority()
+    {
+        foreach (var actionName in new[] { nameof(TaxRulesController.GetAll), nameof(TaxRulesController.GetById), nameof(TaxRulesController.Create) })
+        {
+            var authorization = typeof(TaxRulesController).GetMethod(actionName)!
+                .GetCustomAttributes(typeof(Microsoft.AspNetCore.Authorization.AuthorizeAttribute), inherit: true)
+                .Cast<Microsoft.AspNetCore.Authorization.AuthorizeAttribute>()
+                .Single();
+            authorization.Policy.Should().Be(Merconiq.Web.Security.CapabilityPolicies.TenantAdministrator);
+        }
+    }
+
+    private static void SetupTransaction(Mock<IUnitOfWork> unitOfWork)
+    {
+        unitOfWork
+            .Setup(value => value.ExecuteInTransactionAsync(
+                It.IsAny<Func<Task>>(),
+                It.IsAny<CancellationToken>(),
+                It.IsAny<Func<Task<bool>>?>()))
+            .Returns((Func<Task> operation, CancellationToken _, Func<Task<bool>>? _) => operation());
+        unitOfWork
+            .Setup(value => value.AcquireTenantOperationLockAsync(
+                It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        unitOfWork.Setup(value => value.SaveChangesAsync(It.IsAny<CancellationToken>())).ReturnsAsync(1);
     }
 }
