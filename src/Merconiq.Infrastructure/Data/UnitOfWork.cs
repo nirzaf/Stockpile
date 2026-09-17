@@ -1,3 +1,4 @@
+using System.Data;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
@@ -169,6 +170,51 @@ public class UnitOfWork : IUnitOfWork
                 await Task.Delay(100, cancellationToken);
             }
         }
+    }
+
+    public async Task ExecuteInReadSnapshotAsync(
+        Func<Task> operation,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(operation);
+        if (HasActiveTransaction)
+        {
+            throw new InvalidOperationException("A read snapshot must own its repeatable-read transaction.");
+        }
+
+        if (_context.Database.ProviderName == "Microsoft.EntityFrameworkCore.InMemory")
+        {
+            await operation();
+            return;
+        }
+
+        var strategy = _context.Database.CreateExecutionStrategy();
+        await strategy.ExecuteAsync(
+            state: 0,
+            operation: async (_, _, transactionCancellationToken) =>
+            {
+                await using var transaction = await _context.Database.BeginTransactionAsync(
+                    IsolationLevel.RepeatableRead, transactionCancellationToken);
+                _currentTransaction = transaction;
+                try
+                {
+                    await operation();
+                    await transaction.CommitAsync(transactionCancellationToken);
+                }
+                catch
+                {
+                    await transaction.RollbackAsync(CancellationToken.None);
+                    throw;
+                }
+                finally
+                {
+                    _currentTransaction = null;
+                }
+
+                return true;
+            },
+            verifySucceeded: null,
+            cancellationToken: cancellationToken);
     }
 
     public void ClearTracker()

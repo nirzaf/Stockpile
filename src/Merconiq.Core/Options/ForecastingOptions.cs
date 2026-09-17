@@ -33,6 +33,9 @@ public sealed class ForecastingOptions
     public const int AbsoluteMaxHistoricalTransactionsPerForecast = 250_000;
     public const int AbsoluteMaxItemsPerAllItemsForecast = 2_500;
 
+    /// <summary>Whether API and scheduled demand forecasting work is available.</summary>
+    public bool Enabled { get; set; } = true;
+
     /// <summary>
     /// The model used by the application. Production defaults to the managed
     /// implementation so the amd64 and arm64 images have identical behavior.

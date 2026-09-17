@@ -1,3 +1,4 @@
+using System.Linq.Expressions;
 using FluentAssertions;
 using Merconiq.Core.Entities;
 using Merconiq.Core.Interfaces;
@@ -199,6 +200,37 @@ public sealed class StockValuationIntegrationTests
         (await verify.StockInHand.SingleAsync()).Quantity.Should().Be(3);
         (await verify.StockValuationBuckets.CountAsync()).Should().Be(0);
         (await verify.StockValuationEntries.CountAsync()).Should().Be(0);
+    }
+
+    [Fact]
+    public async Task GetValuation_Returns_bucket_and_ordered_immutable_entries()
+    {
+        var tenantId = $"valuation-read-{Guid.NewGuid():N}";
+        var databaseName = Guid.NewGuid().ToString();
+        int itemId;
+        int locationId;
+        await using (var setup = CreateInMemoryContext(databaseName, tenantId))
+        {
+            (itemId, locationId) = await SeedItemAndLocationAsync(setup);
+        }
+
+        await using (var receive = CreateInMemoryContext(databaseName, tenantId))
+        {
+            await CreateService(receive, tenantId).ReceiveStockAsync(itemId, locationId, 10, null, unitCost: 10m);
+        }
+        await using (var sale = CreateInMemoryContext(databaseName, tenantId))
+        {
+            await CreateService(sale, tenantId).SellStockAsync(itemId, locationId, 5, null);
+        }
+
+        await using var context = CreateInMemoryContext(databaseName, tenantId);
+        var result = (await CreateService(context, tenantId).GetValuationAsync(itemId, locationId)).Single();
+
+        result.Quantity.Should().Be(5);
+        result.Value.Should().Be(50m);
+        result.Entries.Select(entry => entry.EntryType)
+            .Should().Equal(StockValuationEntryType.Receipt, StockValuationEntryType.Sale);
+        result.Entries.Select(entry => entry.StockTransactionId).Should().OnlyHaveUniqueItems();
     }
 
     private static InventoryDbContext CreateInMemoryContext(string databaseName, string tenantId)
@@ -426,6 +458,59 @@ public sealed class StockValuationPostgreSqlIntegrationTests
     }
 
     [PostgreSqlFact]
+    public async Task PostgreSQL_valuation_read_keeps_bucket_and_entries_on_one_snapshot_during_a_posting()
+    {
+        _fixture.EnsureEnabled();
+        var tenantId = $"valuation-snapshot-{Guid.NewGuid():N}";
+        var (itemId, locationId) = await SeedItemAndLocationAsync(tenantId);
+        await using (var initial = _fixture.CreateContext(tenantId))
+        {
+            await CreateService(initial, tenantId)
+                .ReceiveStockAsync(itemId, locationId, 10, null, unitCost: 10m);
+        }
+
+        await using var reader = _fixture.CreateContext(tenantId, "valuation-snapshot-reader");
+        await using var writer = _fixture.CreateContext(tenantId, "valuation-snapshot-writer");
+        var bucketRepository = new Mock<IRepository<StockValuationBucket>>();
+        var innerBucketRepository = new Repository<StockValuationBucket>(reader);
+        var postingCompleted = false;
+
+        async Task<IEnumerable<StockValuationBucket>> QueryBucketsAndPostAsync(
+            Expression<Func<StockValuationBucket, bool>> predicate)
+        {
+            var buckets = await innerBucketRepository.FindAsync(predicate);
+            if (!postingCompleted)
+            {
+                postingCompleted = true;
+                await CreateService(writer, tenantId)
+                    .ReceiveStockAsync(itemId, locationId, 10, "concurrent receipt", unitCost: 14m);
+            }
+
+            return buckets;
+        }
+
+        bucketRepository
+            .Setup(repository => repository.FindAsync(
+                It.IsAny<Expression<Func<StockValuationBucket, bool>>>()))
+            .Returns(QueryBucketsAndPostAsync);
+
+        var valuation = (await CreateService(
+            reader, tenantId, valuationBucketRepository: bucketRepository.Object)
+            .GetValuationAsync(itemId, locationId)).Single();
+
+        valuation.Quantity.Should().Be(10);
+        valuation.Value.Should().Be(100m);
+        valuation.Entries.Should().ContainSingle();
+        valuation.Entries[0].TotalValue.Should().Be(100m);
+
+        await using var verify = _fixture.CreateContext(tenantId);
+        var currentBucket = await verify.StockValuationBuckets.SingleAsync();
+        currentBucket.Quantity.Should().Be(20);
+        currentBucket.Value.Should().Be(240m);
+        (await verify.StockValuationEntries.CountAsync()).Should().Be(2);
+    }
+
+    [PostgreSqlFact]
     public async Task PostgreSQL_concurrent_valued_postings_retry_and_preserve_bucket()
     {
         _fixture.EnsureEnabled();
@@ -512,7 +597,8 @@ public sealed class StockValuationPostgreSqlIntegrationTests
     private static StockService CreateService(
         InventoryDbContext context,
         string tenantId,
-        IWebhookDispatcher? webhookDispatcher = null) => new(
+        IWebhookDispatcher? webhookDispatcher = null,
+        IRepository<StockValuationBucket>? valuationBucketRepository = null) => new(
         new Repository<StockInHand>(context),
         new Repository<StockTransaction>(context),
         new Repository<Item>(context),
@@ -522,7 +608,7 @@ public sealed class StockValuationPostgreSqlIntegrationTests
         webhookDispatcher ?? new Mock<IWebhookDispatcher>().Object,
         new TestTenantContext(tenantId),
         NullLogger<StockService>.Instance,
-        new Repository<StockValuationBucket>(context),
+        valuationBucketRepository ?? new Repository<StockValuationBucket>(context),
         new Repository<StockValuationEntry>(context));
 
     private sealed class ThrowingWebhookDispatcher : IWebhookDispatcher

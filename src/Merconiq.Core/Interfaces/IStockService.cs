@@ -102,4 +102,10 @@ public interface IStockService
         int? itemId = null,
         int? locationId = null,
         IReadOnlyCollection<int>? companyIds = null);
+
+    /// <summary>Gets moving-average buckets with immutable valued movement evidence.</summary>
+    Task<IEnumerable<StockValuationView>> GetValuationAsync(
+        int? itemId = null,
+        int? locationId = null,
+        IReadOnlyCollection<int>? companyIds = null);
 }
