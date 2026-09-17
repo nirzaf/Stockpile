@@ -101,6 +101,16 @@ public sealed class CompanyCapabilityPostgreSqlApiTests(PostgreSqlIntegrationFix
         });
         crossCompanyReceive.StatusCode.Should().Be(HttpStatusCode.Forbidden);
 
+        var crossCompanyTransfer = await personas["Operator"].Client.PostAsJsonAsync("/api/v1/stock/transfer", new
+        {
+            ItemId = tenant.ItemId,
+            FromLocationId = tenant.LocationAId,
+            ToLocationId = tenant.LocationBId,
+            Quantity = 2,
+            Notes = "cross-company transfer must be rejected"
+        });
+        crossCompanyTransfer.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+
         var restrictedMutation = await personas["RestrictedAuditor"].Client.PostAsJsonAsync("/api/v1/stock/receive", new
         {
             ItemId = tenant.ItemId,
@@ -144,6 +154,9 @@ public sealed class CompanyCapabilityPostgreSqlApiTests(PostgreSqlIntegrationFix
             (tenant.LocationBId, 20));
         (await verify.TransferOrders.SingleAsync(order => order.Id == transferId)).Status
             .Should().Be(TransferOrderStatus.Approved);
+        (await verify.StockInHand.SingleAsync(stock =>
+                stock.ItemId == tenant.ItemId && stock.LocationId == tenant.LocationAId))
+            .ReservedQuantity.Should().Be(2);
         (await verify.StockTransactions.CountAsync(transaction => transaction.ItemId == tenant.ItemId)).Should().Be(2);
     }
 
