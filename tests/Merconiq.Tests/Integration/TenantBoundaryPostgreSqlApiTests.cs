@@ -104,6 +104,11 @@ public sealed class TenantBoundaryPostgreSqlApiTests(PostgreSqlIntegrationFixtur
             $"/api/v1/organization/companies/{tenantB.CompanyId}", companyUpdateRequest);
         authorizedCompanyUpdate.StatusCode.Should().Be(HttpStatusCode.NoContent,
             "the same valid company-update request succeeds for a tenant B CompanyAdmin");
+        using var restoreTenantBCompany = await tenantBClient.PutAsJsonAsync(
+            $"/api/v1/organization/companies/{tenantB.CompanyId}",
+            companyUpdateRequest with { LegalName = tenantB.LegalName });
+        restoreTenantBCompany.StatusCode.Should().Be(HttpStatusCode.NoContent,
+            "the original value is restored before testing the denied mutation");
 
         using var crossTenantCompanyRead = await tenantAAdminOnTenantBHost.GetAsync(
             $"/api/v1/organization/companies/{tenantB.CompanyId}");
@@ -140,8 +145,8 @@ public sealed class TenantBoundaryPostgreSqlApiTests(PostgreSqlIntegrationFixtur
         await using (var verifyB = fixture.CreateContext(TenantBId))
         {
             (await verifyB.Companies.SingleAsync(company => company.Id == tenantB.CompanyId)).LegalName
-                .Should().Be(companyUpdateRequest.LegalName,
-                    "only the authorized tenant B control update should be persisted");
+                .Should().Be(tenantB.LegalName,
+                    "the denied tenant A request must not change tenant B after its original value is restored");
             (await verifyB.StockInHand.SingleAsync(stock => stock.ItemId == tenantB.ItemId)).Quantity
                 .Should().Be(tenantB.OpeningQuantity);
             (await verifyB.StockTransactions.CountAsync(transaction => transaction.ItemId == tenantB.ItemId))
