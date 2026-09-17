@@ -721,11 +721,13 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
             entity.Property(e => e.EventType).HasMaxLength(100).IsRequired();
             entity.Property(e => e.Payload).IsRequired();
             entity.Property(e => e.Status).HasConversion<string>().HasMaxLength(32).IsRequired();
+            entity.Property(e => e.LeaseToken).IsConcurrencyToken();
             entity.Property(e => e.LastResponse).HasMaxLength(4096);
             entity.Property(e => e.LastError).HasMaxLength(4096);
             entity.HasIndex(e => e.TenantId);
             entity.HasIndex(e => new { e.EventId, e.SubscriptionId }).IsUnique();
             entity.HasIndex(e => new { e.Status, e.NextAttemptAt });
+            entity.HasIndex(e => e.LeaseToken).IsUnique();
         });
 
         modelBuilder.Entity<IdempotencyRecord>(entity =>

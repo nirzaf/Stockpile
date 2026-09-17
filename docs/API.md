@@ -137,6 +137,11 @@ up to five total attempts; permanent client errors are dead-lettered immediately
 Operational response diagnostics are limited to 4 KiB and redact the configured
 secret and full target URL; transport errors are recorded without exception text
 or endpoint details.
+PostgreSQL workers claim due deliveries atomically with `SKIP LOCKED` and a
+two-minute lease. An expired in-progress lease can be reclaimed after a worker
+crash; a per-claim token prevents a superseded worker from persisting a stale
+completion. This protects outbox ownership, but does not make delivery exactly
+once: receivers must still deduplicate repeated HTTP requests by delivery ID.
 No remote endpoint is contacted unless an administrator explicitly configures
 the subscription.
 
