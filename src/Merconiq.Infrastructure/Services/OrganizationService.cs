@@ -200,6 +200,12 @@ public sealed class OrganizationService(
                     transaction.FromLocationId == locationId || transaction.ToLocationId == locationId))
                 throw new InvalidOperationException(
                     "A location's branch ownership cannot change after posted stock activity.");
+            if (location.BranchId.HasValue && location.BranchId != branch.Id &&
+                await context.TransferOrders.AnyAsync(order =>
+                    order.Status != TransferOrderStatus.Cancelled &&
+                    (order.FromLocationId == locationId || order.ToLocationId == locationId)))
+                throw new InvalidOperationException(
+                    "A location's branch ownership cannot change while an active transfer order references it.");
             location.BranchId = branch.Id;
             await locations.UpdateAsync(location);
         });

@@ -40,6 +40,8 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
 
     /// <summary>Tenant-scoped stock reservations.</summary>
     public DbSet<StockReservation> StockReservations { get; set; } = null!;
+    public DbSet<TransferOrder> TransferOrders { get; set; } = null!;
+    public DbSet<TransferOrderLine> TransferOrderLines { get; set; } = null!;
 
     /// <summary>Lot-specific allocations belonging to source-line stock reservations.</summary>
     public DbSet<StockReservationAllocation> StockReservationAllocations { get; set; } = null!;
@@ -553,6 +555,74 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
                 .HasColumnType("xid")
                 .ValueGeneratedOnAddOrUpdate()
                 .IsConcurrencyToken();
+        });
+
+        modelBuilder.Entity<TransferOrder>(entity =>
+        {
+            entity.ToTable("TransferOrders", table => table.HasCheckConstraint(
+                "CK_TransferOrders_DistinctLocations", "\"FromLocationId\" <> \"ToLocationId\""));
+            entity.HasQueryFilter(e => e.TenantId == CurrentTenantId);
+            entity.Property(e => e.TenantId).HasMaxLength(64).IsRequired();
+            entity.Property(e => e.DocumentId)
+                .HasConversion(id => id.Value, value => new DocumentIdentityId(value))
+                .ValueGeneratedNever();
+            entity.Property(e => e.DocumentId).Metadata.SetAfterSaveBehavior(PropertySaveBehavior.Throw);
+            entity.Property(e => e.Status).HasConversion<string>().HasMaxLength(32).IsRequired();
+            entity.Property(e => e.Notes).HasMaxLength(2000);
+            entity.HasIndex(e => new { e.TenantId, e.CompanyId, e.Status });
+            entity.Property(e => e.Version)
+                .HasColumnName("xmin")
+                .HasColumnType("xid")
+                .ValueGeneratedOnAddOrUpdate()
+                .IsConcurrencyToken();
+            entity.HasOne(e => e.DocumentIdentity)
+                .WithOne()
+                .HasForeignKey<TransferOrder>(e => new { e.DocumentId, e.TenantId })
+                .HasPrincipalKey<DocumentIdentity>(e => new { e.Id, e.TenantId })
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(e => e.Company)
+                .WithMany()
+                .HasForeignKey(e => new { e.CompanyId, e.TenantId })
+                .HasPrincipalKey(e => new { e.Id, e.TenantId })
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(e => e.FromLocation)
+                .WithMany()
+                .HasForeignKey(e => new { e.FromLocationId, e.TenantId })
+                .HasPrincipalKey(e => new { e.Id, e.TenantId })
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(e => e.ToLocation)
+                .WithMany()
+                .HasForeignKey(e => new { e.ToLocationId, e.TenantId })
+                .HasPrincipalKey(e => new { e.Id, e.TenantId })
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<TransferOrderLine>(entity =>
+        {
+            entity.ToTable("TransferOrderLines", table => table.HasCheckConstraint(
+                "CK_TransferOrderLines_PositiveQuantity", "\"Quantity\" > 0"));
+            entity.HasQueryFilter(e => e.TenantId == CurrentTenantId);
+            entity.Property(e => e.TenantId).HasMaxLength(64).IsRequired();
+            entity.Property(e => e.DocumentLineId)
+                .HasConversion(id => id.Value, value => new DocumentLineIdentityId(value))
+                .ValueGeneratedNever();
+            entity.Property(e => e.DocumentLineId).Metadata.SetAfterSaveBehavior(PropertySaveBehavior.Throw);
+            entity.Property(e => e.BatchNumber).HasMaxLength(100);
+            entity.HasOne(e => e.TransferOrder)
+                .WithMany(e => e.Lines)
+                .HasForeignKey(e => new { e.TransferOrderId, e.TenantId })
+                .HasPrincipalKey(e => new { e.Id, e.TenantId })
+                .OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(e => e.DocumentLineIdentity)
+                .WithOne()
+                .HasForeignKey<TransferOrderLine>(e => new { e.DocumentLineId, e.TenantId })
+                .HasPrincipalKey<DocumentLineIdentity>(e => new { e.Id, e.TenantId })
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(e => e.Item)
+                .WithMany()
+                .HasForeignKey(e => new { e.ItemId, e.TenantId })
+                .HasPrincipalKey(e => new { e.Id, e.TenantId })
+                .OnDelete(DeleteBehavior.Restrict);
         });
 
         modelBuilder.Entity<StockValuationBucket>(entity =>

@@ -8,7 +8,8 @@ namespace Merconiq.Infrastructure.Repositories;
 /// <summary>
 /// Generic Entity Framework Core repository. Read operations use <c>AsNoTracking</c> for
 /// performance since most reads do not need change tracking; write operations (add / update /
-/// delete) attach the entity so it participates in the change tracker.
+/// delete) attach the entity so it participates in the change tracker. Updates merge into an
+/// already tracked instance with the same key so repeated writes in one transaction remain safe.
 /// </summary>
 /// <typeparam name="T">The entity type managed by this repository.</typeparam>
 public class Repository<T> : IRepository<T> where T : class
@@ -117,7 +118,20 @@ public class Repository<T> : IRepository<T> where T : class
     /// <inheritdoc />
     public virtual Task UpdateAsync(T entity)
     {
-        _dbSet.Update(entity);
+        var entityType = _context.Model.FindEntityType(typeof(T));
+        var key = entityType?.FindPrimaryKey();
+        var incoming = _context.Entry(entity);
+        var tracked = key is null
+            ? null
+            : _context.ChangeTracker.Entries<T>().FirstOrDefault(entry =>
+                !ReferenceEquals(entry.Entity, entity) &&
+                key.Properties.All(property =>
+                    Equals(entry.Property(property.Name).CurrentValue,
+                        incoming.Property(property.Name).CurrentValue)));
+        if (tracked is null)
+            _dbSet.Update(entity);
+        else
+            tracked.CurrentValues.SetValues(entity);
         return Task.CompletedTask;
     }
 

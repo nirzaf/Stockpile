@@ -54,7 +54,6 @@ public sealed class DocumentIdentityService(
         {
             throw new ArgumentOutOfRangeException(nameof(requestScope), "A request scope cannot exceed 256 characters.");
         }
-        var effectiveRequestHash = HashNumberedRequest(companyId, effectiveDocumentType, period, effectivePrefix, requestHash);
         await unitOfWork.ExecuteInTransactionAsync(async () =>
         {
             result = null;
@@ -63,7 +62,8 @@ public sealed class DocumentIdentityService(
             var existing = await FindRequestAsync(effectiveScope, requestKey, cancellationToken);
             if (existing is not null)
             {
-                EnsureSameRequest(existing, effectiveRequestHash);
+                EnsureSameRequest(existing, HashNumberedRequest(
+                    companyId, effectiveDocumentType, existing.Period, effectivePrefix, requestHash));
                 result = existing;
                 return;
             }
@@ -81,6 +81,8 @@ public sealed class DocumentIdentityService(
                 period,
                 effectivePrefix,
                 cancellationToken);
+            var effectiveRequestHash = HashNumberedRequest(
+                companyId, effectiveDocumentType, period, effectivePrefix, requestHash);
             result = DocumentIdentity.Create(
                 DocumentIdentityId.New(),
                 context.CurrentTenantId,
