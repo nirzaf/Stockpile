@@ -146,6 +146,15 @@ public interface IStockService
     /// <summary>Consumes reserved quantity through the normal atomic sale posting.</summary>
     Task ConsumeReservationAsync(ConsumeStockReservationRequest request, StockMutationScope? mutationScope = null);
 
+    /// <summary>Consumes an approved transfer reservation and captures its valued source movement.</summary>
+    Task<TransferStockDispatchMovement> DispatchReservationAsync(
+        string sourceLineReference,
+        int quantity,
+        int destinationLocationId,
+        string notes,
+        StockMutationScope mutationScope,
+        CancellationToken cancellationToken = default);
+
     /// <summary>Gets one reservation by its stable source-line reference.</summary>
     Task<StockReservationView?> GetReservationAsync(string sourceLineReference);
 

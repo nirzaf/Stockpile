@@ -43,6 +43,7 @@ public sealed class TransferOrderServiceTests
         var service = new TransferOrderService(
             new Repository<TransferOrder>(context),
             new Repository<TransferOrderLine>(context),
+            new Repository<TransferTransitEntry>(context),
             new Repository<DocumentIdentity>(context),
             new Repository<DocumentLineIdentity>(context),
             new Repository<Company>(context),
@@ -113,6 +114,7 @@ public sealed class TransferOrderServiceTests
         var service = new TransferOrderService(
             new Mock<IRepository<TransferOrder>>().Object,
             new Mock<IRepository<TransferOrderLine>>().Object,
+            new Mock<IRepository<TransferTransitEntry>>().Object,
             new Mock<IRepository<DocumentIdentity>>().Object,
             new Mock<IRepository<DocumentLineIdentity>>().Object,
             new Mock<IRepository<Company>>().Object,
@@ -156,6 +158,7 @@ public sealed class TransferOrderServiceTests
         var service = new TransferOrderService(
             new Mock<IRepository<TransferOrder>>().Object,
             new Mock<IRepository<TransferOrderLine>>().Object,
+            new Mock<IRepository<TransferTransitEntry>>().Object,
             new Mock<IRepository<DocumentIdentity>>().Object,
             new Mock<IRepository<DocumentLineIdentity>>().Object,
             companyRepository.Object,
@@ -213,6 +216,7 @@ public sealed class TransferOrderServiceTests
         var service = new TransferOrderService(
             orderRepository.Object,
             lineRepository.Object,
+            new Mock<IRepository<TransferTransitEntry>>().Object,
             new Mock<IRepository<DocumentIdentity>>().Object,
             new Mock<IRepository<DocumentLineIdentity>>().Object,
             companyRepository.Object,
