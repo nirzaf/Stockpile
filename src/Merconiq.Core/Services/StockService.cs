@@ -535,13 +535,11 @@ public class StockService : IStockService
                 trackedReservation.Status = reservation.Status;
                 trackedReservation.ClosedAt = reservation.ClosedAt;
                 trackedReservation.ResolutionReason = reservation.ResolutionReason;
-                await _reservationRepo.UpdateAsync(trackedReservation);
                 if (loadedAllocations.Persisted)
                 {
                     var trackedAllocation = await _reservationAllocationRepo!.GetByIdAsync(allocation.Id)
                         ?? throw new StockAvailabilityConflictException("Reservation allocation no longer exists.");
                     trackedAllocation.ConsumedQuantity = allocation.ConsumedQuantity;
-                    await _reservationAllocationRepo.UpdateAsync(trackedAllocation);
                 }
             }
             else
@@ -1004,6 +1002,9 @@ public class StockService : IStockService
                     reservation.LocationId,
                     reservation.SourceLineReference,
                     reservation.Quantity,
+                    reservation.BatchNumber,
+                    reservation.ExpiryDate,
+                    reservation.ExpiryExceptionReason,
                     reservation.ExpiresAt,
                     Allocations = allocations.Select(allocation => new
                     {

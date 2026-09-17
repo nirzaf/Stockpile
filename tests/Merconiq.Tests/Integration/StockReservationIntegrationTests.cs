@@ -112,9 +112,10 @@ public sealed class StockReservationIntegrationTests
             await context.SaveChangesAsync();
         }
 
+        var webhookDispatcher = new RecordingWebhookDispatcher();
         await using (var context = CreateContext(database, tenant))
         {
-            await CreateService(context, tenant).CreateReservationAsync(
+            await CreateService(context, tenant, webhookDispatcher).CreateReservationAsync(
                 new CreateStockReservationRequest(itemId, locationId, 1, "line-fefo"));
         }
 
@@ -122,6 +123,12 @@ public sealed class StockReservationIntegrationTests
         var reservation = await verify.StockReservations.SingleAsync();
         reservation.BatchNumber.Should().Be("EARLY");
         reservation.ExpiryDate.Should().Be(new DateTime(2027, 1, 1));
+        var payload = JsonSerializer.SerializeToElement(
+            webhookDispatcher.Events.Single(item => item.EventType == "Stock.Reserved").Payload);
+        payload.GetProperty("BatchNumber").GetString().Should().Be("EARLY");
+        DateOnly.FromDateTime(payload.GetProperty("ExpiryDate").GetDateTime())
+            .Should().Be(new DateOnly(2027, 1, 1));
+        payload.GetProperty("ExpiryExceptionReason").ValueKind.Should().Be(JsonValueKind.Null);
     }
 
     [Fact]
@@ -467,6 +474,19 @@ public sealed class StockReservationIntegrationTests
         DateTime ExpiryDate,
         string ReservationReference);
 
+    private sealed class RecordingWebhookDispatcher : IWebhookDispatcher
+    {
+        public List<(string EventType, object Payload)> Events { get; } = [];
+
+        public Task EnqueueAsync<T>(WebhookEvent<T> webhookEvent)
+        {
+            Events.Add((webhookEvent.EventType, webhookEvent.Payload!));
+            return Task.CompletedTask;
+        }
+
+        public Task DispatchAsync<T>(WebhookEvent<T> webhookEvent) => Task.CompletedTask;
+    }
+
     private static async Task<(int ItemId, int LocationId)> SeedAsync(string database, string tenant, int quantity)
     {
         await using var context = CreateContext(database, tenant);
@@ -485,14 +505,17 @@ public sealed class StockReservationIntegrationTests
             .UseInMemoryDatabase(database)
             .Options, new TestTenantContext(tenant));
 
-    private static StockService CreateService(InventoryDbContext context, string tenant) => new(
+    private static StockService CreateService(
+        InventoryDbContext context,
+        string tenant,
+        IWebhookDispatcher? webhookDispatcher = null) => new(
         new Repository<StockInHand>(context),
         new Repository<StockTransaction>(context),
         new Repository<Item>(context),
         new Repository<Location>(context),
         new Repository<Branch>(context),
         new UnitOfWork(context),
-        new Mock<IWebhookDispatcher>().Object,
+        webhookDispatcher ?? new Mock<IWebhookDispatcher>().Object,
         new TestTenantContext(tenant),
         NullLogger<StockService>.Instance,
         new Repository<StockValuationBucket>(context),
