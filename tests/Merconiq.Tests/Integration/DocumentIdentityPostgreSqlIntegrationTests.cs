@@ -225,7 +225,33 @@ public sealed class DocumentIdentityPostgreSqlIntegrationTests(PostgreSqlIntegra
         await using var context = fixture.CreateContext(tenantId);
         var unitOfWork = new UnitOfWork(context);
         var service = new DocumentIdentityService(context, unitOfWork, new DocumentNumberService(context, unitOfWork));
+        await Task.WhenAll(Enumerable.Range(0, 12).Select(async _ =>
+        {
+            await using var concurrentContext = fixture.CreateContext(tenantId);
+            var concurrentUnitOfWork = new UnitOfWork(concurrentContext);
+            var concurrentService = new DocumentIdentityService(
+                concurrentContext,
+                concurrentUnitOfWork,
+                new DocumentNumberService(concurrentContext, concurrentUnitOfWork));
+            await concurrentService.LinkLinesAsync(
+                companyOneLineA,
+                companyOneLineB,
+                DocumentLineRelationshipType.Successor);
+        }));
+
         await service.LinkLinesAsync(companyOneLineA, companyOneLineB, DocumentLineRelationshipType.Successor);
+        await service.LinkLinesAsync(companyOneLineA, companyOneLineB, DocumentLineRelationshipType.Successor);
+
+        var rollback = () => unitOfWork.ExecuteInTransactionAsync(async () =>
+        {
+            await service.LinkLinesAsync(
+                companyOneLineA,
+                companyOneLineB,
+                DocumentLineRelationshipType.Source);
+            throw new InvalidOperationException("Injected failure after adding document-line lineage.");
+        });
+        await rollback.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("Injected failure after adding document-line lineage.");
 
         context.ChangeTracker.Clear();
         var persistedLink = await context.DocumentLineLinks.SingleAsync();
