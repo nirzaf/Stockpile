@@ -21,6 +21,12 @@ public interface IRepository<T> where T : class
     /// <returns>The entity, or <see langword="null"/> if not found.</returns>
     Task<T?> GetByIdAsync(int id);
 
+    /// <summary>Gets an entity by primary key while observing request cancellation.</summary>
+    /// <param name="id">The entity identifier.</param>
+    /// <param name="cancellationToken">A token that can cancel the query.</param>
+    /// <returns>The entity, or <see langword="null"/> if not found.</returns>
+    Task<T?> GetByIdAsync(int id, CancellationToken cancellationToken);
+
     /// <summary>Retrieves all entities.</summary>
     /// <returns>A collection of entities.</returns>
     Task<IEnumerable<T>> GetAllAsync();
@@ -29,6 +35,14 @@ public interface IRepository<T> where T : class
     /// <param name="predicate">A LINQ predicate expression.</param>
     /// <returns>Matching entities.</returns>
     Task<IEnumerable<T>> FindAsync(Expression<Func<T, bool>> predicate);
+
+    /// <summary>Finds entities matching a predicate and observes request cancellation.</summary>
+    /// <param name="predicate">A LINQ predicate expression.</param>
+    /// <param name="cancellationToken">A token that can cancel the query.</param>
+    /// <returns>Matching entities.</returns>
+    Task<IEnumerable<T>> FindAsync(
+        Expression<Func<T, bool>> predicate,
+        CancellationToken cancellationToken);
 
     /// <summary>Find entities with a predicate and optional ordering (executed on the database).</summary>
     /// <param name="predicate">A LINQ predicate expression.</param>

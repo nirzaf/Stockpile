@@ -855,6 +855,7 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
             entity.Property(e => e.TransactionType).HasConversion<string>().HasMaxLength(50).IsRequired();
             entity.Property(e => e.Notes).HasMaxLength(500);
             entity.Property(e => e.ExpiryExceptionReason).HasMaxLength(500);
+            entity.Property(e => e.QuarantineReason).HasMaxLength(500);
             entity.Property(e => e.BatchNumber).HasMaxLength(100);
             entity.Property(e => e.SourceLineReference).HasMaxLength(128);
             entity.Property(e => e.ReturnDisposition).HasConversion<string>().HasMaxLength(32);

@@ -3,6 +3,7 @@ using System;
 using Merconiq.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace Merconiq.Infrastructure.Migrations
 {
     [DbContext(typeof(InventoryDbContext))]
-    partial class InventoryDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260918040000_AddStockQuarantineReason")]
+    partial class AddStockQuarantineReason
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -1753,142 +1756,6 @@ namespace Merconiq.Infrastructure.Migrations
                     b.ToTable("TaxRules");
                 });
 
-            modelBuilder.Entity("Merconiq.Core.Entities.TransferOrder", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer");
-
-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
-
-                    b.Property<int>("CompanyId")
-                        .HasColumnType("integer");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("CreatedBy")
-                        .HasColumnType("text");
-
-                    b.Property<Guid>("DocumentId")
-                        .HasColumnType("uuid");
-
-                    b.Property<int>("FromLocationId")
-                        .HasColumnType("integer");
-
-                    b.Property<string>("Notes")
-                        .HasMaxLength(2000)
-                        .HasColumnType("character varying(2000)");
-
-                    b.Property<DateTime>("OrderDate")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("Status")
-                        .IsRequired()
-                        .HasMaxLength(32)
-                        .HasColumnType("character varying(32)");
-
-                    b.Property<string>("TenantId")
-                        .IsRequired()
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)");
-
-                    b.Property<int>("ToLocationId")
-                        .HasColumnType("integer");
-
-                    b.Property<DateTime?>("UpdatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("UpdatedBy")
-                        .HasColumnType("text");
-
-                    b.Property<uint>("Version")
-                        .IsConcurrencyToken()
-                        .ValueGeneratedOnAddOrUpdate()
-                        .HasColumnType("xid")
-                        .HasColumnName("xmin");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("CompanyId", "TenantId");
-
-                    b.HasIndex("DocumentId", "TenantId")
-                        .IsUnique();
-
-                    b.HasIndex("FromLocationId", "TenantId");
-
-                    b.HasIndex("ToLocationId", "TenantId");
-
-                    b.HasIndex("TenantId", "CompanyId", "Status");
-
-                    b.ToTable("TransferOrders", null, t =>
-                        {
-                            t.HasCheckConstraint("CK_TransferOrders_DistinctLocations", "\"FromLocationId\" <> \"ToLocationId\"");
-                        });
-                });
-
-            modelBuilder.Entity("Merconiq.Core.Entities.TransferOrderLine", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer");
-
-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
-
-                    b.Property<string>("BatchNumber")
-                        .HasMaxLength(100)
-                        .HasColumnType("character varying(100)");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("CreatedBy")
-                        .HasColumnType("text");
-
-                    b.Property<Guid>("DocumentLineId")
-                        .HasColumnType("uuid");
-
-                    b.Property<DateTime?>("ExpiryDate")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<int>("ItemId")
-                        .HasColumnType("integer");
-
-                    b.Property<int>("Quantity")
-                        .HasColumnType("integer");
-
-                    b.Property<int>("ReservationVersion")
-                        .HasColumnType("integer");
-
-                    b.Property<string>("TenantId")
-                        .IsRequired()
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)");
-
-                    b.Property<int>("TransferOrderId")
-                        .HasColumnType("integer");
-
-                    b.Property<DateTime?>("UpdatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("UpdatedBy")
-                        .HasColumnType("text");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("DocumentLineId", "TenantId")
-                        .IsUnique();
-
-                    b.HasIndex("ItemId", "TenantId");
-
-                    b.HasIndex("TransferOrderId", "TenantId");
-
-                    b.ToTable("TransferOrderLines", null, t =>
-                        {
-                            t.HasCheckConstraint("CK_TransferOrderLines_PositiveQuantity", "\"Quantity\" > 0");
-                        });
-                });
-
             modelBuilder.Entity("Merconiq.Core.Entities.UnitOfMeasure", b =>
                 {
                     b.Property<int>("Id")
@@ -2561,75 +2428,6 @@ namespace Merconiq.Infrastructure.Migrations
                     b.Navigation("StockTransaction");
                 });
 
-            modelBuilder.Entity("Merconiq.Core.Entities.TransferOrder", b =>
-                {
-                    b.HasOne("Merconiq.Core.Entities.Company", "Company")
-                        .WithMany()
-                        .HasForeignKey("CompanyId", "TenantId")
-                        .HasPrincipalKey("Id", "TenantId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-
-                    b.HasOne("Merconiq.Core.Entities.DocumentIdentity", "DocumentIdentity")
-                        .WithOne()
-                        .HasForeignKey("Merconiq.Core.Entities.TransferOrder", "DocumentId", "TenantId")
-                        .HasPrincipalKey("Merconiq.Core.Entities.DocumentIdentity", "Id", "TenantId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-
-                    b.HasOne("Merconiq.Core.Entities.Location", "FromLocation")
-                        .WithMany()
-                        .HasForeignKey("FromLocationId", "TenantId")
-                        .HasPrincipalKey("Id", "TenantId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-
-                    b.HasOne("Merconiq.Core.Entities.Location", "ToLocation")
-                        .WithMany()
-                        .HasForeignKey("ToLocationId", "TenantId")
-                        .HasPrincipalKey("Id", "TenantId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-
-                    b.Navigation("Company");
-
-                    b.Navigation("DocumentIdentity");
-
-                    b.Navigation("FromLocation");
-
-                    b.Navigation("ToLocation");
-                });
-
-            modelBuilder.Entity("Merconiq.Core.Entities.TransferOrderLine", b =>
-                {
-                    b.HasOne("Merconiq.Core.Entities.DocumentLineIdentity", "DocumentLineIdentity")
-                        .WithOne()
-                        .HasForeignKey("Merconiq.Core.Entities.TransferOrderLine", "DocumentLineId", "TenantId")
-                        .HasPrincipalKey("Merconiq.Core.Entities.DocumentLineIdentity", "Id", "TenantId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-
-                    b.HasOne("Merconiq.Core.Entities.Item", "Item")
-                        .WithMany()
-                        .HasForeignKey("ItemId", "TenantId")
-                        .HasPrincipalKey("Id", "TenantId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-
-                    b.HasOne("Merconiq.Core.Entities.TransferOrder", "TransferOrder")
-                        .WithMany("Lines")
-                        .HasForeignKey("TransferOrderId", "TenantId")
-                        .HasPrincipalKey("Id", "TenantId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("DocumentLineIdentity");
-
-                    b.Navigation("Item");
-
-                    b.Navigation("TransferOrder");
-                });
-
             modelBuilder.Entity("Microsoft.AspNetCore.Identity.IdentityRoleClaim<string>", b =>
                 {
                     b.HasOne("Microsoft.AspNetCore.Identity.IdentityRole", null)
@@ -2739,11 +2537,6 @@ namespace Merconiq.Infrastructure.Migrations
                     b.Navigation("Items");
 
                     b.Navigation("PurchaseOrders");
-                });
-
-            modelBuilder.Entity("Merconiq.Core.Entities.TransferOrder", b =>
-                {
-                    b.Navigation("Lines");
                 });
 #pragma warning restore 612, 618
         }

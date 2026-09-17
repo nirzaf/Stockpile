@@ -270,4 +270,110 @@ public class StockController : ControllerBase
         }
         return NoContent();
     }
+
+    /// <summary>Moves available stock into quarantine without changing on-hand quantity.</summary>
+    [HttpPost("quarantine")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [Authorize(Policy = CapabilityPolicies.Post)]
+    [ValidateAntiForgeryToken]
+    [IgnoreAntiforgeryToken]
+    public async Task<IActionResult> Quarantine(
+        [FromBody] ChangeStockQuarantineRequest request,
+        [FromServices] IIdempotencyKeyStore idempotencyKeyStore,
+        [FromServices] ITenantContext tenantContext)
+    {
+        var companyId = await _authorization.GetLocationCompanyIdAsync(User, request.LocationId);
+        if (!companyId.HasValue || !await _authorization.CanAccessLocationAsync(
+                User, request.LocationId, CompanyCapability.Post))
+        {
+            return Forbid();
+        }
+
+        var mutationScope = new StockMutationScope(
+            companyId,
+            () => _authorization.CanAccessLocationAsync(
+                User, request.LocationId, CompanyCapability.Post));
+        var command = new QuarantineStockCommand(
+            request.ItemId,
+            request.LocationId,
+            request.Quantity,
+            request.SourceLineReference,
+            request.BatchNumber,
+            request.ExpiryDate,
+            request.Reason,
+            mutationScope);
+        return await ExecuteQuarantineCommandAsync(command, request, idempotencyKeyStore, tenantContext);
+    }
+
+    /// <summary>Releases quarantined stock after a separately granted company override.</summary>
+    [HttpPost("quarantine/release")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [Authorize(Policy = CapabilityPolicies.Post)]
+    [Authorize(Policy = CapabilityPolicies.OverrideQuarantinedStock)]
+    [ValidateAntiForgeryToken]
+    [IgnoreAntiforgeryToken]
+    public async Task<IActionResult> ReleaseQuarantine(
+        [FromBody] ChangeStockQuarantineRequest request,
+        [FromServices] IIdempotencyKeyStore idempotencyKeyStore,
+        [FromServices] ITenantContext tenantContext)
+    {
+        var companyId = await _authorization.GetLocationCompanyIdAsync(User, request.LocationId);
+        if (!companyId.HasValue || !await _authorization.CanAccessLocationAsync(
+                User, request.LocationId, CompanyCapability.Post) ||
+            !await _authorization.CanOverrideQuarantinedStockAtLocationAsync(User, request.LocationId))
+        {
+            return Forbid();
+        }
+
+        var mutationScope = new StockMutationScope(
+            companyId,
+            () => _authorization.CanAccessLocationAsync(
+                User, request.LocationId, CompanyCapability.Post),
+            ReauthorizeQuarantinedStockOverride: () => _authorization.CanOverrideQuarantinedStockAtLocationAsync(
+                User, request.LocationId));
+        var command = new ReleaseQuarantinedStockCommand(
+            request.ItemId,
+            request.LocationId,
+            request.Quantity,
+            request.SourceLineReference,
+            request.BatchNumber,
+            request.ExpiryDate,
+            request.Reason,
+            mutationScope);
+        return await ExecuteQuarantineCommandAsync(command, request, idempotencyKeyStore, tenantContext);
+    }
+
+    private async Task<IActionResult> ExecuteQuarantineCommandAsync<TCommand>(
+        TCommand command,
+        ChangeStockQuarantineRequest request,
+        IIdempotencyKeyStore idempotencyKeyStore,
+        ITenantContext tenantContext)
+        where TCommand : IRequest
+    {
+        var idempotencyKey = Request.Headers["Idempotency-Key"].ToString();
+        if (idempotencyKey.Length > 200)
+        {
+            return BadRequest(ApiResponse<object>.CreateFailure(
+                "Idempotency-Key must be 200 characters or fewer."));
+        }
+
+        if (string.IsNullOrWhiteSpace(idempotencyKey))
+        {
+            await _mediator.Send(command, HttpContext.RequestAborted);
+        }
+        else
+        {
+            var scope = $"{tenantContext.TenantId}:{Request.Method}:{Request.Path}";
+            await idempotencyKeyStore.ExecuteAsync(
+                scope,
+                idempotencyKey,
+                IdempotencyRequestHasher.Compute(request),
+                () => _mediator.Send(command, HttpContext.RequestAborted),
+                HttpContext.RequestAborted);
+        }
+
+        return NoContent();
+    }
 }
