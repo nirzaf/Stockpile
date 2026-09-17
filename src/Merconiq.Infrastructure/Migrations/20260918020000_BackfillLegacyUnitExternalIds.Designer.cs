@@ -1279,6 +1279,11 @@ namespace Merconiq.Infrastructure.Migrations
                     b.Property<int>("Quantity")
                         .HasColumnType("integer");
 
+                    b.Property<int>("QuarantinedQuantity")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(0);
+
                     b.Property<int>("ReservedQuantity")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("integer")
@@ -1312,7 +1317,10 @@ namespace Merconiq.Infrastructure.Migrations
                     b.HasIndex("TenantId", "ItemId", "LocationId", "BatchNumber", "ExpiryDate")
                         .IsUnique();
 
-                    b.ToTable("StockInHand");
+                    b.ToTable("StockInHand", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_StockInHand_AvailableQuantity", "\"Quantity\" >= 0 AND \"ReservedQuantity\" >= 0 AND \"QuarantinedQuantity\" >= 0 AND \"ReservedQuantity\" + \"QuarantinedQuantity\" <= \"Quantity\"");
+                        });
                 });
 
             modelBuilder.Entity("Merconiq.Core.Entities.StockReservation", b =>
