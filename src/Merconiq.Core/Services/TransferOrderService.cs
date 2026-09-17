@@ -2,16 +2,18 @@ using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using Merconiq.Core.Entities;
+using Merconiq.Core.Exceptions;
 using Merconiq.Core.Interfaces;
 using Merconiq.Core.Models;
 using Microsoft.Extensions.Logging;
 
 namespace Merconiq.Core.Services;
 
-/// <summary>Atomic transfer-order creation, approval, amendment and cancellation.</summary>
+/// <summary>Atomic transfer-order lifecycle, reservation, and dispatch operations.</summary>
 public sealed class TransferOrderService(
     IRepository<TransferOrder> orderRepository,
     IRepository<TransferOrderLine> lineRepository,
+    IRepository<TransferTransitEntry> transitRepository,
     IRepository<DocumentIdentity> documentRepository,
     IRepository<DocumentLineIdentity> lineIdentityRepository,
     IRepository<Company> companyRepository,
@@ -180,9 +182,17 @@ public sealed class TransferOrderService(
             if (order.Status == TransferOrderStatus.Cancelled)
                 throw new InvalidOperationException("Cancelled transfer orders cannot be amended.");
 
-            var existingLines = (await lineRepository.FindAsync(line => line.TransferOrderId == id))
+            await unitOfWork.AcquireTenantOperationLockAsync("organization-state", cancellationToken);
+            await unitOfWork.AcquireLocationLocksAsync(
+                [order.FromLocationId, order.ToLocationId], cancellationToken);
+            var currentLines = lineRepository.Query()
+                .Where(line => line.TransferOrderId == id)
                 .OrderBy(line => line.Id)
-                .ToList();
+                .ToArray();
+            if (currentLines.Any(line => line.DispatchedQuantity > 0))
+                throw new InvalidOperationException("A transfer order cannot be amended after any quantity is dispatched.");
+
+            var existingLines = currentLines.ToList();
             if (existingLines.Count != lines.Count || lines.Any(line => !line.LineId.HasValue))
                 throw new InvalidOperationException("An amendment must retain every existing transfer-order line identity.");
             var requestedIds = lines.Select(line => line.LineId!.Value).OrderBy(lineId => lineId).ToArray();
@@ -293,10 +303,22 @@ public sealed class TransferOrderService(
             if (order.Status == TransferOrderStatus.Cancelled)
                 return;
 
-            if (order.Status == TransferOrderStatus.Approved)
+            await unitOfWork.AcquireTenantOperationLockAsync("organization-state", cancellationToken);
+            await unitOfWork.AcquireLocationLocksAsync(
+                [order.FromLocationId, order.ToLocationId], cancellationToken);
+            var currentOrder = orderRepository.Query().SingleOrDefault(candidate => candidate.Id == id)
+                ?? throw new KeyNotFoundException("Transfer order not found.");
+            var dispatched = (await transitRepository.FindAsync(entry => entry.TransferOrderId == id)).Any();
+            if (dispatched || lineRepository.Query().Any(line =>
+                    line.TransferOrderId == id && line.DispatchedQuantity > 0))
+                throw new InvalidOperationException("A transfer order cannot be cancelled after any quantity is dispatched.");
+            if (currentOrder.Status == TransferOrderStatus.Cancelled)
+                return;
+
+            if (currentOrder.Status == TransferOrderStatus.Approved)
             {
                 var controlledScope = mutationScope with { AllowControlledTransferReservation = true };
-                var lines = await lineRepository.FindAsync(line => line.TransferOrderId == id);
+                var lines = lineRepository.Query().Where(line => line.TransferOrderId == id).ToArray();
                 foreach (var line in lines)
                 {
                     await stockService.ReleaseReservationAsync(
@@ -306,17 +328,163 @@ public sealed class TransferOrderService(
                 }
             }
 
-            order.Status = TransferOrderStatus.Cancelled;
+            currentOrder.Status = TransferOrderStatus.Cancelled;
             await documentIdentityService.TransitionLifecycleAsync(
-                order.DocumentId,
+                currentOrder.DocumentId,
                 DocumentLifecycleStatus.Cancelled,
                 cancellationToken);
-            await orderRepository.UpdateAsync(order);
+            await orderRepository.UpdateAsync(currentOrder);
             await webhookDispatcher.EnqueueAsync(WebhookEventFactory.Create(tenantContext,
                 "TransferOrder.Cancelled",
-                new { TransferOrderId = order.Id, order.DocumentId }));
+                new { TransferOrderId = currentOrder.Id, currentOrder.DocumentId }));
             await unitOfWork.SaveChangesAsync(cancellationToken);
         }, cancellationToken, () => VerifyStatusAsync(id, TransferOrderStatus.Cancelled));
+    }
+
+    public async Task<TransferDispatchView> DispatchAsync(
+        int id,
+        int lineId,
+        int quantity,
+        string idempotencyKey,
+        string dispatchedBy,
+        StockMutationScope mutationScope,
+        CancellationToken cancellationToken = default)
+    {
+        if (id <= 0 || lineId <= 0)
+            throw new ArgumentOutOfRangeException(nameof(id));
+        if (quantity <= 0)
+            throw new ArgumentOutOfRangeException(nameof(quantity), "Dispatch quantity must be positive.");
+        ValidateIdempotencyKey(idempotencyKey);
+        ArgumentException.ThrowIfNullOrWhiteSpace(dispatchedBy);
+        if (dispatchedBy.Length > 256)
+            throw new ArgumentOutOfRangeException(nameof(dispatchedBy), "Dispatcher identity cannot exceed 256 characters.");
+        var requestHash = HashDispatchRequest(id, lineId, quantity);
+        TransferDispatchView? result = null;
+
+        await unitOfWork.ExecuteInTransactionAsync(async () =>
+        {
+            await unitOfWork.AcquireTenantOperationLockAsync("organization-state", cancellationToken);
+            var previous = (await transitRepository.FindAsync(entry =>
+                    entry.TransferOrderLineId == lineId && entry.IdempotencyKey == idempotencyKey))
+                .SingleOrDefault();
+            if (previous is not null)
+            {
+                if (!string.Equals(previous.RequestHash, requestHash, StringComparison.Ordinal))
+                    throw new InvalidOperationException("The dispatch idempotency key was already used with a different request.");
+                if (mutationScope.CompanyId != previous.CompanyId ||
+                    mutationScope.Reauthorize is not null && !await mutationScope.Reauthorize())
+                    throw new UnauthorizedAccessException("Company posting access is required to replay this dispatch.");
+                result = ToDispatchView(previous);
+                return;
+            }
+
+            var initialOrder = orderRepository.Query().SingleOrDefault(order => order.Id == id)
+                ?? throw new KeyNotFoundException("Transfer order not found.");
+            await unitOfWork.AcquireLocationLocksAsync(
+                [initialOrder.FromLocationId, initialOrder.ToLocationId], cancellationToken);
+
+            var order = orderRepository.Query().SingleOrDefault(candidate => candidate.Id == id)
+                ?? throw new KeyNotFoundException("Transfer order not found.");
+            var line = lineRepository.Query().SingleOrDefault(candidate =>
+                candidate.Id == lineId && candidate.TransferOrderId == id)
+                ?? throw new KeyNotFoundException("Transfer-order line not found.");
+            if (order.Status != TransferOrderStatus.Approved)
+                throw new InvalidOperationException("Only an approved transfer order can be dispatched.");
+            if (mutationScope.CompanyId != order.CompanyId)
+                throw new UnauthorizedAccessException("The dispatch scope does not match the transfer-order company.");
+            if (mutationScope.Reauthorize is not null && !await mutationScope.Reauthorize())
+                throw new UnauthorizedAccessException("Company posting access changed before dispatch.");
+            if (checked(line.DispatchedQuantity + quantity) > line.Quantity)
+                throw new StockAvailabilityConflictException("Dispatch exceeds the transfer-order line quantity.");
+
+            var orderLines = lineRepository.Query()
+                .Where(candidate => candidate.TransferOrderId == id)
+                .Select(candidate => new TransferOrderLineRequest(
+                    candidate.ItemId, candidate.Quantity, candidate.BatchNumber, candidate.ExpiryDate))
+                .ToArray();
+            await ValidateReferencesAsync(new CreateTransferOrderRequest(
+                order.CompanyId,
+                order.FromLocationId,
+                order.ToLocationId,
+                orderLines,
+                order.Notes));
+
+            var controlledScope = mutationScope with { AllowControlledTransferReservation = true };
+            var movement = await stockService.DispatchReservationAsync(
+                line.ReservationSourceLineReference,
+                quantity,
+                order.ToLocationId,
+                $"Transfer order {order.DocumentId.Value:N} dispatch.",
+                controlledScope,
+                cancellationToken);
+            var now = DateTimeOffset.UtcNow;
+            var entry = new TransferTransitEntry
+            {
+                TransferOrderId = order.Id,
+                TransferOrderLineId = line.Id,
+                SourceDocumentLineId = line.DocumentLineId,
+                CompanyId = order.CompanyId,
+                ItemId = line.ItemId,
+                FromLocationId = order.FromLocationId,
+                ToLocationId = order.ToLocationId,
+                StockTransactionId = movement.StockTransactionId,
+                Quantity = movement.Quantity,
+                BatchNumber = movement.BatchNumber,
+                ExpiryDate = StockLotExpiryDate.Normalize(movement.ExpiryDate),
+                UnitCost = movement.UnitCost,
+                TotalValue = movement.TotalValue,
+                IdempotencyKey = idempotencyKey,
+                RequestHash = requestHash,
+                DispatchedBy = dispatchedBy.Trim(),
+                DispatchedAt = now,
+                TenantId = tenantContext.TenantId
+            };
+            await transitRepository.AddAsync(entry);
+            line.DispatchedQuantity = checked(line.DispatchedQuantity + quantity);
+            await lineRepository.UpdateAsync(line);
+            await webhookDispatcher.EnqueueAsync(WebhookEventFactory.Create(tenantContext,
+                "TransferOrder.Dispatched",
+                new
+                {
+                    TransferOrderId = order.Id,
+                    order.DocumentId,
+                    TransferOrderLineId = line.Id,
+                    SourceDocumentLineId = line.DocumentLineId.Value,
+                    order.CompanyId,
+                    order.FromLocationId,
+                    order.ToLocationId,
+                    Quantity = quantity
+                }));
+            await unitOfWork.SaveChangesAsync(cancellationToken);
+            result = ToDispatchView(entry);
+        }, cancellationToken, async () =>
+        {
+            var committed = (await transitRepository.FindAsync(entry =>
+                    entry.TransferOrderLineId == lineId && entry.IdempotencyKey == idempotencyKey))
+                .SingleOrDefault();
+            return committed is not null && committed.RequestHash == requestHash;
+        });
+
+        return await GetDispatchByKeyAsync(id, lineId, idempotencyKey, cancellationToken)
+            ?? result
+            ?? throw new InvalidOperationException("The committed transfer dispatch could not be read back.");
+    }
+
+    public async Task<TransferDispatchView?> GetDispatchByKeyAsync(
+        int id,
+        int lineId,
+        string idempotencyKey,
+        CancellationToken cancellationToken = default)
+    {
+        if (id <= 0 || lineId <= 0)
+            throw new ArgumentOutOfRangeException(nameof(id));
+        ValidateIdempotencyKey(idempotencyKey);
+        return (await transitRepository.FindAsync(entry =>
+                entry.TransferOrderId == id && entry.TransferOrderLineId == lineId &&
+                entry.IdempotencyKey == idempotencyKey,
+                cancellationToken))
+            .Select(ToDispatchView)
+            .SingleOrDefault();
     }
 
     private async Task<TransferOrderView> ToViewAsync(TransferOrder order, CancellationToken cancellationToken)
@@ -351,7 +519,8 @@ public sealed class TransferOrderService(
                 line.Quantity,
                 line.BatchNumber,
                 line.ExpiryDate,
-                line.ReservationSourceLineReference)).ToArray());
+                line.ReservationSourceLineReference,
+                line.DispatchedQuantity)).ToArray());
 
     private void ValidateHeader(int companyId, int fromLocationId, int toLocationId)
     {
@@ -482,6 +651,34 @@ public sealed class TransferOrderService(
         }
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(payload.ToString())));
     }
+
+    private static string HashDispatchRequest(int orderId, int lineId, int quantity)
+    {
+        var payload = new StringBuilder();
+        AppendField(payload, orderId.ToString(CultureInfo.InvariantCulture));
+        AppendField(payload, lineId.ToString(CultureInfo.InvariantCulture));
+        AppendField(payload, quantity.ToString(CultureInfo.InvariantCulture));
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(payload.ToString())));
+    }
+
+    private static TransferDispatchView ToDispatchView(TransferTransitEntry entry) => new(
+        entry.Id,
+        entry.TransferOrderId,
+        entry.TransferOrderLineId,
+        entry.SourceDocumentLineId.Value,
+        entry.CompanyId,
+        entry.ItemId,
+        entry.FromLocationId,
+        entry.ToLocationId,
+        entry.StockTransactionId,
+        entry.Quantity,
+        entry.BatchNumber,
+        StockLotExpiryDate.Normalize(entry.ExpiryDate),
+        entry.UnitCost,
+        entry.TotalValue,
+        entry.IdempotencyKey,
+        entry.DispatchedBy,
+        entry.DispatchedAt);
 
     private static void AppendField(StringBuilder payload, string? value)
     {

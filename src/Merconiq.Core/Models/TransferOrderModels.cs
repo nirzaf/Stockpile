@@ -23,7 +23,8 @@ public sealed record TransferOrderLineView(
     int Quantity,
     string? BatchNumber,
     DateTime? ExpiryDate,
-    string ReservationSourceLineReference);
+    string ReservationSourceLineReference,
+    int DispatchedQuantity = 0);
 
 public sealed record TransferOrderView(
     int Id,
