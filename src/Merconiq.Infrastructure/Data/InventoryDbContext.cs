@@ -43,6 +43,7 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
     public DbSet<TransferOrder> TransferOrders { get; set; } = null!;
     public DbSet<TransferOrderLine> TransferOrderLines { get; set; } = null!;
     public DbSet<TransferTransitEntry> TransferTransitEntries { get; set; } = null!;
+    public DbSet<TransferTransitSettlement> TransferTransitSettlements { get; set; } = null!;
 
     /// <summary>Lot-specific allocations belonging to source-line stock reservations.</summary>
     public DbSet<StockReservationAllocation> StockReservationAllocations { get; set; } = null!;
@@ -106,6 +107,7 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
         EnsureDocumentLineLinksAreAppendOnly();
         EnsureStockTransactionsAreAppendOnly();
         EnsureTransferTransitEntriesAreAppendOnly();
+        EnsureTransferTransitSettlementsAreAppendOnly();
         NormalizeStockLotExpiryDates();
         return base.SaveChanges(acceptAllChangesOnSuccess);
     }
@@ -118,6 +120,7 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
         EnsureDocumentLineLinksAreAppendOnly();
         EnsureStockTransactionsAreAppendOnly();
         EnsureTransferTransitEntriesAreAppendOnly();
+        EnsureTransferTransitSettlementsAreAppendOnly();
         NormalizeStockLotExpiryDates();
         return base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
     }
@@ -142,6 +145,7 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
         EnsureDocumentLineLinksAreAppendOnly();
         EnsureStockTransactionsAreAppendOnly();
         EnsureTransferTransitEntriesAreAppendOnly();
+        EnsureTransferTransitSettlementsAreAppendOnly();
         NormalizeStockLotExpiryDates();
         var currentUser = _httpContextAccessor?.HttpContext?.User?.Identity?.Name ?? "System";
         var utcNow = DateTime.UtcNow;
@@ -221,6 +225,15 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
             .Any(entry => entry.State is EntityState.Modified or EntityState.Deleted))
         {
             throw new InvalidOperationException("Transfer transit entries are append-only and cannot be updated or deleted.");
+        }
+    }
+
+    private void EnsureTransferTransitSettlementsAreAppendOnly()
+    {
+        if (ChangeTracker.Entries<TransferTransitSettlement>()
+            .Any(entry => entry.State is EntityState.Modified or EntityState.Deleted))
+        {
+            throw new InvalidOperationException("Transfer transit settlements are append-only and cannot be updated or deleted.");
         }
     }
 
@@ -671,6 +684,76 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
             entity.HasIndex(e => new { e.TenantId, e.TransferOrderLineId, e.IdempotencyKey }).IsUnique();
             entity.HasIndex(e => new { e.TenantId, e.TransferOrderId, e.DispatchedAt });
             entity.HasIndex(e => new { e.TenantId, e.StockTransactionId }).IsUnique();
+            entity.HasOne<TransferOrder>()
+                .WithMany()
+                .HasForeignKey(e => new { e.TransferOrderId, e.TenantId })
+                .HasPrincipalKey(e => new { e.Id, e.TenantId })
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne<TransferOrderLine>()
+                .WithMany()
+                .HasForeignKey(e => new { e.TransferOrderLineId, e.TenantId })
+                .HasPrincipalKey(e => new { e.Id, e.TenantId })
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne<DocumentLineIdentity>()
+                .WithMany()
+                .HasForeignKey(e => new { e.SourceDocumentLineId, e.TenantId })
+                .HasPrincipalKey(e => new { e.Id, e.TenantId })
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne<Company>()
+                .WithMany()
+                .HasForeignKey(e => new { e.CompanyId, e.TenantId })
+                .HasPrincipalKey(e => new { e.Id, e.TenantId })
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne<Item>()
+                .WithMany()
+                .HasForeignKey(e => new { e.ItemId, e.TenantId })
+                .HasPrincipalKey(e => new { e.Id, e.TenantId })
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne<Location>()
+                .WithMany()
+                .HasForeignKey(e => new { e.FromLocationId, e.TenantId })
+                .HasPrincipalKey(e => new { e.Id, e.TenantId })
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne<Location>()
+                .WithMany()
+                .HasForeignKey(e => new { e.ToLocationId, e.TenantId })
+                .HasPrincipalKey(e => new { e.Id, e.TenantId })
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne<StockTransaction>()
+                .WithMany()
+                .HasForeignKey(e => new { e.StockTransactionId, e.TenantId })
+                .HasPrincipalKey(e => new { e.Id, e.TenantId })
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<TransferTransitSettlement>(entity =>
+        {
+            entity.ToTable("TransferTransitSettlements", table =>
+            {
+                table.HasCheckConstraint("CK_TransferTransitSettlements_PositiveQuantity", "\"Quantity\" > 0");
+                table.HasCheckConstraint("CK_TransferTransitSettlements_NonNegativeValue", "\"UnitCost\" >= 0 AND \"TotalValue\" >= 0");
+            });
+            entity.HasQueryFilter(e => e.TenantId == CurrentTenantId);
+            entity.Property(e => e.TenantId).HasMaxLength(64).IsRequired();
+            entity.Property(e => e.SourceDocumentLineId)
+                .HasConversion(id => id.Value, value => new DocumentLineIdentityId(value))
+                .ValueGeneratedNever();
+            entity.Property(e => e.SourceDocumentLineId).Metadata.SetAfterSaveBehavior(PropertySaveBehavior.Throw);
+            entity.Property(e => e.SettlementType).HasConversion<string>().HasMaxLength(32).IsRequired();
+            entity.Property(e => e.BatchNumber).HasMaxLength(100);
+            entity.Property(e => e.UnitCost).HasColumnType("decimal(18,6)");
+            entity.Property(e => e.TotalValue).HasColumnType("decimal(18,6)");
+            entity.Property(e => e.IdempotencyKey).HasMaxLength(200).IsRequired();
+            entity.Property(e => e.RequestHash).HasMaxLength(64).IsRequired();
+            entity.Property(e => e.SettledBy).HasMaxLength(256).IsRequired();
+            entity.Property(e => e.Reason).HasMaxLength(500);
+            entity.HasIndex(e => new { e.TenantId, e.TransferTransitEntryId, e.IdempotencyKey }).IsUnique();
+            entity.HasIndex(e => new { e.TenantId, e.TransferOrderId, e.SettledAt });
+            entity.HasOne<TransferTransitEntry>()
+                .WithMany()
+                .HasForeignKey(e => new { e.TransferTransitEntryId, e.TenantId })
+                .HasPrincipalKey(e => new { e.Id, e.TenantId })
+                .OnDelete(DeleteBehavior.Restrict);
             entity.HasOne<TransferOrder>()
                 .WithMany()
                 .HasForeignKey(e => new { e.TransferOrderId, e.TenantId })

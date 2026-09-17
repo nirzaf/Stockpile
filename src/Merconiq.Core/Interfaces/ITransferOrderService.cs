@@ -47,4 +47,15 @@ public interface ITransferOrderService
         int lineId,
         string idempotencyKey,
         CancellationToken cancellationToken = default);
+
+    /// <summary>Records an idempotent, source-linked receipt, quarantine, or return from transit.</summary>
+    Task<TransferTransitSettlementView> ResolveTransitAsync(
+        int id,
+        int lineId,
+        int transitEntryId,
+        TransferTransitSettlementRequest request,
+        string idempotencyKey,
+        string settledBy,
+        StockMutationScope mutationScope,
+        CancellationToken cancellationToken = default);
 }

@@ -122,3 +122,13 @@ transfers remain unsupported. Dispatch entries are append-only, and the transfer
 cannot be amended or cancelled after dispatch. The dispatch notification is
 written to the durable outbox in the same database transaction; delivery happens
 asynchronously after commit and cannot undo a committed movement.
+
+## Transit settlement
+
+A receipt or quarantine creates a valued `TransferIn` entry at the destination
+using the dispatch-captured unit cost. A source-linked return creates a valued
+`TransferReturn` entry at the source with the same captured cost. Settlement rows
+are append-only and reference the transit entry, transfer-order line, source
+document line, and stock transaction. Partial settlement leaves the balance in
+transit; the current dispatch boundary still rejects lot/expiry and
+quantity-only stock until lot-level acquisition valuation is defined.

@@ -179,6 +179,177 @@ public sealed class TransferOrderPostgreSqlIntegrationTests(PostgreSqlIntegratio
     }
 
     [PostgreSqlFact]
+    public async Task Transit_settlement_supports_partial_receipt_return_and_idempotent_replay()
+    {
+        fixture.EnsureEnabled();
+        var tenantId = $"transfer-settlement-{Guid.NewGuid():N}";
+        var seeded = await CreateApprovedTransferAsync(tenantId, 30, unitCost: 10m);
+
+        await using var operation = fixture.CreateContext(tenantId);
+        var orders = CreateService(operation, tenantId);
+        var scope = new StockMutationScope(seeded.CompanyId, () => Task.FromResult(true));
+        var dispatch = await orders.DispatchAsync(
+            seeded.OrderId, seeded.LineId, 30, "settle-dispatch", "dispatcher", scope);
+
+        var received = await orders.ResolveTransitAsync(
+            seeded.OrderId,
+            seeded.LineId,
+            dispatch.Id,
+            new TransferTransitSettlementRequest(20, TransferTransitSettlementType.Received),
+            "settle-receive",
+            "receiver",
+            scope);
+        received.SettlementType.Should().Be(TransferTransitSettlementType.Received);
+        received.Quantity.Should().Be(20);
+        received.TotalValue.Should().Be(200m);
+
+        var replay = await orders.ResolveTransitAsync(
+            seeded.OrderId,
+            seeded.LineId,
+            dispatch.Id,
+            new TransferTransitSettlementRequest(20, TransferTransitSettlementType.Received),
+            "settle-receive",
+            "another-receiver",
+            scope);
+        replay.Should().Be(received);
+
+        await FluentAssertions.FluentActions.Invoking(() => orders.ResolveTransitAsync(
+                seeded.OrderId,
+                seeded.LineId,
+                dispatch.Id,
+                new TransferTransitSettlementRequest(21, TransferTransitSettlementType.Received),
+                "settle-receive",
+                "receiver",
+                scope))
+            .Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("The transit idempotency key was already used with a different request.");
+
+        var returned = await orders.ResolveTransitAsync(
+            seeded.OrderId,
+            seeded.LineId,
+            dispatch.Id,
+            new TransferTransitSettlementRequest(10, TransferTransitSettlementType.Returned),
+            "settle-return",
+            "receiver",
+            scope);
+        returned.SettlementType.Should().Be(TransferTransitSettlementType.Returned);
+        returned.TotalValue.Should().Be(100m);
+
+        var order = await orders.GetByIdAsync(seeded.OrderId);
+        order!.Status.Should().Be(TransferOrderStatus.Completed);
+        order.Lines.Single().ReceivedQuantity.Should().Be(20);
+        (await operation.StockInHand.SingleAsync(stock =>
+                stock.ItemId == seeded.ItemId && stock.LocationId == seeded.SourceLocationId))
+            .Should().Match<StockInHand>(stock => stock.Quantity == 80 && stock.ReservedQuantity == 0);
+        (await operation.StockInHand.SingleAsync(stock =>
+                stock.ItemId == seeded.ItemId && stock.LocationId == seeded.DestinationLocationId))
+            .Should().Match<StockInHand>(stock => stock.Quantity == 20 && stock.QuarantinedQuantity == 0);
+        (await operation.TransferTransitSettlements.ToListAsync()).Should().HaveCount(2);
+        (await operation.StockValuationEntries.Where(entry =>
+                entry.EntryType == StockValuationEntryType.TransferIn ||
+                entry.EntryType == StockValuationEntryType.TransferReturn)
+            .SumAsync(entry => entry.TotalValue)).Should().Be(300m);
+        (await operation.StockValuationBuckets.Where(bucket => bucket.ItemId == seeded.ItemId)
+                .SumAsync(bucket => bucket.Value)).Should().Be(1000m);
+
+        await FluentAssertions.FluentActions.Invoking(() => operation.Database.ExecuteSqlInterpolatedAsync(
+                $"UPDATE \"TransferTransitSettlements\" SET \"Reason\" = {"forbidden"}"))
+            .Should().ThrowAsync<Npgsql.PostgresException>()
+            .Where(exception => exception.SqlState == "55000");
+    }
+
+    [PostgreSqlFact]
+    public async Task Concurrent_duplicate_receipts_commit_one_settlement_and_one_stock_movement()
+    {
+        fixture.EnsureEnabled();
+        var tenantId = $"transfer-settlement-race-{Guid.NewGuid():N}";
+        var seeded = await CreateApprovedTransferAsync(tenantId, 20, unitCost: 10m);
+        int transitEntryId;
+
+        await using (var setup = fixture.CreateContext(tenantId))
+        {
+            var dispatch = await CreateService(setup, tenantId).DispatchAsync(
+                seeded.OrderId,
+                seeded.LineId,
+                20,
+                "race-dispatch",
+                "dispatcher",
+                new StockMutationScope(seeded.CompanyId, () => Task.FromResult(true)));
+            transitEntryId = dispatch.Id;
+        }
+
+        async Task<TransferTransitSettlementView> ResolveAsync(string applicationName)
+        {
+            await using var context = fixture.CreateContext(tenantId, applicationName);
+            return await CreateService(context, tenantId).ResolveTransitAsync(
+                seeded.OrderId,
+                seeded.LineId,
+                transitEntryId,
+                new TransferTransitSettlementRequest(20, TransferTransitSettlementType.Received),
+                "race-receive",
+                "receiver",
+                new StockMutationScope(seeded.CompanyId, () => Task.FromResult(true)));
+        }
+
+        var results = await Task.WhenAll(
+            ResolveAsync("transfer-settlement-race-a"),
+            ResolveAsync("transfer-settlement-race-b"));
+
+        results[0].Should().Be(results[1]);
+        await using var verify = fixture.CreateContext(tenantId);
+        (await verify.TransferTransitSettlements.ToListAsync()).Should().ContainSingle();
+        (await verify.StockTransactions.CountAsync(transaction =>
+                transaction.TransactionType == TransactionType.TransferReceipt))
+            .Should().Be(1);
+        (await verify.StockInHand.SingleAsync(stock =>
+                stock.ItemId == seeded.ItemId && stock.LocationId == seeded.DestinationLocationId))
+            .Should().Match<StockInHand>(stock => stock.Quantity == 20 && stock.QuarantinedQuantity == 0);
+    }
+
+    [PostgreSqlFact]
+    public async Task Transit_quarantine_requires_reason_and_preserves_unavailable_valued_stock()
+    {
+        fixture.EnsureEnabled();
+        var tenantId = $"transfer-quarantine-{Guid.NewGuid():N}";
+        var seeded = await CreateApprovedTransferAsync(tenantId, 10, unitCost: 10m);
+
+        await using var operation = fixture.CreateContext(tenantId);
+        var orders = CreateService(operation, tenantId);
+        var scope = new StockMutationScope(seeded.CompanyId, () => Task.FromResult(true));
+        var dispatch = await orders.DispatchAsync(
+            seeded.OrderId, seeded.LineId, 10, "quarantine-dispatch", "dispatcher", scope);
+
+        await FluentAssertions.FluentActions.Invoking(() => orders.ResolveTransitAsync(
+                seeded.OrderId,
+                seeded.LineId,
+                dispatch.Id,
+                new TransferTransitSettlementRequest(10, TransferTransitSettlementType.Quarantined),
+                "quarantine-receive",
+                "receiver",
+                scope))
+            .Should().ThrowAsync<ArgumentException>()
+            .WithMessage("A reason is required for quarantined transit stock.*");
+
+        var quarantined = await orders.ResolveTransitAsync(
+            seeded.OrderId,
+            seeded.LineId,
+            dispatch.Id,
+            new TransferTransitSettlementRequest(
+                10,
+                TransferTransitSettlementType.Quarantined,
+                Reason: "Damaged on arrival"),
+            "quarantine-receive",
+            "receiver",
+            scope);
+        quarantined.Reason.Should().Be("Damaged on arrival");
+        (await operation.StockInHand.SingleAsync(stock =>
+                stock.ItemId == seeded.ItemId && stock.LocationId == seeded.DestinationLocationId))
+            .Should().Match<StockInHand>(stock => stock.Quantity == 10 && stock.QuarantinedQuantity == 10);
+        (await operation.TransferTransitSettlements.SingleAsync())
+            .SettlementType.Should().Be(TransferTransitSettlementType.Quarantined);
+    }
+
+    [PostgreSqlFact]
     public async Task Approval_reserves_source_stock_without_moving_it_and_cancel_releases_the_reservation()
     {
         fixture.EnsureEnabled();
@@ -348,7 +519,8 @@ public sealed class TransferOrderPostgreSqlIntegrationTests(PostgreSqlIntegratio
             stock,
             tenant,
             dispatcher,
-            NullLogger<TransferOrderService>.Instance);
+            NullLogger<TransferOrderService>.Instance,
+            new Repository<TransferTransitSettlement>(context));
     }
 
     private static StockService CreateStockService(InventoryDbContext context, string tenantId)
