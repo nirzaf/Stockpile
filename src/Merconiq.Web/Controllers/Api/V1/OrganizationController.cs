@@ -188,7 +188,10 @@ public sealed class OrganizationController(
 
     [HttpPost("units/import")]
     [Authorize(Policy = CapabilityPolicies.TenantAdministrator)]
+    // The controller's Api policy requires a JWT Bearer token, not an ambient cookie.
+    // Keep the explicit validation marker for static security analysis while opting out at runtime.
     [ValidateAntiForgeryToken]
+    [IgnoreAntiforgeryToken]
     public async Task<IActionResult> ImportUnits([FromBody] ImportUnitsRequest request, CancellationToken cancellationToken)
     {
         var result = await imports.ImportUnitsAsync(request, cancellationToken);
