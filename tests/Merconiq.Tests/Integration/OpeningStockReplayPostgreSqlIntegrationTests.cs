@@ -151,6 +151,61 @@ public sealed class OpeningStockReplayPostgreSqlIntegrationTests
     }
 
     [PostgreSqlFact]
+    public async Task Concurrent_identical_reversals_apply_once_and_return_the_replay_result()
+    {
+        _fixture.EnsureEnabled();
+        var tenantId = $"opening-reversal-race-{Guid.NewGuid():N}";
+        int itemId;
+        int firstLocationId;
+        int secondLocationId;
+        await using (var setup = _fixture.CreateContext(tenantId))
+        {
+            setup.Items.Add(new Item { ExternalId = "item-1", ItemCode = "OPEN-1", Description = "Opening item", IsActive = true });
+            setup.Locations.AddRange(
+                new Location { Name = "Opening location 1" },
+                new Location { Name = "Opening location 2" });
+            await setup.SaveChangesAsync();
+            itemId = await setup.Items.Select(item => item.Id).SingleAsync();
+            var locations = await setup.Locations.OrderBy(location => location.Id).ToArrayAsync();
+            firstLocationId = locations[0].Id;
+            secondLocationId = locations[1].Id;
+        }
+
+        var csv = $"external_reference,item_external_id,location_id,quantity,unit_cost\n" +
+                  $"open-1,item-1,{secondLocationId},4,12.5\n" +
+                  $"open-2,item-1,{firstLocationId},6,12.5";
+        await using (var importContext = _fixture.CreateContext(tenantId))
+        {
+            await CreateOpeningService(importContext, tenantId).ReplayAsync(new(
+                csv, "import-race", "approval-1"));
+        }
+
+        await using var firstContext = _fixture.CreateContext(tenantId, "opening-reversal-first");
+        await using var secondContext = _fixture.CreateContext(tenantId, "opening-reversal-second");
+        var firstUnitOfWork = new UnitOfWork(firstContext);
+        var secondUnitOfWork = new UnitOfWork(secondContext);
+        var firstService = CreateOpeningService(firstContext, tenantId,
+            CreateStockService(firstContext, tenantId, firstUnitOfWork), firstUnitOfWork);
+        var secondService = CreateOpeningService(secondContext, tenantId,
+            CreateStockService(secondContext, tenantId, secondUnitOfWork), secondUnitOfWork);
+        var request = new OpeningStockReversalRequest(
+            "import-race", "correction-race", "approval-2", "Correct opening quantities");
+
+        var results = await Task.WhenAll(
+            firstService.ReverseAsync(request),
+            secondService.ReverseAsync(request));
+
+        results.Count(result => !result.AlreadyApplied).Should().Be(1);
+        results.Count(result => result.AlreadyApplied).Should().Be(1);
+        await using var verify = _fixture.CreateContext(tenantId);
+        (await verify.StockInHand.Where(stock => stock.ItemId == itemId).SumAsync(stock => stock.Quantity))
+            .Should().Be(0);
+        (await verify.StockTransactions.CountAsync(transaction => transaction.TransactionType == TransactionType.Sell))
+            .Should().Be(2);
+        (await verify.OpeningStockCorrections.CountAsync()).Should().Be(1);
+    }
+
+    [PostgreSqlFact]
     public async Task Approved_baseline_and_correction_rows_are_database_append_only()
     {
         _fixture.EnsureEnabled();

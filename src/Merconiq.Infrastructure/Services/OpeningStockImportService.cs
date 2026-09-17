@@ -227,6 +227,11 @@ public sealed class OpeningStockImportService(
         var requestHash = Convert.ToHexString(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(request)));
         await unitOfWork.ExecuteInTransactionAsync(async () =>
         {
+            await unitOfWork.AcquireTenantOperationLockAsync(
+                $"opening-stock-reversal-correction:{request.CorrectionReference}", cancellationToken);
+            await unitOfWork.AcquireTenantOperationLockAsync(
+                $"opening-stock-reversal-import:{request.ImportReference}", cancellationToken);
+
             var existingCorrection = await context.OpeningStockCorrections
                 .AsNoTracking()
                 .SingleOrDefaultAsync(correction =>
@@ -244,6 +249,8 @@ public sealed class OpeningStockImportService(
                 .Include(value => value.Lines)
                 .SingleOrDefaultAsync(value => value.ImportReference == request.ImportReference, cancellationToken)
                 ?? throw new KeyNotFoundException("Opening baseline was not found.");
+            await unitOfWork.AcquireLocationLocksAsync(
+                import.Lines.Select(line => line.LocationId).Distinct().ToArray(), cancellationToken);
             if (await context.OpeningStockCorrections.AnyAsync(
                     correction => correction.OpeningStockImportId == import.Id, cancellationToken))
             {

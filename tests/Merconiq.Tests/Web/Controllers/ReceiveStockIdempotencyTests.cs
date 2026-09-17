@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using System.Text.Json;
 using FluentAssertions;
 using Merconiq.Core.Entities;
 using Merconiq.Core.Features.Stock.Commands;
@@ -25,6 +26,9 @@ public class ReceiveStockIdempotencyTests
         authorization.Setup(a => a.CanAccessLocationAsync(
                 It.IsAny<ClaimsPrincipal>(), It.IsAny<int>(), CompanyCapability.Post))
             .ReturnsAsync(true);
+        authorization.Setup(a => a.GetLocationCompanyIdAsync(
+                It.IsAny<ClaimsPrincipal>(), It.IsAny<int>()))
+            .ReturnsAsync(41);
         var store = new Mock<IIdempotencyKeyStore>();
         Func<Task>? operation = null;
         CancellationToken observedToken = default;
@@ -58,6 +62,22 @@ public class ReceiveStockIdempotencyTests
 
         result.Should().BeOfType<NoContentResult>();
         observedToken.Should().Be(cancellation.Token);
-        mediator.Verify(m => m.Send(command, cancellation.Token), Times.Once);
+        mediator.Verify(m => m.Send(
+            It.Is<ReceiveStockCommand>(sent => sent.ItemId == command.ItemId &&
+                sent.LocationId == command.LocationId &&
+                sent.MutationScope.HasValue && sent.MutationScope.Value.CompanyId == 41 &&
+                sent.MutationScope.Value.Reauthorize != null),
+            cancellation.Token), Times.Once);
+    }
+
+    [Fact]
+    public void ReceiveStockCommand_does_not_accept_company_scope_from_the_request_body()
+    {
+        const string json = """{"ItemId":7,"LocationId":3,"Quantity":2,"Notes":"receive","MutationScope":{"CompanyId":41}}""";
+
+        var command = JsonSerializer.Deserialize<ReceiveStockCommand>(json);
+
+        command.Should().NotBeNull();
+        command!.MutationScope.Should().BeNull();
     }
 }

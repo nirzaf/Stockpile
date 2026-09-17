@@ -2,11 +2,14 @@ using FluentAssertions;
 using Merconiq.Core.Entities;
 using Merconiq.Core.Interfaces;
 using Merconiq.Core.Models;
+using Merconiq.Core.Services;
 using Merconiq.Infrastructure.Data;
 using Merconiq.Infrastructure.Repositories;
 using Merconiq.Infrastructure.Services;
 using Merconiq.Tests.Infrastructure;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging.Abstractions;
+using Moq;
 using Npgsql;
 
 namespace Merconiq.Tests.Integration;
@@ -208,6 +211,59 @@ public sealed class OrganizationPostgreSqlIntegrationTests(PostgreSqlIntegration
             .BranchId.Should().Be(originalBranchId);
     }
 
+    [PostgreSqlFact]
+    public async Task Stock_posting_rejects_a_company_scope_stale_after_location_reassignment()
+    {
+        fixture.EnsureEnabled();
+        var tenantId = $"location-scope-race-{Guid.NewGuid():N}";
+        var token = Guid.NewGuid().ToString("N");
+        int itemId;
+        int locationId;
+        int originalBranchId;
+        int newBranchId;
+        int originalCompanyId;
+
+        await using (var setup = fixture.CreateContext(tenantId))
+        {
+            var originalCompany = new Company { Code = $"A-{token[..10]}", LegalName = "Original" };
+            var newCompany = new Company { Code = $"B-{token[..10]}", LegalName = "New" };
+            var originalBranch = new Branch { Company = originalCompany, Code = "ORIGINAL", Name = "Original" };
+            var newBranch = new Branch { Company = newCompany, Code = "NEW", Name = "New" };
+            var location = new Location { Branch = originalBranch, Name = "Warehouse" };
+            var item = new Item { ItemCode = $"SCOPE-{token[..10]}", Description = "Scope fixture", Rate = 1m };
+            setup.Companies.AddRange(originalCompany, newCompany);
+            setup.Branches.AddRange(originalBranch, newBranch);
+            setup.Locations.Add(location);
+            setup.Items.Add(item);
+            await setup.SaveChangesAsync();
+            itemId = item.Id;
+            locationId = location.Id;
+            originalBranchId = originalBranch.Id;
+            newBranchId = newBranch.Id;
+            originalCompanyId = originalCompany.Id;
+        }
+
+        await using (var reassignment = fixture.CreateContext(tenantId, $"scope-reassign-{token}"))
+        {
+            await CreateService(reassignment, tenantId).AssignLocationBranchAsync(locationId, newBranchId);
+        }
+
+        await using var context = fixture.CreateContext(tenantId, $"scope-post-{token}");
+        var unitOfWork = new UnitOfWork(context);
+        var stockService = CreateStockService(context, tenantId, unitOfWork);
+        var act = () => stockService.ReceiveStockAsync(
+            itemId, locationId, 1, "previously authorized under original company",
+            mutationScope: new StockMutationScope(originalCompanyId));
+
+        await act.Should().ThrowAsync<UnauthorizedAccessException>()
+            .WithMessage("Location ownership changed while stock access was being authorized.*");
+        (await context.Locations.SingleAsync(location => location.Id == locationId))
+            .BranchId.Should().Be(newBranchId);
+        (await context.StockInHand.CountAsync()).Should().Be(0);
+        (await context.StockTransactions.CountAsync()).Should().Be(0);
+        originalBranchId.Should().NotBe(newBranchId);
+    }
+
     private static async Task RunCompanyUpdateAsync(
         PostgreSqlIntegrationFixture fixture,
         string tenantId,
@@ -253,6 +309,23 @@ public sealed class OrganizationPostgreSqlIntegrationTests(PostgreSqlIntegration
         new UnitOfWork(context),
         new TestTenantContext(tenantId),
         context);
+
+    private static StockService CreateStockService(
+        InventoryDbContext context,
+        string tenantId,
+        IUnitOfWork unitOfWork) => new(
+        new Repository<StockInHand>(context),
+        new Repository<StockTransaction>(context),
+        new Repository<Item>(context),
+        new Repository<Location>(context),
+        new Repository<Branch>(context),
+        unitOfWork,
+        new Mock<IWebhookDispatcher>().Object,
+        new TestTenantContext(tenantId),
+        NullLogger<StockService>.Instance,
+        new Repository<StockValuationBucket>(context),
+        new Repository<StockValuationEntry>(context),
+        new Repository<StockReservation>(context));
 
     private static async Task WaitForLockWaitAsync(
         InventoryDbContext context,
