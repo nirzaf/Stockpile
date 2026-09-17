@@ -12,7 +12,7 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace Merconiq.Infrastructure.Migrations
 {
     [DbContext(typeof(InventoryDbContext))]
-    [Migration("20260917200000_AddPurchaseOrderApprovalVersioning")]
+    [Migration("20260918010000_AddPurchaseOrderApprovalVersioning")]
     partial class AddPurchaseOrderApprovalVersioning
     {
         /// <inheritdoc />

@@ -44,7 +44,7 @@ public sealed class PurchaseOrderApprovalPostgreSqlIntegrationTests(PostgreSqlIn
                 .Options;
             await using var context = new InventoryDbContext(options, new TestTenantContext(tenantId));
             var migrator = context.GetService<IMigrator>();
-            await migrator.MigrateAsync("20260917190000_AddCompanyCurrencyScale");
+            await migrator.MigrateAsync("20260918000000_AddMasterDataExternalIds");
 
             var unit = new UnitOfMeasure
             {
