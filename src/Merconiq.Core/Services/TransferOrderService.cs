@@ -239,6 +239,8 @@ public sealed class TransferOrderService(
             if (order.Status == TransferOrderStatus.Approved)
                 return;
 
+            await unitOfWork.AcquireTenantOperationLockAsync("organization-state", cancellationToken);
+            await unitOfWork.AcquireLocationLocksAsync([order.FromLocationId, order.ToLocationId], cancellationToken);
             var lines = (await lineRepository.FindAsync(line => line.TransferOrderId == id))
                 .OrderBy(line => line.Id)
                 .ToList();
@@ -253,7 +255,6 @@ public sealed class TransferOrderService(
                 order.ToLocationId,
                 lineRequests,
                 order.Notes));
-            await unitOfWork.AcquireLocationLocksAsync([order.FromLocationId, order.ToLocationId], cancellationToken);
             var controlledScope = mutationScope with { AllowControlledTransferReservation = true };
             foreach (var line in lines)
             {
