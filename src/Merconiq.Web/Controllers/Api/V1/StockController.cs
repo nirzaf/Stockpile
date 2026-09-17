@@ -148,7 +148,12 @@ public class StockController : ControllerBase
         return NoContent();
     }
 
-    /// <summary>Transfer stock between locations</summary>
+    /// <summary>Immediate operational transfer; controlled transfer orders reserve before dispatch.</summary>
+    /// <remarks>
+    /// Keep this endpoint for documented immediate operational moves. Use transfer orders when
+    /// approval and source reservation must precede dispatch; this endpoint does not bypass the
+    /// existing same-company authorization and stock-availability checks.
+    /// </remarks>
     [HttpPost("transfer")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]

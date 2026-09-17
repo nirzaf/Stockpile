@@ -31,6 +31,7 @@ public static class ApplicationServiceExtensions
         services.AddScoped<ILocationService, LocationService>();
         services.AddScoped<IStockService, StockService>();
         services.AddScoped<IPurchaseOrderService, PurchaseOrderService>();
+        services.AddScoped<ITransferOrderService, TransferOrderService>();
         services.AddScoped<IOrganizationService, Merconiq.Infrastructure.Services.OrganizationService>();
         services.AddScoped<ICompanyMembershipService, Merconiq.Infrastructure.Services.CompanyMembershipService>();
         services.AddScoped<IDocumentNumberService, Merconiq.Infrastructure.Services.DocumentNumberService>();
