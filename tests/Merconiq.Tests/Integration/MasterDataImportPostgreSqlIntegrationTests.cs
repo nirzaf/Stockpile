@@ -127,7 +127,7 @@ public sealed class MasterDataImportPostgreSqlIntegrationTests(PostgreSqlIntegra
         {
             await using var context = CreateMigrationContext(connectionString, "legacy-a");
             var migrator = context.GetService<IMigrator>();
-            await migrator.MigrateAsync("20260917010000_AddItemExternalId");
+            await migrator.MigrateAsync("20260916170000_AddItemQuantityConventions");
 
             await using (var seed = new NpgsqlConnection(connectionString))
             {
@@ -232,7 +232,7 @@ public sealed class MasterDataImportPostgreSqlIntegrationTests(PostgreSqlIntegra
         {
             await using var context = CreateMigrationContext(connectionString, "preserved");
             var migrator = context.GetService<IMigrator>();
-            await migrator.MigrateAsync("20260917010000_AddItemExternalId");
+            await migrator.MigrateAsync("20260916170000_AddItemQuantityConventions");
 
             await using (var seed = new NpgsqlConnection(connectionString))
             {
@@ -297,7 +297,7 @@ public sealed class MasterDataImportPostgreSqlIntegrationTests(PostgreSqlIntegra
         {
             await using var context = CreateMigrationContext(connectionString, "collision");
             var migrator = context.GetService<IMigrator>();
-            await migrator.MigrateAsync("20260917010000_AddItemExternalId");
+            await migrator.MigrateAsync("20260916170000_AddItemQuantityConventions");
 
             await using (var seed = new NpgsqlConnection(connectionString))
             {
