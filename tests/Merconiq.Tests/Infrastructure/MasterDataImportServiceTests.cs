@@ -179,6 +179,54 @@ public sealed class MasterDataImportServiceTests
     }
 
     [Fact]
+    public async Task ImportUnits_parses_bom_and_quoted_fields()
+    {
+        await using var context = CreateContext(Guid.NewGuid().ToString(), "tenant-a");
+        const string csv = "\uFEFFexternal_id,code,name,decimal_places,whole_unit_only\r\n"
+            + "unit-1,BOX,\"Box, \"\"large\"\"\r\ncrate\",0,false";
+
+        var result = await CreateService(context).ImportUnitsAsync(new ImportUnitsRequest(csv, DryRun: false));
+
+        result.Created.Should().Be(1);
+        result.Rejected.Should().Be(0);
+        (await context.UnitsOfMeasure.SingleAsync()).Name.Should().Be("Box, \"large\"\r\ncrate");
+    }
+
+    [Fact]
+    public async Task ImportUnits_rejects_invalid_decimal_places_and_boolean_without_mutation()
+    {
+        await using var context = CreateContext(Guid.NewGuid().ToString(), "tenant-a");
+        const string csv = "external_id,code,name,decimal_places,whole_unit_only\n"
+            + "unit-1,EA,Each,not-an-integer,false\n"
+            + "unit-2,BOX,Box,0,maybe";
+
+        var result = await CreateService(context).ImportUnitsAsync(new ImportUnitsRequest(csv, DryRun: false));
+
+        result.Created.Should().Be(0);
+        result.Rejected.Should().Be(2);
+        result.Rows[0].Error.Should().Be("Decimal places must be an integer between 0 and 6.");
+        result.Rows[1].Error.Should().Be("Whole-unit-only must be true or false.");
+        context.UnitsOfMeasure.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task ImportUnits_rejects_malformed_quoted_row_without_importing_valid_rows()
+    {
+        await using var context = CreateContext(Guid.NewGuid().ToString(), "tenant-a");
+        const string csv = "external_id,code,name,decimal_places,whole_unit_only\n"
+            + "unit-1,EA,Each,0,false\n"
+            + "unit-2,BOX,\"unterminated,0,false";
+
+        var result = await CreateService(context).ImportUnitsAsync(new ImportUnitsRequest(csv, DryRun: false));
+
+        result.Created.Should().Be(1);
+        result.Rejected.Should().Be(1);
+        result.Rows[1].RowNumber.Should().Be(3);
+        result.Rows[1].Error.Should().Be("A quoted CSV field is not closed.");
+        context.UnitsOfMeasure.Should().BeEmpty();
+    }
+
+    [Fact]
     public async Task ImportItems_rejects_non_identity_factor_for_a_base_unit_reference()
     {
         await using var context = CreateContext(Guid.NewGuid().ToString(), "tenant-a");

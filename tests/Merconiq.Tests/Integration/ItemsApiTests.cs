@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using FluentAssertions;
 using Merconiq.Core.Entities;
+using Merconiq.Core.Models;
 using Merconiq.Infrastructure.Data;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.Extensions.DependencyInjection;
@@ -302,5 +303,54 @@ public class ItemsApiTests : IClassFixture<CustomWebApplicationFactory>
         var response = await client.PostAsJsonAsync("/api/v1/organization/items/import", request);
 
         response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    [Fact]
+    public async Task UnitImport_Admin_dry_run_returns200WithoutAntiforgeryToken()
+    {
+        var client = AuthClient;
+        var request = new
+        {
+            Csv = "external_id,code,name,decimal_places,whole_unit_only\nunit-1,EA,Each,0,false",
+            DryRun = true
+        };
+
+        var response = await client.PostAsJsonAsync("/api/v1/organization/units/import", request);
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    [Fact]
+    public async Task UnitImport_Admin_invalid_csv_values_returnRowLevelValidationErrors()
+    {
+        var client = AuthClient;
+        var request = new
+        {
+            Csv = "external_id,code,name,decimal_places,whole_unit_only\nunit-1,EA,Each,invalid,false",
+            DryRun = false
+        };
+
+        var response = await client.PostAsJsonAsync("/api/v1/organization/units/import", request);
+
+        response.StatusCode.Should().Be(HttpStatusCode.UnprocessableEntity);
+        var result = await response.Content.ReadFromJsonAsync<ImportUnitsResult>();
+        result.Should().NotBeNull();
+        result!.Rejected.Should().Be(1);
+        result.Rows.Single().Error.Should().Be("Decimal places must be an integer between 0 and 6.");
+    }
+
+    [Fact]
+    public async Task UnitImport_Viewer_is_forbidden()
+    {
+        var client = _factory.CreateAuthenticatedClient("Viewer");
+        var request = new
+        {
+            Csv = "external_id,code,name,decimal_places,whole_unit_only\nunit-1,EA,Each,0,false",
+            DryRun = true
+        };
+
+        var response = await client.PostAsJsonAsync("/api/v1/organization/units/import", request);
+
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
     }
 }
