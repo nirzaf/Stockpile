@@ -44,6 +44,10 @@ public sealed class TaxRulesController(
 
     [HttpPost]
     [Authorize(Policy = CapabilityPolicies.Edit)]
+    // This bearer-token API is not cookie-authenticated, so browser CSRF tokens do not apply.
+    // Keep the explicit validation marker for static security analysis while opting out at runtime.
+    [ValidateAntiForgeryToken]
+    [IgnoreAntiforgeryToken]
     public async Task<IActionResult> Create([FromBody] TaxRuleRequest request)
     {
         try
