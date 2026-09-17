@@ -70,6 +70,11 @@ public class PurchaseOrderService : IPurchaseOrderService
         if (purchaseOrder.CurrencyScale is < 0 or > 4)
             throw new ArgumentOutOfRangeException(nameof(purchaseOrder.CurrencyScale));
 
+        var replay = await _documentIdentityService.TryReplayPurchaseOrderAsync(
+            purchaseOrder, details, idempotencyKey, cancellationToken);
+        if (replay is not null)
+            return replay;
+
         var calculationInputs = new List<DocumentLineAmount>(details.Count);
         foreach (var detail in details)
         {

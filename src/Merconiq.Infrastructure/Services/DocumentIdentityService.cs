@@ -179,6 +179,41 @@ public sealed class DocumentIdentityService(
         return result ?? throw new InvalidOperationException("The purchase order was not created.");
     }
 
+    public async Task<PurchaseOrder?> TryReplayPurchaseOrderAsync(
+        PurchaseOrder purchaseOrder,
+        IReadOnlyCollection<OrderDetail> details,
+        string requestKey,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(purchaseOrder);
+        ArgumentNullException.ThrowIfNull(details);
+        ValidateRequestKey(requestKey);
+        ArgumentException.ThrowIfNullOrWhiteSpace(purchaseOrder.PONumber);
+
+        var requestHash = HashPurchaseOrderRequest(purchaseOrder, details);
+        PurchaseOrder? result = null;
+        await unitOfWork.ExecuteInTransactionAsync(async () =>
+        {
+            result = null;
+            await AcquireRequestLockAsync(PurchaseOrderCreateScope, requestKey, cancellationToken);
+            var existing = await context.DocumentIdentities
+                .Include(identity => identity.PurchaseOrder)
+                .ThenInclude(order => order!.OrderDetails)
+                .SingleOrDefaultAsync(identity =>
+                    identity.RequestScope == PurchaseOrderCreateScope &&
+                    identity.RequestKey == requestKey,
+                    cancellationToken);
+            if (existing is null)
+                return;
+
+            EnsureSameRequest(existing, requestHash);
+            result = existing.PurchaseOrder ?? throw new InvalidOperationException(
+                "The idempotency key is mapped to a document that is not a purchase order.");
+        }, cancellationToken);
+
+        return result;
+    }
+
     public async Task LinkLinesAsync(
         DocumentLineIdentityId sourceLineId,
         DocumentLineIdentityId targetLineId,
