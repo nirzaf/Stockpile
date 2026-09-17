@@ -97,6 +97,7 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
     public override int SaveChanges(bool acceptAllChangesOnSuccess)
     {
         EnsureValuationEntriesAreAppendOnly();
+        EnsureDocumentLineLinksAreAppendOnly();
         NormalizeStockLotExpiryDates();
         return base.SaveChanges(acceptAllChangesOnSuccess);
     }
@@ -106,6 +107,7 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
         CancellationToken cancellationToken = default)
     {
         EnsureValuationEntriesAreAppendOnly();
+        EnsureDocumentLineLinksAreAppendOnly();
         NormalizeStockLotExpiryDates();
         return base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
     }
@@ -127,6 +129,7 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
     public override async Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
     {
         EnsureValuationEntriesAreAppendOnly();
+        EnsureDocumentLineLinksAreAppendOnly();
         NormalizeStockLotExpiryDates();
         var currentUser = _httpContextAccessor?.HttpContext?.User?.Identity?.Name ?? "System";
         var utcNow = DateTime.UtcNow;
@@ -179,6 +182,15 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
             .Any(entry => entry.State is EntityState.Modified or EntityState.Deleted))
         {
             throw new InvalidOperationException("Stock valuation entries are append-only and cannot be updated or deleted.");
+        }
+    }
+
+    private void EnsureDocumentLineLinksAreAppendOnly()
+    {
+        if (ChangeTracker.Entries<DocumentLineLink>()
+            .Any(entry => entry.State is EntityState.Modified or EntityState.Deleted))
+        {
+            throw new InvalidOperationException("Document line links are append-only and cannot be updated or deleted.");
         }
     }
 
@@ -545,6 +557,9 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
 
         modelBuilder.Entity<PurchaseOrder>(entity =>
         {
+            entity.ToTable("PurchaseOrders", table => table.HasCheckConstraint(
+                "CK_PurchaseOrders_ApprovedCommercialVersion",
+                "\"Status\" <> 'Approved' OR (\"ApprovedCommercialVersion\" IS NOT NULL AND \"ApprovedCommercialVersion\" = \"CommercialVersion\" AND \"ApprovedCommercialSnapshotJson\" IS NOT NULL)"));
             entity.HasQueryFilter(e => e.TenantId == CurrentTenantId);
             entity.Property(e => e.TenantId).HasMaxLength(64).IsRequired();
             entity.HasIndex(e => e.TenantId);
@@ -556,6 +571,14 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
             entity.Property(e => e.TaxAmount).HasColumnType("decimal(18,6)");
             entity.Property(e => e.CurrencyScale).IsRequired();
             entity.Property(e => e.CalculationVersion).IsRequired();
+            entity.Property(e => e.CommercialVersion).HasDefaultValue(1).IsRequired();
+            entity.Property(e => e.ApprovedCommercialSnapshotJson).HasColumnType("jsonb");
+            entity.Property(e => e.DeliveryTerms).HasMaxLength(1000);
+            entity.Property(e => e.Version)
+                .HasColumnName("xmin")
+                .HasColumnType("xid")
+                .ValueGeneratedOnAddOrUpdate()
+                .IsConcurrencyToken();
             entity.Property(e => e.Status).HasConversion<string>().HasMaxLength(50);
             entity.Property(e => e.DocumentId)
                 .HasConversion(id => id.Value, value => new DocumentIdentityId(value))
@@ -583,7 +606,7 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
             entity.HasQueryFilter(e => e.TenantId == CurrentTenantId);
             entity.Property(e => e.TenantId).HasMaxLength(64).IsRequired();
             entity.HasIndex(e => e.TenantId);
-            entity.Property(e => e.UnitPrice).HasColumnType("decimal(18,2)");
+            entity.Property(e => e.UnitPrice).HasColumnType("decimal(20,4)");
             entity.Property(e => e.DocumentLineId)
                 .HasConversion(id => id.Value, value => new DocumentLineIdentityId(value))
                 .ValueGeneratedNever();

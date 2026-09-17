@@ -46,6 +46,9 @@
                     </MudItem>
                 </MudGrid>
 
+                <MudTextField T="string" @bind-Value="_po.DeliveryTerms" Label="Delivery terms" Lines="2" MaxLength="1000" Class="mb-3" />
+                <MudTextField T="string" @bind-Value="_po.Notes" Label="Notes" Lines="2" Class="mb-3" />
+
                 <MudText Typo="Typo.h6" Class="mt-4 mb-2">Line Items</MudText>
                 
                 @foreach (var item in _po.OrderDetails)

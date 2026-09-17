@@ -327,12 +327,22 @@ public class PurchaseOrderWorkflowTests : IClassFixture<CustomWebApplicationFact
         db.Suppliers.Add(supplier);
         await db.SaveChangesAsync();
 
+        var item = new Item
+        {
+            ItemCode = $"PO-APPROVAL-{Guid.NewGuid():N}"[..20],
+            Description = "PO approval workflow item",
+            Rate = 25m,
+            SupplierId = supplier.Id
+        };
+        db.Items.Add(item);
+        await db.SaveChangesAsync();
+
         var poService = scope.ServiceProvider.GetRequiredService<IPurchaseOrderService>();
         var po = await poService.CreateAsync(new PurchaseOrder
         {
             PONumber = $"PO-{Guid.NewGuid():N}".Substring(0, 15),
             SupplierId = supplier.Id,
-        }, [], $"po-create-{Guid.NewGuid():N}");
+        }, [new OrderDetail { ItemId = item.Id, Quantity = 1, UnitPrice = 25m }], $"po-create-{Guid.NewGuid():N}");
 
         // Update status
         await poService.UpdateStatusAsync(po.Id, nameof(PurchaseOrderStatus.Approved));

@@ -135,8 +135,10 @@ public sealed class DocumentIdentityPostgreSqlIntegrationTests(PostgreSqlIntegra
         }
 
         var requestKey = Guid.NewGuid().ToString("N");
-        var first = await CreatePurchaseOrderAsync(tenantId, supplierId, itemId, requestKey, notes: "deliver to receiving");
-        var replay = await CreatePurchaseOrderAsync(tenantId, supplierId, itemId, requestKey, notes: "deliver to receiving");
+        var first = await CreatePurchaseOrderAsync(
+            tenantId, supplierId, itemId, requestKey, notes: "deliver to receiving", deliveryTerms: " Dock 4 ");
+        var replay = await CreatePurchaseOrderAsync(
+            tenantId, supplierId, itemId, requestKey, notes: "deliver to receiving", deliveryTerms: "Dock 4");
 
         replay.Id.Should().Be(first.Id);
         replay.DocumentId.Should().Be(first.DocumentId);
@@ -158,6 +160,16 @@ public sealed class DocumentIdentityPostgreSqlIntegrationTests(PostgreSqlIntegra
                 itemId,
                 requestKey,
                 notes: "different request"))
+            .Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("The idempotency key was already used with a different document request.");
+
+        await FluentActions.Invoking(() => CreatePurchaseOrderAsync(
+                tenantId,
+                supplierId,
+                itemId,
+                requestKey,
+                notes: "deliver to receiving",
+                deliveryTerms: "Dock 5"))
             .Should().ThrowAsync<InvalidOperationException>()
             .WithMessage("The idempotency key was already used with a different document request.");
     }
@@ -203,6 +215,24 @@ public sealed class DocumentIdentityPostgreSqlIntegrationTests(PostgreSqlIntegra
         var unitOfWork = new UnitOfWork(context);
         var service = new DocumentIdentityService(context, unitOfWork, new DocumentNumberService(context, unitOfWork));
         await service.LinkLinesAsync(companyOneLineA, companyOneLineB, DocumentLineRelationshipType.Successor);
+
+        context.ChangeTracker.Clear();
+        var persistedLink = await context.DocumentLineLinks.SingleAsync();
+        persistedLink.RelationshipType = DocumentLineRelationshipType.Source;
+        var updateLink = () => context.SaveChangesAsync();
+        await updateLink.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("Document line links are append-only and cannot be updated or deleted.");
+
+        context.ChangeTracker.Clear();
+        var linkToDelete = await context.DocumentLineLinks.SingleAsync();
+        context.DocumentLineLinks.Remove(linkToDelete);
+        var deleteLink = () => context.SaveChangesAsync();
+        await deleteLink.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("Document line links are append-only and cannot be updated or deleted.");
+
+        context.ChangeTracker.Clear();
+        var retainedLink = await context.DocumentLineLinks.SingleAsync();
+        retainedLink.RelationshipType.Should().Be(DocumentLineRelationshipType.Successor);
 
         var crossCompany = () => service.LinkLinesAsync(companyOneLineA, companyTwoLine, DocumentLineRelationshipType.Source);
         await crossCompany.Should().ThrowAsync<InvalidOperationException>()
@@ -473,7 +503,8 @@ public sealed class DocumentIdentityPostgreSqlIntegrationTests(PostgreSqlIntegra
         int supplierId,
         int itemId,
         string requestKey,
-        string? notes)
+        string? notes,
+        string? deliveryTerms = null)
     {
         await using var context = fixture.CreateContext(tenantId);
         var unitOfWork = new UnitOfWork(context);
@@ -484,6 +515,7 @@ public sealed class DocumentIdentityPostgreSqlIntegrationTests(PostgreSqlIntegra
             OrderDate = new DateTime(2026, 9, 17, 0, 0, 0, DateTimeKind.Utc),
             SupplierId = supplierId,
             Notes = notes,
+            DeliveryTerms = deliveryTerms,
             Status = PurchaseOrderStatus.Pending
         };
         var details = new List<OrderDetail> { new() { ItemId = itemId, Quantity = 1, UnitPrice = 3m } };
