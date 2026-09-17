@@ -639,6 +639,7 @@ public class StockService : IStockService
         EnsureReservationRepository();
 
         var sourceLineReference = request.SourceLineReference.Trim();
+        EnsureControlledTransferReservationAccess(sourceLineReference, mutationScope);
         var requestedExpiryExceptionReason = string.IsNullOrWhiteSpace(request.ExpiryExceptionReason)
             ? null
             : request.ExpiryExceptionReason.Trim();

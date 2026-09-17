@@ -76,6 +76,10 @@ public sealed class TransferOrderPostgreSqlIntegrationTests(PostgreSqlIntegratio
                     new ConsumeStockReservationRequest(sourceLineReference, 1),
                     new StockMutationScope(companyId)))
                 .Should().ThrowAsync<UnauthorizedAccessException>();
+            await FluentAssertions.FluentActions.Invoking(() => genericStock.CreateReservationAsync(
+                    new CreateStockReservationRequest(itemId, sourceLocationId, 3, sourceLineReference),
+                    new StockMutationScope(companyId)))
+                .Should().ThrowAsync<UnauthorizedAccessException>();
 
             await using var cancellation = fixture.CreateContext(tenantId);
             await CreateService(cancellation, tenantId)

@@ -172,7 +172,7 @@ public sealed class TransferOrderService(
                 "TransferOrder.Amended",
                 new { TransferOrderId = order.Id, order.DocumentId, order.Status }));
             await unitOfWork.SaveChangesAsync(cancellationToken);
-        }, cancellationToken);
+        }, cancellationToken, () => VerifyAmendmentAsync(id, request, lines));
     }
 
     public async Task ApproveAsync(
@@ -227,7 +227,7 @@ public sealed class TransferOrderService(
                 "TransferOrder.Approved",
                 new { TransferOrderId = order.Id, order.DocumentId, order.FromLocationId, order.ToLocationId }));
             await unitOfWork.SaveChangesAsync(cancellationToken);
-        }, cancellationToken);
+        }, cancellationToken, () => VerifyStatusAsync(id, TransferOrderStatus.Approved));
     }
 
     public async Task CancelAsync(
@@ -265,7 +265,7 @@ public sealed class TransferOrderService(
                 "TransferOrder.Cancelled",
                 new { TransferOrderId = order.Id, order.DocumentId }));
             await unitOfWork.SaveChangesAsync(cancellationToken);
-        }, cancellationToken);
+        }, cancellationToken, () => VerifyStatusAsync(id, TransferOrderStatus.Cancelled));
     }
 
     private async Task<TransferOrderView> ToViewAsync(TransferOrder order, CancellationToken cancellationToken)
@@ -375,21 +375,61 @@ public sealed class TransferOrderService(
             throw new ArgumentOutOfRangeException(nameof(key), "An idempotency key cannot exceed 200 characters.");
     }
 
+    private async Task<bool> VerifyStatusAsync(int id, TransferOrderStatus expectedStatus)
+    {
+        var order = (await orderRepository.FindAsync(order => order.Id == id)).SingleOrDefault();
+        return order?.Status == expectedStatus;
+    }
+
+    private async Task<bool> VerifyAmendmentAsync(
+        int id,
+        CreateTransferOrderRequest request,
+        IReadOnlyCollection<TransferOrderLineRequest> lines)
+    {
+        var order = (await orderRepository.FindAsync(order => order.Id == id)).SingleOrDefault();
+        if (order is null || order.Status != TransferOrderStatus.Draft ||
+            order.Notes != NormalizeNotes(request.Notes))
+            return false;
+
+        var persistedLines = (await lineRepository.FindAsync(line => line.TransferOrderId == id))
+            .ToDictionary(line => line.Id);
+        return lines.Count == persistedLines.Count && lines.All(input =>
+            input.LineId is int lineId && persistedLines.TryGetValue(lineId, out var line) &&
+            line.ItemId == input.ItemId && line.Quantity == input.Quantity &&
+            line.BatchNumber == NormalizeBatchNumber(input.BatchNumber) &&
+            line.ExpiryDate == StockLotExpiryDate.Normalize(input.ExpiryDate));
+    }
+
     private static string HashRequest(CreateTransferOrderRequest request, IEnumerable<TransferOrderLineRequest> lines)
     {
-        var payload = new StringBuilder()
-            .Append(request.CompanyId).Append('|')
-            .Append(request.FromLocationId).Append('|')
-            .Append(request.ToLocationId).Append('|')
-            .Append(NormalizeNotes(request.Notes));
-        foreach (var line in lines.OrderBy(line => line.LineId ?? 0).ThenBy(line => line.ItemId))
+        var orderedLines = lines.OrderBy(line => line.LineId ?? 0).ThenBy(line => line.ItemId).ToArray();
+        var payload = new StringBuilder();
+        AppendField(payload, request.CompanyId.ToString(CultureInfo.InvariantCulture));
+        AppendField(payload, request.FromLocationId.ToString(CultureInfo.InvariantCulture));
+        AppendField(payload, request.ToLocationId.ToString(CultureInfo.InvariantCulture));
+        AppendField(payload, NormalizeNotes(request.Notes));
+        AppendField(payload, orderedLines.Length.ToString(CultureInfo.InvariantCulture));
+        foreach (var line in orderedLines)
         {
-            payload.Append('|').Append(line.LineId?.ToString(CultureInfo.InvariantCulture))
-                .Append('|').Append(line.ItemId)
-                .Append('|').Append(line.Quantity)
-                .Append('|').Append(NormalizeBatchNumber(line.BatchNumber))
-                .Append('|').Append(StockLotExpiryDate.Normalize(line.ExpiryDate)?.ToString("O", CultureInfo.InvariantCulture));
+            AppendField(payload, line.LineId?.ToString(CultureInfo.InvariantCulture));
+            AppendField(payload, line.ItemId.ToString(CultureInfo.InvariantCulture));
+            AppendField(payload, line.Quantity.ToString(CultureInfo.InvariantCulture));
+            AppendField(payload, NormalizeBatchNumber(line.BatchNumber));
+            AppendField(payload, StockLotExpiryDate.Normalize(line.ExpiryDate)?.ToString("O", CultureInfo.InvariantCulture));
         }
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(payload.ToString())));
+    }
+
+    private static void AppendField(StringBuilder payload, string? value)
+    {
+        if (value is null)
+        {
+            payload.Append("-1:");
+            return;
+        }
+
+        payload.Append(value.Length.ToString(CultureInfo.InvariantCulture))
+            .Append(':')
+            .Append(value);
     }
 }
