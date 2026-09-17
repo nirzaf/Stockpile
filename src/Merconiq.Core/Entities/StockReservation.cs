@@ -21,6 +21,9 @@ public sealed class StockReservation : AuditableEntity
     /// <summary>Reason recorded when an authorized user reserves stock from an expired lot.</summary>
     public string? ExpiryExceptionReason { get; set; }
 
+    /// <summary>Ordered per-lot quantities assigned to this source line.</summary>
+    public ICollection<StockReservationAllocation> Allocations { get; set; } = new List<StockReservationAllocation>();
+
     /// <summary>PostgreSQL xmin value used for optimistic concurrency checks.</summary>
     public uint Version { get; set; }
 }

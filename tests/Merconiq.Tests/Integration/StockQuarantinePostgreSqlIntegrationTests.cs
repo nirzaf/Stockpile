@@ -210,6 +210,7 @@ public sealed class StockQuarantinePostgreSqlIntegrationTests(PostgreSqlIntegrat
             NullLogger<StockService>.Instance,
             new Repository<StockValuationBucket>(context),
             new Repository<StockValuationEntry>(context),
-            new Repository<StockReservation>(context));
+            new Repository<StockReservation>(context),
+            new Repository<StockReservationAllocation>(context));
     }
 }
