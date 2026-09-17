@@ -201,6 +201,37 @@ public sealed class StockValuationIntegrationTests
         (await verify.StockValuationEntries.CountAsync()).Should().Be(0);
     }
 
+    [Fact]
+    public async Task GetValuation_Returns_bucket_and_ordered_immutable_entries()
+    {
+        var tenantId = $"valuation-read-{Guid.NewGuid():N}";
+        var databaseName = Guid.NewGuid().ToString();
+        int itemId;
+        int locationId;
+        await using (var setup = CreateInMemoryContext(databaseName, tenantId))
+        {
+            (itemId, locationId) = await SeedItemAndLocationAsync(setup);
+        }
+
+        await using (var receive = CreateInMemoryContext(databaseName, tenantId))
+        {
+            await CreateService(receive, tenantId).ReceiveStockAsync(itemId, locationId, 10, null, unitCost: 10m);
+        }
+        await using (var sale = CreateInMemoryContext(databaseName, tenantId))
+        {
+            await CreateService(sale, tenantId).SellStockAsync(itemId, locationId, 5, null);
+        }
+
+        await using var context = CreateInMemoryContext(databaseName, tenantId);
+        var result = (await CreateService(context, tenantId).GetValuationAsync(itemId, locationId)).Single();
+
+        result.Quantity.Should().Be(5);
+        result.Value.Should().Be(50m);
+        result.Entries.Select(entry => entry.EntryType)
+            .Should().Equal(StockValuationEntryType.Receipt, StockValuationEntryType.Sale);
+        result.Entries.Select(entry => entry.StockTransactionId).Should().OnlyHaveUniqueItems();
+    }
+
     private static InventoryDbContext CreateInMemoryContext(string databaseName, string tenantId)
     {
         var options = new DbContextOptionsBuilder<InventoryDbContext>()

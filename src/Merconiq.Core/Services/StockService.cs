@@ -542,6 +542,51 @@ public class StockService : IStockService
             .ToArray();
     }
 
+    /// <inheritdoc />
+    public async Task<IEnumerable<StockValuationView>> GetValuationAsync(
+        int? itemId = null,
+        int? locationId = null,
+        IReadOnlyCollection<int>? companyIds = null)
+    {
+        if (companyIds is { Count: 0 })
+            return [];
+
+        var buckets = await _valuationBucketRepo.FindAsync(bucket =>
+            (!itemId.HasValue || bucket.ItemId == itemId.Value) &&
+            (!locationId.HasValue || bucket.LocationId == locationId.Value) &&
+            (companyIds == null ||
+             (bucket.Location.Branch != null && companyIds.Contains(bucket.Location.Branch.CompanyId))));
+        var entries = await _valuationEntryRepo.FindAsync(entry =>
+            (!itemId.HasValue || entry.ItemId == itemId.Value) &&
+            (!locationId.HasValue || entry.LocationId == locationId.Value) &&
+            (companyIds == null ||
+             (entry.Location.Branch != null && companyIds.Contains(entry.Location.Branch.CompanyId))));
+        var entriesByBucket = entries
+            .GroupBy(entry => (entry.ItemId, entry.LocationId))
+            .ToDictionary(group => group.Key, group => (IReadOnlyList<StockValuationEntryView>)group
+                .OrderBy(entry => entry.Id)
+                .Select(entry => new StockValuationEntryView(
+                    entry.Id,
+                    entry.StockTransactionId,
+                    entry.EntryType,
+                    entry.Quantity,
+                    entry.UnitCost,
+                    entry.TotalValue))
+                .ToArray());
+
+        return buckets
+            .OrderBy(bucket => bucket.ItemId)
+            .ThenBy(bucket => bucket.LocationId)
+            .Select(bucket => new StockValuationView(
+                bucket.Id,
+                bucket.ItemId,
+                bucket.LocationId,
+                bucket.Quantity,
+                bucket.Value,
+                entriesByBucket.GetValueOrDefault((bucket.ItemId, bucket.LocationId), [])))
+            .ToArray();
+    }
+
     private async Task ChangeReservationStateAsync(
         string sourceLineReference,
         StockReservationStatus requestedStatus,
