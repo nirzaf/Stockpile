@@ -186,11 +186,72 @@ public sealed class OrganizationController(
         return NoContent();
     }
 
+    [HttpPost("companies/import")]
+    [Authorize(Policy = CapabilityPolicies.TenantAdministrator)]
+    [ValidateAntiForgeryToken]
+    [IgnoreAntiforgeryToken]
+    public async Task<IActionResult> ImportCompanies(
+        [FromBody] ImportCompaniesRequest request, CancellationToken cancellationToken)
+    {
+        var result = await imports.ImportCompaniesAsync(request, cancellationToken);
+        return result.Rejected > 0
+            ? UnprocessableEntity(result)
+            : Ok(ApiResponse<ImportCompaniesResult>.CreateSuccess(result));
+    }
+
+    [HttpPost("branches/import")]
+    [Authorize(Policy = CapabilityPolicies.Edit)]
+    [ValidateAntiForgeryToken]
+    [IgnoreAntiforgeryToken]
+    public async Task<IActionResult> ImportBranches(
+        [FromBody] ImportBranchesRequest request, CancellationToken cancellationToken)
+    {
+        var scope = await RequireImportCompanyAsync(request.CompanyId, CompanyCapability.Edit);
+        if (scope is not null) return scope;
+        var result = await imports.ImportBranchesAsync(request, cancellationToken);
+        return result.Rejected > 0
+            ? UnprocessableEntity(result)
+            : Ok(ApiResponse<ImportBranchesResult>.CreateSuccess(result));
+    }
+
+    [HttpPost("locations/import")]
+    [Authorize(Policy = CapabilityPolicies.Administer)]
+    [ValidateAntiForgeryToken]
+    [IgnoreAntiforgeryToken]
+    public async Task<IActionResult> ImportLocations(
+        [FromBody] ImportLocationsRequest request, CancellationToken cancellationToken)
+    {
+        var scope = await RequireImportCompanyAsync(request.CompanyId, CompanyCapability.Administer);
+        if (scope is not null) return scope;
+        var result = await imports.ImportLocationsAsync(request, cancellationToken);
+        return result.Rejected > 0
+            ? UnprocessableEntity(result)
+            : Ok(ApiResponse<ImportLocationsResult>.CreateSuccess(result));
+    }
+
+    [HttpPost("suppliers/import")]
+    [Authorize(Policy = CapabilityPolicies.Edit)]
+    [ValidateAntiForgeryToken]
+    [IgnoreAntiforgeryToken]
+    public async Task<IActionResult> ImportSuppliers(
+        [FromBody] ImportSuppliersRequest request, CancellationToken cancellationToken)
+    {
+        var scope = await RequireImportCompanyAsync(request.CompanyId, CompanyCapability.Edit);
+        if (scope is not null) return scope;
+        var result = await imports.ImportSuppliersAsync(request, cancellationToken);
+        return result.Rejected > 0
+            ? UnprocessableEntity(result)
+            : Ok(ApiResponse<ImportSuppliersResult>.CreateSuccess(result));
+    }
+
     [HttpPost("units/import")]
     [Authorize(Policy = CapabilityPolicies.TenantAdministrator)]
     [ValidateAntiForgeryToken]
+    [IgnoreAntiforgeryToken]
     public async Task<IActionResult> ImportUnits([FromBody] ImportUnitsRequest request, CancellationToken cancellationToken)
     {
+        var scope = await RequireImportCompanyAsync(request.CompanyId, CompanyCapability.View);
+        if (scope is not null) return scope;
         var result = await imports.ImportUnitsAsync(request, cancellationToken);
         return result.Rejected > 0
             ? UnprocessableEntity(result)
@@ -205,10 +266,26 @@ public sealed class OrganizationController(
     [IgnoreAntiforgeryToken]
     public async Task<IActionResult> ImportItems([FromBody] ImportItemsRequest request, CancellationToken cancellationToken)
     {
+        var scope = await RequireImportCompanyAsync(request.CompanyId, CompanyCapability.Edit);
+        if (scope is not null) return scope;
         var result = await imports.ImportItemsAsync(request, cancellationToken);
         return result.Rejected > 0
             ? UnprocessableEntity(result)
             : Ok(ApiResponse<ImportItemsResult>.CreateSuccess(result));
+    }
+
+    private async Task<IActionResult?> RequireImportCompanyAsync(
+        int? companyId, CompanyCapability capability)
+    {
+        if (companyId is not > 0)
+        {
+            return BadRequest(ApiResponse<object>.CreateFailure(
+                "CompanyId is required for this import."));
+        }
+
+        return await authorization.CanAccessCompanyAsync(User, companyId.Value, capability)
+            ? null
+            : Forbid();
     }
 
     private static CompanyResponse ToResponse(Company company) =>

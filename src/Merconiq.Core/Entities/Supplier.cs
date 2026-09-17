@@ -9,6 +9,9 @@ public class Supplier : AuditableEntity, ISoftDelete
 {
     public int Id { get; set; }
 
+    /// <summary>Stable identifier used by controlled master-data imports.</summary>
+    public string? ExternalId { get; set; }
+
     /// <summary>Supplier's display name.</summary>
     public string Name { get; set; } = string.Empty;
 

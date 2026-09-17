@@ -11,6 +11,86 @@ namespace Merconiq.Tests.Infrastructure;
 public sealed class MasterDataImportServiceTests
 {
     [Fact]
+    public async Task ImportCompanies_is_idempotent_and_preserves_scope()
+    {
+        await using var context = CreateContext(Guid.NewGuid().ToString(), "tenant-a");
+        var service = CreateService(context);
+        var csv = "external_id,code,legal_name,trading_name,registration_number,tax_identifier,base_currency,country_code,currency_scale,is_active\n"
+            + "company-1,C-1,Acme Trading,Acme,,TAX-1,QAR,QA,2,true";
+
+        var created = await service.ImportCompaniesAsync(new ImportCompaniesRequest(csv, false));
+        var replayed = await service.ImportCompaniesAsync(new ImportCompaniesRequest(csv, false));
+
+        created.Created.Should().Be(1);
+        replayed.Unchanged.Should().Be(1);
+        context.Companies.Count().Should().Be(1);
+        (await context.Companies.SingleAsync()).ExternalId.Should().Be("company-1");
+    }
+
+    [Fact]
+    public async Task ImportLocations_rejects_one_row_without_mutating_valid_rows()
+    {
+        await using var context = CreateContext(Guid.NewGuid().ToString(), "tenant-a");
+        var company = await AddCompanyAsync(context);
+        context.Branches.Add(new Branch
+        {
+            ExternalId = "branch-1", CompanyId = company.Id, Code = "BR-1", Name = "Main",
+            TimeZoneId = "Asia/Qatar"
+        });
+        await context.SaveChangesAsync();
+        var csv = "external_id,branch_external_id,name,address\n"
+            + "location-1,branch-1,Warehouse A,\n"
+            + "location-2,missing,Warehouse B,";
+
+        var result = await CreateService(context).ImportLocationsAsync(
+            new ImportLocationsRequest(csv, false, company.Id));
+
+        result.Created.Should().Be(1);
+        result.Rejected.Should().Be(1);
+        context.Locations.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task ImportSuppliers_replays_and_item_can_resolve_supplier_external_id()
+    {
+        await using var context = CreateContext(Guid.NewGuid().ToString(), "tenant-a");
+        var company = await AddCompanyAsync(context);
+        var supplierCsv = "external_id,name,contact_person,phone,email,address\n"
+            + "supplier-1,Acme Supplies,Buyer,+97400000000,buyer@example.test,Doha";
+        var supplierResult = await CreateService(context).ImportSuppliersAsync(
+            new ImportSuppliersRequest(supplierCsv, false, company.Id));
+        var replayed = await CreateService(context).ImportSuppliersAsync(
+            new ImportSuppliersRequest(supplierCsv, false, company.Id));
+
+        supplierResult.Created.Should().Be(1);
+        replayed.Unchanged.Should().Be(1);
+        var itemCsv = CsvWithSupplier("item-1,SKU-1,Widget,12.50,,,,1,1,2,false,supplier-1");
+        var itemResult = await CreateService(context).ImportItemsAsync(
+            new ImportItemsRequest(itemCsv, false, company.Id));
+
+        itemResult.Created.Should().Be(1);
+        (await context.Items.SingleAsync()).SupplierId.Should().Be(await context.Suppliers.Select(s => s.Id).SingleAsync());
+    }
+
+    [Fact]
+    public async Task ImportItems_rejects_a_company_scope_from_another_tenant()
+    {
+        var databaseName = Guid.NewGuid().ToString();
+        int foreignCompanyId;
+        await using (var foreignContext = CreateContext(databaseName, "tenant-b"))
+        {
+            foreignCompanyId = (await AddCompanyAsync(foreignContext)).Id;
+        }
+
+        await using var context = CreateContext(databaseName, "tenant-a");
+        var action = () => CreateService(context).ImportItemsAsync(new ImportItemsRequest(
+            Csv("item-1,SKU-1,Widget,12.50,,,,1,1,2,false"), false, foreignCompanyId));
+
+        await action.Should().ThrowAsync<ArgumentException>();
+        context.Items.Should().BeEmpty();
+    }
+
+    [Fact]
     public async Task ImportItems_creates_and_replays_without_duplicates()
     {
         await using var context = CreateContext(Guid.NewGuid().ToString(), "tenant-a");
@@ -117,6 +197,11 @@ public sealed class MasterDataImportServiceTests
     private static MasterDataImportService CreateService(InventoryDbContext context) => new(
         new Repository<UnitOfMeasure>(context),
         new Repository<Item>(context),
+        new Repository<Company>(context),
+        new Repository<Branch>(context),
+        new Repository<Location>(context),
+        new Repository<Supplier>(context),
+        context,
         new UnitOfWork(context));
 
     private static InventoryDbContext CreateContext(string databaseName, string tenantId) =>
@@ -127,4 +212,22 @@ public sealed class MasterDataImportServiceTests
     private static string Csv(params string[] rows) =>
         "external_id,item_code,description,rate,base_unit_external_id,purchase_unit_external_id,sales_unit_external_id,purchase_to_base_factor,sales_to_base_factor,quantity_precision,whole_unit_only\n"
         + string.Join('\n', rows);
+
+    private static string CsvWithSupplier(params string[] rows) =>
+        "external_id,item_code,description,rate,base_unit_external_id,purchase_unit_external_id,sales_unit_external_id,purchase_to_base_factor,sales_to_base_factor,quantity_precision,whole_unit_only,supplier_external_id\n"
+        + string.Join('\n', rows);
+
+    private static async Task<Company> AddCompanyAsync(InventoryDbContext context)
+    {
+        var company = new Company
+        {
+            Code = $"C-{Guid.NewGuid():N}"[..10],
+            LegalName = "Test company",
+            BaseCurrency = "QAR",
+            CurrencyScale = 2
+        };
+        context.Companies.Add(company);
+        await context.SaveChangesAsync();
+        return company;
+    }
 }

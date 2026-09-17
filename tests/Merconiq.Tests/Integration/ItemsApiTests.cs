@@ -31,6 +31,22 @@ public class ItemsApiTests : IClassFixture<CustomWebApplicationFactory>
         return item;
     }
 
+    private async Task<int> SeedCompanyAsync()
+    {
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<InventoryDbContext>();
+        var company = new Company
+        {
+            Code = $"IMP-{Guid.NewGuid():N}"[..12],
+            LegalName = "Import company",
+            BaseCurrency = "QAR",
+            CurrencyScale = 2
+        };
+        db.Companies.Add(company);
+        await db.SaveChangesAsync();
+        return company.Id;
+    }
+
     private async Task GrantViewerAccessAsync()
     {
         using var scope = _factory.Services.CreateScope();
@@ -260,6 +276,23 @@ public class ItemsApiTests : IClassFixture<CustomWebApplicationFactory>
     public async Task ItemImport_Admin_dry_run_returns200()
     {
         var client = AuthClient;
+        var companyId = await SeedCompanyAsync();
+        var request = new
+        {
+            Csv = "external_id,item_code,description,rate,base_unit_external_id,purchase_unit_external_id,sales_unit_external_id,purchase_to_base_factor,sales_to_base_factor,quantity_precision,whole_unit_only\nitem-1,SKU-1,Widget,12.50,,,,1,1,2,false",
+            DryRun = true,
+            CompanyId = companyId
+        };
+
+        var response = await client.PostAsJsonAsync("/api/v1/organization/items/import", request);
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    [Fact]
+    public async Task ItemImport_Admin_without_company_scope_returns400()
+    {
+        var client = AuthClient;
         var request = new
         {
             Csv = "external_id,item_code,description,rate,base_unit_external_id,purchase_unit_external_id,sales_unit_external_id,purchase_to_base_factor,sales_to_base_factor,quantity_precision,whole_unit_only\nitem-1,SKU-1,Widget,12.50,,,,1,1,2,false",
@@ -268,6 +301,6 @@ public class ItemsApiTests : IClassFixture<CustomWebApplicationFactory>
 
         var response = await client.PostAsJsonAsync("/api/v1/organization/items/import", request);
 
-        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
 }

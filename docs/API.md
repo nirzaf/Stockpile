@@ -106,6 +106,12 @@ mutations. Webhook administration is restricted to `Admin` and `Manager`.
 | GET | `/api/v1/forecast/{itemId}` | Any API JWT; AI limit | `200` |
 | GET | `/api/v1/forecast` | Any API JWT; AI limit | `200` |
 | GET | `/api/v1/anomalies` | Any API JWT; AI limit | `200` |
+| POST | `/api/v1/organization/companies/import` | Tenant `Admin` | `200` or `422` |
+| POST | `/api/v1/organization/branches/import` | Company `Edit` | `200` or `422` |
+| POST | `/api/v1/organization/locations/import` | Company `Administer` | `200` or `422` |
+| POST | `/api/v1/organization/suppliers/import` | Company `Edit` | `200` or `422` |
+| POST | `/api/v1/organization/units/import` | Tenant `Admin` plus `CompanyId` | `200` or `422` |
+| POST | `/api/v1/organization/items/import` | Company `Edit` plus `CompanyId` | `200` or `422` |
 
 Forecast endpoints return `400 Bad Request` if the requested horizon, matching
 historical sell-row count, or all-item catalog size exceeds its configured limit.

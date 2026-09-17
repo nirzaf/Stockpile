@@ -156,12 +156,19 @@ All endpoints are prefixed with `/api/v1`.
 | `GET` | `/forecast/{itemId}` | Demand forecast for an item |
 | `GET` | `/forecast` | Forecast all items |
 | `GET` | `/anomalies` | Detect stock anomalies |
-| `POST` | `/organization/items/import` | Dry-run or apply a tenant-scoped item master CSV import (edit capability required) |
+| `POST` | `/organization/companies/import` | Dry-run or apply tenant company master import (tenant Admin required) |
+| `POST` | `/organization/branches/import` | Dry-run or apply company-scoped branch import (Edit capability required) |
+| `POST` | `/organization/locations/import` | Dry-run or apply company-scoped location import (Administer capability required) |
+| `POST` | `/organization/suppliers/import` | Dry-run or apply company-scoped shared supplier import (Edit capability required) |
+| `POST` | `/organization/units/import` | Dry-run or apply company-scoped shared UOM import (tenant Admin and CompanyId required) |
+| `POST` | `/organization/items/import` | Dry-run or apply a company-scoped shared item master CSV import (Edit capability required) |
 
-Item imports default to dry-run and use the existing bearer-token API. The CSV header is
-`external_id,item_code,description,rate,base_unit_external_id,purchase_unit_external_id,sales_unit_external_id,purchase_to_base_factor,sales_to_base_factor,quantity_precision,whole_unit_only`.
-Unit columns are optional but, when supplied, must reference a unit external ID in the current
-tenant. A valid import can be replayed safely; any rejected row prevents all writes.
+Master-data imports default to dry-run and use the existing bearer-token API. Every request
+except company creation includes an explicit `CompanyId`; it is an authorization and onboarding
+scope, not an ownership column for shared items, suppliers, or units. Every import requires stable
+`external_id` values, reports row-level `created`, `unchanged`, or `rejected` results, and applies
+no rows when any row is rejected. A valid apply can be replayed safely. CSV headers and synthetic
+examples are documented in [`MASTER_DATA_ONBOARDING.md`](docs/MASTER_DATA_ONBOARDING.md).
 
 ## Project Structure
 

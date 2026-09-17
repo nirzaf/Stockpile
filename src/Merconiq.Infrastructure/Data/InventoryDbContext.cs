@@ -348,7 +348,9 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
         {
             entity.HasQueryFilter(e => !e.IsDeleted && e.TenantId == CurrentTenantId);
             entity.Property(e => e.TenantId).HasMaxLength(64).IsRequired();
+            entity.Property(e => e.ExternalId).HasMaxLength(128);
             entity.HasIndex(e => e.TenantId);
+            entity.HasIndex(e => new { e.TenantId, e.ExternalId }).IsUnique();
             entity.Property(e => e.Name).HasMaxLength(200).IsRequired();
             entity.Property(e => e.ContactPerson).HasMaxLength(200);
             entity.Property(e => e.Phone).HasMaxLength(50);
@@ -360,7 +362,9 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
         {
             entity.HasQueryFilter(e => !e.IsDeleted && e.TenantId == CurrentTenantId);
             entity.Property(e => e.TenantId).HasMaxLength(64).IsRequired();
+            entity.Property(e => e.ExternalId).HasMaxLength(128);
             entity.HasIndex(e => e.TenantId);
+            entity.HasIndex(e => new { e.TenantId, e.ExternalId }).IsUnique();
             entity.Property(e => e.Name).HasMaxLength(200).IsRequired();
             entity.Property(e => e.Address).HasMaxLength(500);
             entity.HasIndex(e => new { e.TenantId, e.BranchId });
@@ -375,6 +379,7 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
         {
             entity.HasQueryFilter(e => e.TenantId == CurrentTenantId);
             entity.Property(e => e.TenantId).HasMaxLength(64).IsRequired();
+            entity.Property(e => e.ExternalId).HasMaxLength(128);
             entity.Property(e => e.Code).HasMaxLength(32).IsRequired();
             entity.Property(e => e.LegalName).HasMaxLength(200).IsRequired();
             entity.Property(e => e.TradingName).HasMaxLength(200);
@@ -387,6 +392,7 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
                 "\"CurrencyScale\" IS NULL OR \"CurrencyScale\" BETWEEN 0 AND 4"));
             entity.Property(e => e.CountryCode).HasMaxLength(2);
             entity.HasIndex(e => new { e.TenantId, e.Code }).IsUnique();
+            entity.HasIndex(e => new { e.TenantId, e.ExternalId }).IsUnique();
             entity.HasIndex(e => new { e.Id, e.TenantId }).IsUnique();
         });
 
@@ -394,11 +400,13 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
         {
             entity.HasQueryFilter(e => e.TenantId == CurrentTenantId);
             entity.Property(e => e.TenantId).HasMaxLength(64).IsRequired();
+            entity.Property(e => e.ExternalId).HasMaxLength(128);
             entity.Property(e => e.Code).HasMaxLength(32).IsRequired();
             entity.Property(e => e.Name).HasMaxLength(200).IsRequired();
             entity.Property(e => e.Address).HasMaxLength(500);
             entity.Property(e => e.TimeZoneId).HasMaxLength(100).IsRequired();
             entity.HasIndex(e => new { e.TenantId, e.CompanyId, e.Code }).IsUnique();
+            entity.HasIndex(e => new { e.TenantId, e.ExternalId }).IsUnique();
             entity.HasIndex(e => new { e.Id, e.TenantId }).IsUnique();
             entity.HasOne(e => e.Company)
                   .WithMany(c => c.Branches)

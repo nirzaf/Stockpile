@@ -4,6 +4,8 @@ namespace Merconiq.Core.Entities;
 public sealed class Branch : AuditableEntity
 {
     public int Id { get; set; }
+    /// <summary>Stable identifier used by controlled master-data imports.</summary>
+    public string? ExternalId { get; set; }
     public int CompanyId { get; set; }
     public Company Company { get; set; } = null!;
     public string Code { get; set; } = string.Empty;

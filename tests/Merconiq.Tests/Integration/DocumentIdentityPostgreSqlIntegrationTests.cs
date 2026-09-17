@@ -343,11 +343,32 @@ public sealed class DocumentIdentityPostgreSqlIntegrationTests(PostgreSqlIntegra
             var migrator = context.GetService<IMigrator>();
             await migrator.MigrateAsync("20260917010000_AddItemExternalId");
 
-            var supplier = new Supplier { Name = "Pre-identity supplier" };
-            var item = new Item { ItemCode = "PRE-IDENTITY-ITEM", Description = "Pre-identity item", Rate = 2m };
-            context.Suppliers.Add(supplier);
-            context.Items.Add(item);
-            await context.SaveChangesAsync();
+            int supplierId;
+            int itemId;
+            await using (var seedMasters = new NpgsqlConnection(connectionBuilder.ConnectionString))
+            {
+                await seedMasters.OpenAsync();
+                await using (var insertSupplier = new NpgsqlCommand(
+                    """
+                    INSERT INTO "Suppliers" ("Name", "TenantId", "CreatedAt")
+                    VALUES ('Pre-identity supplier', @tenant, now())
+                    RETURNING "Id"
+                    """, seedMasters))
+                {
+                    insertSupplier.Parameters.AddWithValue("tenant", tenantId);
+                    supplierId = (int)(await insertSupplier.ExecuteScalarAsync())!;
+                }
+
+                await using var insertItem = new NpgsqlCommand(
+                    """
+                    INSERT INTO "Items" ("ItemCode", "Description", "Rate", "SupplierId", "ExternalId", "TenantId", "CreatedAt")
+                    VALUES ('PRE-IDENTITY-ITEM', 'Pre-identity item', 2, @supplier, NULL, @tenant, now())
+                    RETURNING "Id"
+                    """, seedMasters);
+                insertItem.Parameters.AddWithValue("supplier", supplierId);
+                insertItem.Parameters.AddWithValue("tenant", tenantId);
+                itemId = (int)(await insertItem.ExecuteScalarAsync())!;
+            }
 
             int purchaseOrderId;
             await using (var seedConnection = new NpgsqlConnection(connectionBuilder.ConnectionString))
@@ -363,7 +384,7 @@ public sealed class DocumentIdentityPostgreSqlIntegrationTests(PostgreSqlIntegra
                 {
                     insertOrder.Parameters.AddWithValue("number", "EXISTING-PO-731");
                     insertOrder.Parameters.AddWithValue("date", new DateTime(2024, 5, 6, 0, 0, 0, DateTimeKind.Utc));
-                    insertOrder.Parameters.AddWithValue("supplier", supplier.Id);
+                    insertOrder.Parameters.AddWithValue("supplier", supplierId);
                     insertOrder.Parameters.AddWithValue("tenant", tenantId);
                     purchaseOrderId = (int)(await insertOrder.ExecuteScalarAsync())!;
                 }
@@ -375,7 +396,7 @@ public sealed class DocumentIdentityPostgreSqlIntegrationTests(PostgreSqlIntegra
                     """,
                     seedConnection);
                 insertLine.Parameters.AddWithValue("order", purchaseOrderId);
-                insertLine.Parameters.AddWithValue("item", item.Id);
+                insertLine.Parameters.AddWithValue("item", itemId);
                 insertLine.Parameters.AddWithValue("tenant", tenantId);
                 await insertLine.ExecuteNonQueryAsync();
                 await insertLine.ExecuteNonQueryAsync();
