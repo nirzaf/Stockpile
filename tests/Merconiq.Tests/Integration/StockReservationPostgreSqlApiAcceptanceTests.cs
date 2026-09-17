@@ -512,21 +512,13 @@ public sealed class StockReservationPostgreSqlApiAcceptanceTests(PostgreSqlInteg
             await acquireLock.ExecuteScalarAsync();
         }
 
-        long lockClassId;
-        long lockObjectId;
-        int lockObjectSubId;
-        await using (var readLock = new NpgsqlCommand(
-                         "SELECT classid::bigint, objid::bigint, objsubid " +
-                         "FROM pg_locks WHERE pid = pg_backend_pid() AND locktype = 'advisory' " +
-                         "AND granted AND objsubid = 1",
+        int lockOwnerPid;
+        await using (var readLockOwner = new NpgsqlCommand(
+                         "SELECT pg_backend_pid()",
                          connection,
                          transaction))
-        await using (var reader = await readLock.ExecuteReaderAsync())
         {
-            (await reader.ReadAsync()).Should().BeTrue("the test backend must hold the targeted advisory lock");
-            lockClassId = reader.GetInt64(0);
-            lockObjectId = reader.GetInt64(1);
-            lockObjectSubId = Convert.ToInt32(reader.GetValue(2));
+            lockOwnerPid = Convert.ToInt32(await readLockOwner.ExecuteScalarAsync());
         }
 
         // Use distinct TestServer clients so each request has an independent handler/connection
@@ -550,9 +542,7 @@ public sealed class StockReservationPostgreSqlApiAcceptanceTests(PostgreSqlInteg
         var observedBothRequestsWaiting = await WaitForAdvisoryLockWaitersAsync(
             connection,
             transaction,
-            lockClassId,
-            lockObjectId,
-            lockObjectSubId,
+            lockOwnerPid,
             expectedWaiters: 2,
             timeout: TimeSpan.FromSeconds(30));
 
@@ -571,9 +561,7 @@ public sealed class StockReservationPostgreSqlApiAcceptanceTests(PostgreSqlInteg
     private static async Task<bool> WaitForAdvisoryLockWaitersAsync(
         NpgsqlConnection connection,
         NpgsqlTransaction transaction,
-        long lockClassId,
-        long lockObjectId,
-        int lockObjectSubId,
+        int lockOwnerPid,
         int expectedWaiters,
         TimeSpan timeout)
     {
@@ -581,14 +569,12 @@ public sealed class StockReservationPostgreSqlApiAcceptanceTests(PostgreSqlInteg
         do
         {
             await using var command = new NpgsqlCommand(
-                "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' " +
-                "AND classid::bigint = @class_id AND objid::bigint = @object_id " +
-                "AND objsubid = @object_sub_id AND NOT granted",
+                "SELECT count(*) FROM pg_stat_activity AS waiting " +
+                "WHERE waiting.wait_event_type = 'Lock' AND waiting.wait_event = 'advisory' " +
+                "AND @lock_owner_pid = ANY(pg_blocking_pids(waiting.pid))",
                 connection,
                 transaction);
-            command.Parameters.AddWithValue("class_id", lockClassId);
-            command.Parameters.AddWithValue("object_id", lockObjectId);
-            command.Parameters.AddWithValue("object_sub_id", lockObjectSubId);
+            command.Parameters.AddWithValue("lock_owner_pid", lockOwnerPid);
             var waiters = Convert.ToInt32(await command.ExecuteScalarAsync());
             if (waiters >= expectedWaiters)
                 return true;
