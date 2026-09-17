@@ -1,4 +1,6 @@
 using FluentAssertions;
+using System.Data.Common;
+using System.Text.Json;
 using Merconiq.Core.Entities;
 using Merconiq.Core.Models;
 using Merconiq.Infrastructure.Data;
@@ -6,6 +8,7 @@ using Merconiq.Infrastructure.Repositories;
 using Merconiq.Infrastructure.Services;
 using Merconiq.Tests.Infrastructure;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
 using Npgsql;
@@ -16,6 +19,56 @@ namespace Merconiq.Tests.Integration;
 [Trait("Category", "PostgreSQL")]
 public sealed class MasterDataImportPostgreSqlIntegrationTests(PostgreSqlIntegrationFixture fixture)
 {
+    [PostgreSqlFact]
+    public async Task Unit_import_batch_summary_is_redacted_and_deduplicated_after_ambiguous_commit_retry()
+    {
+        fixture.EnsureEnabled();
+        var tenantId = $"unit-import-batch-{Guid.NewGuid():N}";
+        var commitInterceptor = new ThrowOnceAfterCommitInterceptor();
+        var options = new DbContextOptionsBuilder<InventoryDbContext>()
+            .UseNpgsql(fixture.ConnectionString, postgres => postgres.EnableRetryOnFailure(3))
+            .ConfigureWarnings(warnings => warnings.Ignore(RelationalEventId.PendingModelChangesWarning))
+            .AddInterceptors(commitInterceptor)
+            .Options;
+        await using var context = new InventoryDbContext(options, new TestTenantContext(tenantId));
+        const string csv = "external_id,code,name,decimal_places,whole_unit_only\nunit-1,EA,Each,0,false";
+        var service = CreateService(context);
+
+        var dryRun = await service.ImportUnitsAsync(new ImportUnitsRequest(csv, DryRun: true));
+
+        dryRun.Created.Should().Be(1);
+        (await context.AuditLogs.CountAsync(log => log.EntityName == "MasterDataImportBatch")).Should().Be(0);
+        (await context.UnitsOfMeasure.CountAsync()).Should().Be(0);
+
+        commitInterceptor.Arm();
+        var applied = await service.ImportUnitsAsync(new ImportUnitsRequest(csv, DryRun: false));
+
+        (applied.Created + applied.Unchanged).Should().Be(1);
+        applied.Rejected.Should().Be(0);
+        commitInterceptor.CommitCallbacksAfterArm.Should().Be(2,
+            "the transaction must be retried after its successful commit acknowledgement is lost");
+
+        await using var verification = fixture.CreateContext(tenantId);
+        (await verification.UnitsOfMeasure.CountAsync()).Should().Be(1);
+        var batchAudits = await verification.AuditLogs.AsNoTracking()
+            .Where(log => log.EntityName == "MasterDataImportBatch")
+            .ToListAsync();
+        batchAudits.Should().ContainSingle();
+        var audit = batchAudits[0];
+        audit.TenantId.Should().Be(tenantId);
+        audit.Action.Should().Be("ImportBatchCompleted");
+        using var keyValues = JsonDocument.Parse(audit.KeyValues!);
+        keyValues.RootElement.GetProperty("ImportType").GetString().Should().Be(nameof(UnitOfMeasure));
+        keyValues.RootElement.GetProperty("BatchId").GetGuid().Should().NotBeEmpty();
+        using var summary = JsonDocument.Parse(audit.NewValues!);
+        summary.RootElement.GetProperty("Outcome").GetString().Should().Be("Created");
+        summary.RootElement.GetProperty("RowsMarkedCreated").GetInt32().Should().Be(1);
+        summary.RootElement.GetProperty("RowsRejected").GetInt32().Should().Be(0);
+        summary.RootElement.GetProperty("ChangesApplied").GetBoolean().Should().BeTrue();
+        audit.KeyValues.Should().NotContain("unit-1");
+        audit.NewValues.Should().NotContain("unit-1").And.NotContain("Each");
+    }
+
     [PostgreSqlFact]
     public async Task Controlled_onboarding_is_idempotent_and_atomic_across_owned_masters()
     {
@@ -413,4 +466,34 @@ public sealed class MasterDataImportPostgreSqlIntegrationTests(PostgreSqlIntegra
         new Repository<Supplier>(context),
         context,
         new UnitOfWork(context));
+
+    private sealed class ThrowOnceAfterCommitInterceptor : DbTransactionInterceptor
+    {
+        private int _armed;
+        private int _failureInjected;
+        private int _commitCallbacksAfterArm;
+
+        public int CommitCallbacksAfterArm => Volatile.Read(ref _commitCallbacksAfterArm);
+
+        public void Arm() => Volatile.Write(ref _armed, 1);
+
+        public override Task TransactionCommittedAsync(
+            DbTransaction transaction,
+            TransactionEndEventData eventData,
+            CancellationToken cancellationToken = default)
+        {
+            if (Volatile.Read(ref _armed) == 0)
+                return Task.CompletedTask;
+
+            Interlocked.Increment(ref _commitCallbacksAfterArm);
+            if (Interlocked.Exchange(ref _failureInjected, 1) == 0)
+            {
+                throw new NpgsqlException(
+                    "Simulated transient connection loss after PostgreSQL committed the transaction.",
+                    new IOException("Simulated lost commit acknowledgement."));
+            }
+
+            return Task.CompletedTask;
+        }
+    }
 }

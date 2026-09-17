@@ -1,3 +1,4 @@
+using System.Text.Json;
 using FluentAssertions;
 using Merconiq.Core.Entities;
 using Merconiq.Core.Models;
@@ -10,6 +11,66 @@ namespace Merconiq.Tests.Infrastructure;
 
 public sealed class MasterDataImportServiceTests
 {
+    [Fact]
+    public async Task ImportUnits_persists_a_count_only_batch_summary_for_apply_runs()
+    {
+        await using var context = CreateContext(Guid.NewGuid().ToString(), "tenant-a");
+        const string csv = "external_id,code,name,decimal_places,whole_unit_only\nunit-1,EA,Each,0,false";
+        var service = CreateService(context);
+
+        var dryRun = await service.ImportUnitsAsync(new ImportUnitsRequest(csv, DryRun: true));
+        dryRun.Created.Should().Be(1);
+        (await context.AuditLogs.CountAsync(log => log.EntityName == "MasterDataImportBatch")).Should().Be(0);
+        context.UnitsOfMeasure.Should().BeEmpty();
+
+        var applied = await service.ImportUnitsAsync(new ImportUnitsRequest(csv, DryRun: false));
+
+        applied.Created.Should().Be(1);
+        var audit = await context.AuditLogs.SingleAsync(log => log.EntityName == "MasterDataImportBatch");
+        audit.TenantId.Should().Be("tenant-a");
+        audit.Action.Should().Be("ImportBatchCompleted");
+        audit.Username.Should().Be("System");
+
+        using var keyValues = JsonDocument.Parse(audit.KeyValues!);
+        keyValues.RootElement.GetProperty("ImportType").GetString().Should().Be(nameof(UnitOfMeasure));
+        var createdBatchId = keyValues.RootElement.GetProperty("BatchId").GetGuid();
+        createdBatchId.Should().NotBeEmpty();
+
+        using var summary = JsonDocument.Parse(audit.NewValues!);
+        summary.RootElement.GetProperty("Outcome").GetString().Should().Be("Created");
+        summary.RootElement.GetProperty("RowsMarkedCreated").GetInt32().Should().Be(1);
+        summary.RootElement.GetProperty("RowsUnchanged").GetInt32().Should().Be(0);
+        summary.RootElement.GetProperty("RowsRejected").GetInt32().Should().Be(0);
+        summary.RootElement.GetProperty("ChangesApplied").GetBoolean().Should().BeTrue();
+        audit.NewValues.Should().NotContain("unit-1").And.NotContain("Each");
+        keyValues.RootElement.ToString().Should().NotContain("unit-1");
+
+        var replayed = await service.ImportUnitsAsync(new ImportUnitsRequest(csv, DryRun: false));
+        replayed.Unchanged.Should().Be(1);
+        var replayAudit = await context.AuditLogs
+            .Where(log => log.EntityName == "MasterDataImportBatch")
+            .OrderBy(log => log.Id)
+            .LastAsync();
+        using var replaySummary = JsonDocument.Parse(replayAudit.NewValues!);
+        replaySummary.RootElement.GetProperty("Outcome").GetString().Should().Be("Unchanged");
+        replaySummary.RootElement.GetProperty("RowsMarkedCreated").GetInt32().Should().Be(0);
+        replaySummary.RootElement.GetProperty("RowsUnchanged").GetInt32().Should().Be(1);
+        replaySummary.RootElement.GetProperty("ChangesApplied").GetBoolean().Should().BeFalse();
+
+        const string rejectedCsv = "external_id,code,name,decimal_places,whole_unit_only\nunit-2,EA,Each,0,false";
+        var rejected = await service.ImportUnitsAsync(new ImportUnitsRequest(rejectedCsv, DryRun: false));
+        rejected.Rejected.Should().Be(1);
+        var rejectedAudit = await context.AuditLogs
+            .Where(log => log.EntityName == "MasterDataImportBatch")
+            .OrderBy(log => log.Id)
+            .LastAsync();
+        using var rejectedSummary = JsonDocument.Parse(rejectedAudit.NewValues!);
+        rejectedSummary.RootElement.GetProperty("Outcome").GetString().Should().Be("Rejected");
+        rejectedSummary.RootElement.GetProperty("RowsRejected").GetInt32().Should().Be(1);
+        rejectedSummary.RootElement.GetProperty("ChangesApplied").GetBoolean().Should().BeFalse();
+        rejectedAudit.NewValues.Should().NotContain("unit-2").And.NotContain("EA");
+    }
+
     [Fact]
     public async Task ImportCompanies_is_idempotent_and_preserves_scope()
     {
