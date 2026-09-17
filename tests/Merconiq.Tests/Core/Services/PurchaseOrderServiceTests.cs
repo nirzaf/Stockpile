@@ -51,6 +51,12 @@ public class PurchaseOrderServiceTests
                 It.IsAny<DocumentLifecycleStatus>(),
                 It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
+        _uowMock
+            .Setup(uow => uow.ExecuteInTransactionAsync(
+                It.IsAny<Func<Task>>(),
+                It.IsAny<CancellationToken>(),
+                It.IsAny<Func<Task<bool>>?>()))
+            .Returns((Func<Task> operation, CancellationToken _, Func<Task<bool>>? _) => operation());
     }
 
     [Fact]
