@@ -4,5 +4,6 @@ namespace Merconiq.Core.Entities;
 public enum StockValuationEntryType
 {
     Receipt,
-    Sale
+    Sale,
+    Return
 }
