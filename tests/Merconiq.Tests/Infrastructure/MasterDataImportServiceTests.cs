@@ -38,7 +38,7 @@ public sealed class MasterDataImportServiceTests
 
         using var summary = JsonDocument.Parse(audit.NewValues!);
         summary.RootElement.GetProperty("Outcome").GetString().Should().Be("Created");
-        summary.RootElement.GetProperty("RowsMarkedCreated").GetInt32().Should().Be(1);
+        summary.RootElement.GetProperty("RowsCreated").GetInt32().Should().Be(1);
         summary.RootElement.GetProperty("RowsUnchanged").GetInt32().Should().Be(0);
         summary.RootElement.GetProperty("RowsRejected").GetInt32().Should().Be(0);
         summary.RootElement.GetProperty("ChangesApplied").GetBoolean().Should().BeTrue();
@@ -53,7 +53,7 @@ public sealed class MasterDataImportServiceTests
             .LastAsync();
         using var replaySummary = JsonDocument.Parse(replayAudit.NewValues!);
         replaySummary.RootElement.GetProperty("Outcome").GetString().Should().Be("Unchanged");
-        replaySummary.RootElement.GetProperty("RowsMarkedCreated").GetInt32().Should().Be(0);
+        replaySummary.RootElement.GetProperty("RowsCreated").GetInt32().Should().Be(0);
         replaySummary.RootElement.GetProperty("RowsUnchanged").GetInt32().Should().Be(1);
         replaySummary.RootElement.GetProperty("ChangesApplied").GetBoolean().Should().BeFalse();
 
@@ -66,6 +66,7 @@ public sealed class MasterDataImportServiceTests
             .LastAsync();
         using var rejectedSummary = JsonDocument.Parse(rejectedAudit.NewValues!);
         rejectedSummary.RootElement.GetProperty("Outcome").GetString().Should().Be("Rejected");
+        rejectedSummary.RootElement.GetProperty("RowsCreated").GetInt32().Should().Be(0);
         rejectedSummary.RootElement.GetProperty("RowsRejected").GetInt32().Should().Be(1);
         rejectedSummary.RootElement.GetProperty("ChangesApplied").GetBoolean().Should().BeFalse();
         rejectedAudit.NewValues.Should().NotContain("unit-2").And.NotContain("EA");
@@ -194,6 +195,14 @@ public sealed class MasterDataImportServiceTests
         rejected.Created.Should().Be(1);
         rejected.Rejected.Should().Be(1);
         context.Items.Should().BeEmpty();
+        var batchAudit = await context.AuditLogs.SingleAsync(log => log.EntityName == "MasterDataImportBatch");
+        using var summary = JsonDocument.Parse(batchAudit.NewValues!);
+        summary.RootElement.GetProperty("Outcome").GetString().Should().Be("Rejected");
+        summary.RootElement.GetProperty("RowsCreated").GetInt32().Should().Be(0);
+        summary.RootElement.GetProperty("RowsEligibleForCreation").GetInt32().Should().Be(1);
+        summary.RootElement.GetProperty("RowsRejected").GetInt32().Should().Be(1);
+        summary.RootElement.GetProperty("ChangesApplied").GetBoolean().Should().BeFalse();
+        batchAudit.NewValues.Should().NotContain("Widget").And.NotContain("not-a-rate");
     }
 
     [Fact]

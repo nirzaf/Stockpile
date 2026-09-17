@@ -26,7 +26,7 @@ public sealed class MasterDataImportService(
         ImportUnitsRequest request, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        return await RunAsync(nameof(UnitOfMeasure), request.DryRun, async () =>
+        return await RunAsync(typeof(UnitOfMeasure), request.DryRun, async () =>
         {
             await EnsureCompanyScopeAsync(request.CompanyId, cancellationToken);
             var rows = Parse(request.Csv);
@@ -99,7 +99,7 @@ public sealed class MasterDataImportService(
         ImportItemsRequest request, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        return await RunAsync(nameof(Item), request.DryRun, async () =>
+        return await RunAsync(typeof(Item), request.DryRun, async () =>
         {
             await EnsureCompanyScopeAsync(request.CompanyId, cancellationToken);
             var rows = ParseItems(request.Csv);
@@ -246,7 +246,7 @@ public sealed class MasterDataImportService(
         ImportCompaniesRequest request, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        return await RunAsync(nameof(Company), request.DryRun, async () =>
+        return await RunAsync(typeof(Company), request.DryRun, async () =>
         {
             var rows = ParseCompanies(request.Csv);
             var results = new List<ImportRowResult>(rows.Count);
@@ -316,7 +316,7 @@ public sealed class MasterDataImportService(
         ImportBranchesRequest request, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        return await RunAsync(nameof(Branch), request.DryRun, async () =>
+        return await RunAsync(typeof(Branch), request.DryRun, async () =>
         {
             var companyId = RequireCompanyScope(request.CompanyId);
             if (!request.DryRun)
@@ -386,7 +386,7 @@ public sealed class MasterDataImportService(
         ImportLocationsRequest request, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        return await RunAsync(nameof(Location), request.DryRun, async () =>
+        return await RunAsync(typeof(Location), request.DryRun, async () =>
         {
             var companyId = RequireCompanyScope(request.CompanyId);
             if (!request.DryRun)
@@ -476,7 +476,7 @@ public sealed class MasterDataImportService(
         ImportSuppliersRequest request, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        return await RunAsync(nameof(Supplier), request.DryRun, async () =>
+        return await RunAsync(typeof(Supplier), request.DryRun, async () =>
         {
             await EnsureCompanyScopeAsync(request.CompanyId, cancellationToken);
             var rows = ParseSuppliers(request.Csv);
@@ -544,7 +544,7 @@ public sealed class MasterDataImportService(
     }
 
     private async Task<T> RunAsync<T>(
-        string importType,
+        Type importEntityType,
         bool dryRun,
         Func<Task<T>> operation,
         Func<T, ImportBatchCounts> getCounts,
@@ -557,6 +557,7 @@ public sealed class MasterDataImportService(
         var batchId = Guid.NewGuid();
         var tenantId = context.CurrentTenantId;
         var username = httpContextAccessor?.HttpContext?.User?.Identity?.Name ?? "System";
+        var importType = importEntityType.Name;
         var batchKeyValues = JsonSerializer.Serialize(new { BatchId = batchId, ImportType = importType });
         var batchTimestamp = DateTime.UtcNow;
         T result = default!;
@@ -564,9 +565,26 @@ public sealed class MasterDataImportService(
         {
             // ponytail: one tenant-wide import lock; split by master only if onboarding throughput requires it.
             await unitOfWork.AcquireTenantOperationLockAsync("master-data-import", cancellationToken);
+            var previouslyTrackedEntities = context.ChangeTracker.Entries()
+                .Select(entry => entry.Entity)
+                .ToHashSet(ReferenceEqualityComparer.Instance);
             result = await operation();
 
             var counts = getCounts(result);
+            // Result.Created can include candidates in an atomic batch that is rejected as a whole.
+            // Count only newly tracked entities so the audit reflects rows this transaction will persist.
+            var rowsCreated = context.ChangeTracker.Entries()
+                .Count(entry => importEntityType.IsInstanceOfType(entry.Entity) &&
+                    entry.State == EntityState.Added &&
+                    !previouslyTrackedEntities.Contains(entry.Entity));
+            var changesApplied = rowsCreated > 0;
+            var outcome = (changesApplied, counts.Rejected > 0) switch
+            {
+                (true, true) => "PartiallyRejected",
+                (true, false) => "Created",
+                (false, true) => "Rejected",
+                _ => "Unchanged"
+            };
             var batchAuditExists = context.ChangeTracker.Entries<AuditLog>().Any(entry =>
                 entry.Entity.TenantId == tenantId &&
                 entry.Entity.EntityName == "MasterDataImportBatch" &&
@@ -590,13 +608,12 @@ public sealed class MasterDataImportService(
                     KeyValues = batchKeyValues,
                     NewValues = JsonSerializer.Serialize(new
                     {
-                        Outcome = counts.Rejected > 0
-                            ? "Rejected"
-                            : counts.Created > 0 ? "Created" : "Unchanged",
-                        RowsMarkedCreated = counts.Created,
+                        Outcome = outcome,
+                        RowsCreated = rowsCreated,
+                        RowsEligibleForCreation = counts.Created,
                         RowsUnchanged = counts.Unchanged,
                         RowsRejected = counts.Rejected,
-                        ChangesApplied = counts.Created > 0 && counts.Rejected == 0
+                        ChangesApplied = changesApplied
                     })
                 });
             }
