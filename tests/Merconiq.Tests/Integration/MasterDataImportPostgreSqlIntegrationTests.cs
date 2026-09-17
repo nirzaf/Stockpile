@@ -215,6 +215,140 @@ public sealed class MasterDataImportPostgreSqlIntegrationTests(PostgreSqlIntegra
     }
 
     [PostgreSqlFact]
+    public async Task Concurrent_replays_of_the_same_unit_import_create_one_unit_and_audit_each_batch()
+    {
+        fixture.EnsureEnabled();
+        var tenantId = $"unit-import-concurrent-{Guid.NewGuid():N}";
+        const string csv = "external_id,code,name,decimal_places,whole_unit_only\nunit-1,EA,Each,0,false";
+        var firstApplicationName = $"master-import-first-{Guid.NewGuid():N}";
+        var secondApplicationName = $"master-import-second-{Guid.NewGuid():N}";
+        var firstConnectionString = new NpgsqlConnectionStringBuilder(fixture.ConnectionString)
+        {
+            ApplicationName = firstApplicationName
+        }.ConnectionString;
+        var secondConnectionString = new NpgsqlConnectionStringBuilder(fixture.ConnectionString)
+        {
+            ApplicationName = secondApplicationName
+        }.ConnectionString;
+
+        await using var firstContext = CreateMigrationContext(firstConnectionString, tenantId);
+        await using var secondContext = CreateMigrationContext(secondConnectionString, tenantId);
+        var firstLockAcquired = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseFirstLock = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var realFirstUnitOfWork = new UnitOfWork(firstContext);
+        var firstUnitOfWork = new Mock<IUnitOfWork>();
+        firstUnitOfWork
+            .Setup(work => work.ExecuteInTransactionAsync(
+                It.IsAny<Func<Task>>(), It.IsAny<CancellationToken>(), It.IsAny<Func<Task<bool>>?>()))
+            .Returns((Func<Task> operation, CancellationToken cancellationToken, Func<Task<bool>>? verifySucceeded) =>
+                realFirstUnitOfWork.ExecuteInTransactionAsync(operation, cancellationToken, verifySucceeded));
+        firstUnitOfWork
+            .Setup(work => work.AcquireTenantOperationLockAsync(
+                It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(async (string operation, CancellationToken cancellationToken) =>
+            {
+                await realFirstUnitOfWork.AcquireTenantOperationLockAsync(operation, cancellationToken);
+                firstLockAcquired.TrySetResult(true);
+                await releaseFirstLock.Task.WaitAsync(cancellationToken);
+            });
+
+        var firstImport = CreateService(firstContext, firstUnitOfWork.Object)
+            .ImportUnitsAsync(new ImportUnitsRequest(csv, false));
+        try
+        {
+            await firstLockAcquired.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        }
+        catch
+        {
+            releaseFirstLock.TrySetResult(true);
+            await firstImport;
+            throw;
+        }
+
+        var secondImport = CreateService(secondContext).ImportUnitsAsync(new ImportUnitsRequest(csv, false));
+        try
+        {
+            await WaitForAdvisoryLockWaitAsync(fixture.ConnectionString, secondApplicationName);
+        }
+        catch
+        {
+            releaseFirstLock.TrySetResult(true);
+            await Task.WhenAll(firstImport, secondImport);
+            throw;
+        }
+        releaseFirstLock.TrySetResult(true);
+
+        var results = await Task.WhenAll(firstImport, secondImport);
+
+        results.Sum(result => result.Created).Should().Be(1);
+        results.Sum(result => result.Unchanged).Should().Be(1);
+        results.Sum(result => result.Rejected).Should().Be(0);
+
+        await using var verification = fixture.CreateContext(tenantId);
+        (await verification.UnitsOfMeasure.CountAsync()).Should().Be(1);
+        var batchAudits = await verification.AuditLogs.AsNoTracking()
+            .Where(log => log.TenantId == tenantId && log.EntityName == "MasterDataImportBatch")
+            .ToListAsync();
+        batchAudits.Should().HaveCount(2);
+        var outcomes = new List<string?>();
+        foreach (var audit in batchAudits)
+        {
+            using var summary = JsonDocument.Parse(audit.NewValues!);
+            outcomes.Add(summary.RootElement.GetProperty("Outcome").GetString());
+        }
+        outcomes.Should().BeEquivalentTo(new[] { "Created", "Unchanged" });
+    }
+
+    [PostgreSqlFact]
+    public async Task Soft_deleted_master_keys_are_rejected_by_external_id_and_natural_code()
+    {
+        fixture.EnsureEnabled();
+        var tenantId = $"master-import-deleted-{Guid.NewGuid():N}";
+        await using var context = fixture.CreateContext(tenantId);
+
+        context.UnitsOfMeasure.Add(new UnitOfMeasure
+        {
+            ExternalId = "deleted-unit-id",
+            Code = "DELETED-UNIT-CODE",
+            Name = "Deleted unit",
+            IsDeleted = true
+        });
+        await context.SaveChangesAsync();
+
+        const string unitCsv = "external_id,code,name,decimal_places,whole_unit_only\n"
+            + "deleted-unit-id,NEW-UNIT-CODE,Replacement,0,false\n"
+            + "new-unit-id,DELETED-UNIT-CODE,Replacement,0,false";
+        var unitResult = await CreateService(context).ImportUnitsAsync(new ImportUnitsRequest(unitCsv, false));
+
+        unitResult.Created.Should().Be(0);
+        unitResult.Rejected.Should().Be(2);
+        unitResult.Rows.Should().OnlyContain(row => row.Status == "rejected" && row.Error!.Contains("deleted unit"));
+        (await context.UnitsOfMeasure.IgnoreQueryFilters()
+            .CountAsync(unit => unit.TenantId == tenantId)).Should().Be(1);
+
+        context.UnitsOfMeasure.Add(new UnitOfMeasure { ExternalId = "kg", Code = "KG", Name = "Kilogram" });
+        context.Items.Add(new Item
+        {
+            ExternalId = "deleted-item-id",
+            ItemCode = "DELETED-ITEM-CODE",
+            Description = "Deleted item",
+            IsDeleted = true
+        });
+        await context.SaveChangesAsync();
+
+        const string itemCsv = "external_id,item_code,description,rate,base_unit_external_id,purchase_unit_external_id,sales_unit_external_id,purchase_to_base_factor,sales_to_base_factor,quantity_precision,whole_unit_only\n"
+            + "deleted-item-id,NEW-ITEM-CODE,Replacement,1,kg,,,1,1,2,false\n"
+            + "new-item-id,DELETED-ITEM-CODE,Replacement,1,kg,,,1,1,2,false";
+        var itemResult = await CreateService(context).ImportItemsAsync(new ImportItemsRequest(itemCsv, false));
+
+        itemResult.Created.Should().Be(0);
+        itemResult.Rejected.Should().Be(2);
+        itemResult.Rows.Should().OnlyContain(row => row.Status == "rejected" && row.Error!.Contains("deleted item"));
+        (await context.Items.IgnoreQueryFilters()
+            .CountAsync(item => item.TenantId == tenantId)).Should().Be(1);
+    }
+
+    [PostgreSqlFact]
     public async Task Legacy_units_are_backfilled_with_provenance_and_downgrade_cannot_race_with_mapping()
     {
         fixture.EnsureEnabled();
@@ -481,6 +615,26 @@ public sealed class MasterDataImportPostgreSqlIntegrationTests(PostgreSqlIntegra
             .UseNpgsql(connectionString)
             .Options;
         return new InventoryDbContext(options, new TestTenantContext(tenantId));
+    }
+
+    private static async Task WaitForAdvisoryLockWaitAsync(string connectionString, string applicationName)
+    {
+        await using var observer = new NpgsqlConnection(connectionString);
+        await observer.OpenAsync();
+        await using var command = new NpgsqlCommand(
+            "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE application_name = @applicationName " +
+            "AND wait_event_type = 'Lock' AND query LIKE '%pg_advisory_xact_lock%')",
+            observer);
+        command.Parameters.AddWithValue("applicationName", applicationName);
+
+        for (var attempt = 0; attempt < 100; attempt++)
+        {
+            if ((bool)(await command.ExecuteScalarAsync())!)
+                return;
+            await Task.Delay(TimeSpan.FromMilliseconds(50));
+        }
+
+        throw new TimeoutException("The second import did not wait for the first import's tenant lock.");
     }
 
     private static async Task WaitForMigrationLockAsync(string connectionString, string applicationName)

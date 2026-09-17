@@ -29,6 +29,70 @@ public sealed class CompanyCapabilityPostgreSqlApiTests(PostgreSqlIntegrationFix
     private readonly PostgreSqlCompanyApiFactory _factory = new(fixture);
 
     [PostgreSqlFact]
+    public async Task Real_jwt_can_import_branches_only_for_a_granted_company()
+    {
+        fixture.EnsureEnabled();
+        var suffix = Guid.NewGuid().ToString("N");
+        var tenant = await SeedCompanyStockAsync(fixture, suffix);
+        var buyer = await CreatePersonaAsync(
+            "Buyer", CompanyCapability.View | CompanyCapability.Edit, suffix, tenant.CompanyAId);
+
+        const string authorizedCsv = "external_id,code,name,address,time_zone_id,is_active\n"
+            + "branch-a,BR-A,Authorized branch,,UTC,true";
+        var authorizedResponse = await buyer.Client.PostAsJsonAsync(
+            "/api/v1/organization/branches/import",
+            new { csv = authorizedCsv, dryRun = false, companyId = tenant.CompanyAId });
+
+        authorizedResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+        using (var authorizedBody = await authorizedResponse.Content.ReadFromJsonAsync<JsonDocument>())
+        {
+            authorizedBody!.RootElement.GetProperty("data").GetProperty("created").GetInt32().Should().Be(1);
+        }
+
+        const string forbiddenCsv = "external_id,code,name,address,time_zone_id,is_active\n"
+            + "branch-b,BR-B,Unauthorized branch,,UTC,true";
+        var forbiddenResponse = await buyer.Client.PostAsJsonAsync(
+            "/api/v1/organization/branches/import",
+            new { csv = forbiddenCsv, dryRun = false, companyId = tenant.CompanyBId });
+
+        forbiddenResponse.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+
+        await using (var revoke = fixture.CreateContext(tenant.TenantId))
+        {
+            var membership = await revoke.CompanyMemberships.SingleAsync(candidate =>
+                candidate.CompanyId == tenant.CompanyAId && candidate.UserId == buyer.User.Id);
+            membership.IsActive = false;
+            await revoke.SaveChangesAsync();
+        }
+
+        const string revokedCsv = "external_id,code,name,address,time_zone_id,is_active\n"
+            + "branch-revoked,BR-REVOKED,Revoked branch,,UTC,true";
+        var revokedResponse = await buyer.Client.PostAsJsonAsync(
+            "/api/v1/organization/branches/import",
+            new { csv = revokedCsv, dryRun = false, companyId = tenant.CompanyAId });
+        revokedResponse.StatusCode.Should().Be(HttpStatusCode.Forbidden,
+            "the same still-valid JWT must lose Edit access as soon as its company membership is revoked");
+
+        await using var verification = fixture.CreateContext(tenant.TenantId);
+        var companyABranches = await verification.Branches.IgnoreQueryFilters()
+            .Where(branch => branch.TenantId == tenant.TenantId &&
+                (branch.ExternalId == "branch-a" || branch.ExternalId == "branch-b" ||
+                 branch.ExternalId == "branch-revoked"))
+            .Select(branch => new { branch.ExternalId, branch.CompanyId })
+            .ToListAsync();
+        companyABranches.Should().ContainSingle();
+        companyABranches[0].ExternalId.Should().Be("branch-a");
+        companyABranches[0].CompanyId.Should().Be(tenant.CompanyAId);
+
+        (await verification.Branches.IgnoreQueryFilters()
+            .CountAsync(branch => branch.TenantId == tenant.TenantId && branch.ExternalId == "branch-b"))
+            .Should().Be(0, "a denied import must not create a branch for the ungranted company");
+        (await verification.Branches.IgnoreQueryFilters()
+            .CountAsync(branch => branch.TenantId == tenant.TenantId && branch.ExternalId == "branch-revoked"))
+            .Should().Be(0, "revoking the company membership must prevent subsequent imports by its existing JWT");
+    }
+
+    [PostgreSqlFact]
     public async Task Real_jwt_persona_matrix_filters_companies_and_enforces_transfer_approval_separation()
     {
         fixture.EnsureEnabled();
