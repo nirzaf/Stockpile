@@ -15,7 +15,8 @@ namespace Merconiq.Tests.Integration;
 public sealed class StockReservationPostgreSqlApiAcceptanceTests(PostgreSqlIntegrationFixture fixture) : IDisposable
 {
     private const string TenantId = "test-tenant";
-    private readonly PostgreSqlCompanyApiFactory _factory = new(fixture);
+    private static readonly string ApiApplicationName = $"issue-278-api-{Guid.NewGuid():N}";
+    private readonly PostgreSqlCompanyApiFactory _factory = new(fixture, ApiApplicationName);
 
     [PostgreSqlFact]
     public async Task Authenticated_api_composes_company_scoped_reservation_expiry_fefo_and_exception_flows()
@@ -512,15 +513,6 @@ public sealed class StockReservationPostgreSqlApiAcceptanceTests(PostgreSqlInteg
             await acquireLock.ExecuteScalarAsync();
         }
 
-        int lockOwnerPid;
-        await using (var readLockOwner = new NpgsqlCommand(
-                         "SELECT pg_backend_pid()",
-                         connection,
-                         transaction))
-        {
-            lockOwnerPid = Convert.ToInt32(await readLockOwner.ExecuteScalarAsync());
-        }
-
         // Use distinct TestServer clients so each request has an independent handler/connection
         // path; a single client can serialize in-memory requests before both reach PostgreSQL.
         using var secondClient = _factory.CreateClient();
@@ -542,7 +534,7 @@ public sealed class StockReservationPostgreSqlApiAcceptanceTests(PostgreSqlInteg
         var observedBothRequestsWaiting = await WaitForAdvisoryLockWaitersAsync(
             connection,
             transaction,
-            lockOwnerPid,
+            ApiApplicationName,
             expectedWaiters: 2,
             timeout: TimeSpan.FromSeconds(30));
 
@@ -561,7 +553,7 @@ public sealed class StockReservationPostgreSqlApiAcceptanceTests(PostgreSqlInteg
     private static async Task<bool> WaitForAdvisoryLockWaitersAsync(
         NpgsqlConnection connection,
         NpgsqlTransaction transaction,
-        int lockOwnerPid,
+        string applicationName,
         int expectedWaiters,
         TimeSpan timeout)
     {
@@ -569,12 +561,12 @@ public sealed class StockReservationPostgreSqlApiAcceptanceTests(PostgreSqlInteg
         do
         {
             await using var command = new NpgsqlCommand(
-                "SELECT count(*) FROM pg_stat_activity AS waiting " +
-                "WHERE waiting.wait_event_type = 'Lock' AND waiting.wait_event = 'advisory' " +
-                "AND @lock_owner_pid = ANY(pg_blocking_pids(waiting.pid))",
+                "SELECT count(*) FROM pg_stat_activity " +
+                "WHERE application_name = @application_name " +
+                "AND wait_event_type = 'Lock' AND wait_event = 'advisory'",
                 connection,
                 transaction);
-            command.Parameters.AddWithValue("lock_owner_pid", lockOwnerPid);
+            command.Parameters.AddWithValue("application_name", applicationName);
             var waiters = Convert.ToInt32(await command.ExecuteScalarAsync());
             if (waiters >= expectedWaiters)
                 return true;
