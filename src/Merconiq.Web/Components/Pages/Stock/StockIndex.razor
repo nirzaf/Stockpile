@@ -79,19 +79,44 @@
 
     private async Task ExportToCsv()
     {
-        var bytes = ExportFileBuilder.CreateCsv(ExportHeaders, ExportRows());
+        var stocks = await GetCurrentlyAuthorizedStocksAsync();
+        if (stocks is null) return;
+
+        var bytes = ExportFileBuilder.CreateCsv(ExportHeaders, ExportRows(stocks));
         await JS.InvokeVoidAsync("downloadFile", "Stock_Export.csv", "text/csv", bytes);
         Snackbar.Add("Exported successfully", Severity.Success);
     }
 
     private async Task ExportToExcel()
     {
-        var bytes = ExportFileBuilder.CreateExcel("Stock", ExportHeaders, ExportRows());
+        var stocks = await GetCurrentlyAuthorizedStocksAsync();
+        if (stocks is null) return;
+
+        var bytes = ExportFileBuilder.CreateExcel("Stock", ExportHeaders, ExportRows(stocks));
         await JS.InvokeVoidAsync("downloadFile", "Stock_Export.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", bytes);
         Snackbar.Add("Exported successfully", Severity.Success);
     }
 
-    private IEnumerable<object?[]> ExportRows() => _stocks.Select(stock => new object?[]
+    private async Task<IReadOnlyList<StockInHand>?> GetCurrentlyAuthorizedStocksAsync()
+    {
+        var principal = (await AuthenticationStateProvider.GetAuthenticationStateAsync()).User;
+        if (await CurrentUserAuthorization.IsTenantAdministratorAsync(principal))
+        {
+            return (await StockService.GetAllAsync()).ToArray();
+        }
+
+        var companyIds = await CurrentUserAuthorization.GetAccessibleCompanyIdsAsync(
+            principal, CompanyCapability.View);
+        if (companyIds.Count == 0)
+        {
+            Snackbar.Add("An active View grant is required to export stock.", Severity.Error);
+            return null;
+        }
+
+        return (await StockService.GetForCompaniesAsync(companyIds.ToArray())).ToArray();
+    }
+
+    private static IEnumerable<object?[]> ExportRows(IEnumerable<StockInHand> stocks) => stocks.Select(stock => new object?[]
     {
         stock.Item?.ItemCode, stock.Item?.Description, stock.Location?.Name, stock.Quantity,
         stock.BatchNumber, stock.ExpiryDate

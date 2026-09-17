@@ -153,6 +153,8 @@ public sealed class CompanyCapabilityAuthorizationTests : IClassFixture<CustomWe
         var authorization = scope.ServiceProvider.GetRequiredService<ICurrentUserAuthorization>();
         var principal = CreatePrincipal(user, "Buyer");
         (await authorization.CanAccessCompanyAsync(principal, company.Id, CompanyCapability.Edit)).Should().BeTrue();
+        (await authorization.GetAccessibleCompanyIdsAsync(principal, CompanyCapability.View))
+            .Should().Contain(company.Id);
 
         var db = scope.ServiceProvider.GetRequiredService<InventoryDbContext>();
         var membership = await db.CompanyMemberships.SingleAsync(grant =>
@@ -161,6 +163,8 @@ public sealed class CompanyCapabilityAuthorizationTests : IClassFixture<CustomWe
         await db.SaveChangesAsync();
 
         (await authorization.CanAccessCompanyAsync(principal, company.Id, CompanyCapability.Edit)).Should().BeFalse();
+        (await authorization.GetAccessibleCompanyIdsAsync(principal, CompanyCapability.View))
+            .Should().NotContain(company.Id);
     }
 
     [Fact]
