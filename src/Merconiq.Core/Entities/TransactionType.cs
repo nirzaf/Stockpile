@@ -14,6 +14,9 @@ public enum TransactionType
     /// <summary>Stock sold out of a location.</summary>
     Sell,
 
+    /// <summary>Stock returned against an original sale movement.</summary>
+    Return,
+
     /// <summary>Approved opening-baseline quantity at a cutover instant.</summary>
     Opening
 }

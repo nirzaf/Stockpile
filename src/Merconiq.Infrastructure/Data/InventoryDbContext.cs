@@ -98,6 +98,7 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
     {
         EnsureValuationEntriesAreAppendOnly();
         EnsureDocumentLineLinksAreAppendOnly();
+        EnsureStockTransactionsAreAppendOnly();
         NormalizeStockLotExpiryDates();
         return base.SaveChanges(acceptAllChangesOnSuccess);
     }
@@ -108,6 +109,7 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
     {
         EnsureValuationEntriesAreAppendOnly();
         EnsureDocumentLineLinksAreAppendOnly();
+        EnsureStockTransactionsAreAppendOnly();
         NormalizeStockLotExpiryDates();
         return base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
     }
@@ -130,6 +132,7 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
     {
         EnsureValuationEntriesAreAppendOnly();
         EnsureDocumentLineLinksAreAppendOnly();
+        EnsureStockTransactionsAreAppendOnly();
         NormalizeStockLotExpiryDates();
         var currentUser = _httpContextAccessor?.HttpContext?.User?.Identity?.Name ?? "System";
         var utcNow = DateTime.UtcNow;
@@ -191,6 +194,15 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
             .Any(entry => entry.State is EntityState.Modified or EntityState.Deleted))
         {
             throw new InvalidOperationException("Document line links are append-only and cannot be updated or deleted.");
+        }
+    }
+
+    private void EnsureStockTransactionsAreAppendOnly()
+    {
+        if (ChangeTracker.Entries<StockTransaction>()
+            .Any(entry => entry.State is EntityState.Modified or EntityState.Deleted))
+        {
+            throw new InvalidOperationException("Stock transactions are append-only and cannot be updated or deleted.");
         }
     }
 
@@ -772,9 +784,21 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
             entity.Property(e => e.TransactionType).HasConversion<string>().HasMaxLength(50).IsRequired();
             entity.Property(e => e.Notes).HasMaxLength(500);
             entity.Property(e => e.BatchNumber).HasMaxLength(100);
+            entity.Property(e => e.SourceLineReference).HasMaxLength(128);
+            entity.Property(e => e.ReturnDisposition).HasConversion<string>().HasMaxLength(32);
+            entity.Property(e => e.UnitCost).HasColumnType("decimal(18,6)");
             entity.HasIndex(e => e.TransactionDate);
             entity.HasIndex(e => e.ItemId);
             entity.HasIndex(e => new { e.ItemId, e.TransactionDate });
+            entity.HasIndex(e => new { e.TenantId, e.SourceLineReference })
+                  .IsUnique()
+                  .HasFilter("\"SourceLineReference\" IS NOT NULL");
+
+            entity.HasOne(st => st.OriginalTransaction)
+                  .WithMany()
+                  .HasForeignKey(st => new { st.OriginalTransactionId, st.TenantId })
+                  .HasPrincipalKey(st => new { st.Id, st.TenantId })
+                  .OnDelete(DeleteBehavior.Restrict);
 
             entity.HasOne(st => st.Item)
                   .WithMany(i => i.StockTransactions)

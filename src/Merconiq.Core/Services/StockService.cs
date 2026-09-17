@@ -139,6 +139,15 @@ public class StockService : IStockService
             orderBy: q => q.OrderByDescending(t => t.TransactionDate));
     }
 
+    /// <inheritdoc />
+    public async Task<StockTransaction?> GetTransactionAsync(int transactionId)
+    {
+        if (transactionId <= 0)
+            throw new ArgumentOutOfRangeException(nameof(transactionId));
+
+        return (await _txRepo.FindAsync(transaction => transaction.Id == transactionId)).FirstOrDefault();
+    }
+
     private async Task ExecuteWithRetryAsync(
         int itemId,
         Func<Task> action,
@@ -441,6 +450,135 @@ public class StockService : IStockService
         }, () => VerifyTransactionCommitAsync(transaction));
 
         _logger.LogInformation("Sold {Qty} of item {ItemId} from location {LocId}", quantity, itemId, locationId);
+    }
+
+    /// <inheritdoc />
+    public async Task ReturnStockAsync(
+        CreateStockReturnRequest request,
+        StockMutationScope? mutationScope = null)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        if (request.OriginalTransactionId <= 0)
+            throw new ArgumentOutOfRangeException(nameof(request.OriginalTransactionId));
+        if (request.Quantity <= 0)
+            throw new ArgumentException("Return quantity must be positive.", nameof(request));
+        if (!Enum.IsDefined(request.Disposition))
+            throw new ArgumentException("Return disposition is invalid.", nameof(request));
+
+        EnsureSourceLineReference(request.SourceLineReference);
+        EnsureReservationFields(null, request.Notes);
+        var sourceLineReference = request.SourceLineReference.Trim();
+        var notes = string.IsNullOrWhiteSpace(request.Notes) ? null : request.Notes.Trim();
+        var initialOriginal = await GetTransactionAsync(request.OriginalTransactionId)
+            ?? throw new KeyNotFoundException("Original stock transaction not found.");
+        if (initialOriginal.TransactionType != TransactionType.Sell)
+            throw new InvalidOperationException("Only sale transactions can be returned.");
+
+        StockTransaction? returnTransaction = null;
+        await ExecuteWithRetryAsync(initialOriginal.ItemId, async () =>
+        {
+            await _unitOfWork.AcquireLocationLocksAsync([initialOriginal.FromLocationId]);
+            var original = await GetTransactionAsync(request.OriginalTransactionId)
+                ?? throw new KeyNotFoundException("Original stock transaction not found.");
+            if (original.TransactionType != TransactionType.Sell)
+                throw new InvalidOperationException("Only sale transactions can be returned.");
+
+            var location = await EnsureLocationUsableAsync(original.FromLocationId);
+            await EnsureAuthorizedCompanyScopeAsync(location, mutationScope);
+
+            var existingReturn = (await _txRepo.FindAsync(transaction =>
+                transaction.TransactionType == TransactionType.Return &&
+                transaction.SourceLineReference == sourceLineReference)).FirstOrDefault();
+            if (existingReturn is not null)
+            {
+                if (existingReturn.OriginalTransactionId == original.Id &&
+                    existingReturn.Quantity == request.Quantity &&
+                    existingReturn.ReturnDisposition == request.Disposition &&
+                    existingReturn.Notes == notes)
+                {
+                    returnTransaction = existingReturn;
+                    return;
+                }
+
+                throw new InvalidOperationException("The source line already has a different return.");
+            }
+
+            var priorReturns = await _txRepo.FindAsync(transaction =>
+                transaction.TransactionType == TransactionType.Return &&
+                transaction.OriginalTransactionId == original.Id);
+            var eligibleQuantity = original.Quantity - priorReturns.Sum(transaction => transaction.Quantity);
+            if (request.Quantity > eligibleQuantity)
+                throw new StockAvailabilityConflictException(
+                    $"Return quantity exceeds the eligible quantity of {Math.Max(0, eligibleQuantity)}.");
+
+            if (request.Disposition == StockReturnDisposition.Restockable)
+                EnsureLotNotExpired(original.ExpiryDate);
+
+            var stock = await GetByItemAndLocationAsync(
+                original.ItemId, original.FromLocationId, original.BatchNumber, original.ExpiryDate);
+            if (stock is null)
+            {
+                stock = new StockInHand
+                {
+                    ItemId = original.ItemId,
+                    LocationId = original.FromLocationId,
+                    Quantity = 0,
+                    BatchNumber = original.BatchNumber,
+                    ExpiryDate = original.ExpiryDate
+                };
+                await _stockRepo.AddAsync(stock);
+            }
+
+            stock.Quantity = checked(stock.Quantity + request.Quantity);
+            if (request.Disposition != StockReturnDisposition.Restockable)
+                stock.QuarantinedQuantity = checked(stock.QuarantinedQuantity + request.Quantity);
+            await _stockRepo.UpdateAsync(stock);
+
+            var originalValuation = (await _valuationEntryRepo.FindAsync(entry =>
+                entry.StockTransactionId == original.Id && entry.EntryType == StockValuationEntryType.Sale))
+                .SingleOrDefault();
+            var unitCost = originalValuation?.UnitCost;
+            returnTransaction = new StockTransaction
+            {
+                ItemId = original.ItemId,
+                FromLocationId = original.FromLocationId,
+                ToLocationId = original.FromLocationId,
+                Quantity = request.Quantity,
+                TransactionType = TransactionType.Return,
+                TransactionDate = DateTime.UtcNow,
+                BatchNumber = original.BatchNumber,
+                ExpiryDate = original.ExpiryDate,
+                Notes = notes,
+                OriginalTransactionId = original.Id,
+                SourceLineReference = sourceLineReference,
+                ReturnDisposition = request.Disposition,
+                UnitCost = unitCost
+            };
+            await _txRepo.AddAsync(returnTransaction);
+
+            if (unitCost is decimal returnedUnitCost)
+                await ApplyReturnValuationAsync(
+                    original.ItemId, original.FromLocationId, request.Quantity, returnedUnitCost, returnTransaction);
+
+            await _webhookDispatcher.EnqueueAsync(WebhookEventFactory.Create(_tenantContext, "Stock.Returned",
+                new
+                {
+                    OriginalTransactionId = original.Id,
+                    original.ItemId,
+                    LocationId = original.FromLocationId,
+                    request.Quantity,
+                    request.Disposition,
+                    SourceLineReference = sourceLineReference,
+                    UnitCost = unitCost,
+                    Notes = notes,
+                    original.BatchNumber,
+                    original.ExpiryDate
+                }));
+            await _unitOfWork.SaveChangesAsync();
+        }, () => VerifyTransactionCommitAsync(returnTransaction));
+
+        _logger.LogInformation("Returned {Qty} of item {ItemId} against sale {TransactionId}",
+            request.Quantity, initialOriginal.ItemId, initialOriginal.Id);
     }
 
     /// <inheritdoc />
@@ -902,6 +1040,48 @@ public class StockService : IStockService
             ItemId = itemId,
             LocationId = locationId,
             EntryType = StockValuationEntryType.Receipt,
+            Quantity = quantity,
+            UnitCost = Round(unitCost),
+            TotalValue = totalValue
+        });
+    }
+
+    private async Task ApplyReturnValuationAsync(
+        int itemId,
+        int locationId,
+        int quantity,
+        decimal unitCost,
+        StockTransaction source)
+    {
+        var existing = (await _valuationBucketRepo.FindAsync(bucket =>
+            bucket.ItemId == itemId && bucket.LocationId == locationId)).FirstOrDefault();
+        var totalValue = Round(quantity * unitCost);
+
+        if (existing is null)
+        {
+            await _valuationBucketRepo.AddAsync(new StockValuationBucket
+            {
+                ItemId = itemId,
+                LocationId = locationId,
+                Quantity = quantity,
+                Value = totalValue
+            });
+        }
+        else
+        {
+            var bucket = await _valuationBucketRepo.GetByIdAsync(existing.Id)
+                ?? throw new InvalidOperationException("Valuation bucket disappeared during posting.");
+            bucket.Quantity = checked(bucket.Quantity + quantity);
+            bucket.Value = Round(bucket.Value + totalValue);
+            await _valuationBucketRepo.UpdateAsync(bucket);
+        }
+
+        await _valuationEntryRepo.AddAsync(new StockValuationEntry
+        {
+            StockTransaction = source,
+            ItemId = itemId,
+            LocationId = locationId,
+            EntryType = StockValuationEntryType.Return,
             Quantity = quantity,
             UnitCost = Round(unitCost),
             TotalValue = totalValue

@@ -1,7 +1,7 @@
 namespace Merconiq.Core.Entities;
 
 /// <summary>
-/// Represents a historical stock movement (receive, transfer, or sell). Maps to the
+/// Represents a historical stock movement (receive, transfer, sell, or return). Maps to the
 /// <c>StockTransactions</c> table. Used for audit, reporting, and ML input.
 /// </summary>
 public class StockTransaction : AuditableEntity
@@ -23,6 +23,19 @@ public class StockTransaction : AuditableEntity
 
     /// <summary>The kind of stock movement.</summary>
     public TransactionType TransactionType { get; set; }
+
+    /// <summary>Original sale movement for a source-linked return.</summary>
+    public int? OriginalTransactionId { get; set; }
+    public StockTransaction? OriginalTransaction { get; set; }
+
+    /// <summary>Stable source line used to prevent duplicate return postings.</summary>
+    public string? SourceLineReference { get; set; }
+
+    /// <summary>Disposition recorded for a return movement.</summary>
+    public StockReturnDisposition? ReturnDisposition { get; set; }
+
+    /// <summary>Original sale unit cost captured for a valued return.</summary>
+    public decimal? UnitCost { get; set; }
 
     /// <summary>Date and time the movement occurred.</summary>
     public DateTime TransactionDate { get; set; }
