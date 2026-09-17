@@ -1117,7 +1117,7 @@ namespace Merconiq.Infrastructure.Migrations
                         .HasColumnType("character varying(64)");
 
                     b.Property<decimal>("UnitPrice")
-                        .HasColumnType("decimal(18,2)");
+                        .HasColumnType("decimal(20,4)");
 
                     b.Property<DateTime?>("UpdatedAt")
                         .HasColumnType("timestamp with time zone");
@@ -1149,8 +1149,19 @@ namespace Merconiq.Infrastructure.Migrations
 
                     NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
 
+                    b.Property<string>("ApprovedCommercialSnapshotJson")
+                        .HasColumnType("jsonb");
+
+                    b.Property<int?>("ApprovedCommercialVersion")
+                        .HasColumnType("integer");
+
                     b.Property<int>("CalculationVersion")
                         .HasColumnType("integer");
+
+                    b.Property<int>("CommercialVersion")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(1);
 
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
@@ -1160,6 +1171,10 @@ namespace Merconiq.Infrastructure.Migrations
 
                     b.Property<int>("CurrencyScale")
                         .HasColumnType("integer");
+
+                    b.Property<string>("DeliveryTerms")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
 
                     b.Property<decimal>("DiscountAmount")
                         .HasColumnType("decimal(18,6)");
@@ -1206,6 +1221,12 @@ namespace Merconiq.Infrastructure.Migrations
                     b.Property<string>("UpdatedBy")
                         .HasColumnType("text");
 
+                    b.Property<uint>("Version")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("xid")
+                        .HasColumnName("xmin");
+
                     b.HasKey("Id");
 
                     b.HasIndex("OrderDate");
@@ -1222,7 +1243,10 @@ namespace Merconiq.Infrastructure.Migrations
                     b.HasIndex("TenantId", "PONumber")
                         .IsUnique();
 
-                    b.ToTable("PurchaseOrders");
+                    b.ToTable("PurchaseOrders", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_PurchaseOrders_ApprovedCommercialVersion", "\"Status\" <> 'Approved' OR (\"ApprovedCommercialVersion\" IS NOT NULL AND \"ApprovedCommercialVersion\" = \"CommercialVersion\" AND \"ApprovedCommercialSnapshotJson\" IS NOT NULL)");
+                        });
                 });
 
             modelBuilder.Entity("Merconiq.Core.Entities.StockInHand", b =>
