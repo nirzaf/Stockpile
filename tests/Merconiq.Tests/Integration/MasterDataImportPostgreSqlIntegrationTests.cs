@@ -144,7 +144,8 @@ public sealed class MasterDataImportPostgreSqlIntegrationTests(PostgreSqlIntegra
                 await command.ExecuteNonQueryAsync();
             }
 
-            await migrator.MigrateAsync();
+            // Apply only the migration under test; unrelated later migrations are not needed here.
+            await migrator.MigrateAsync("20260916180000_AddUnitExternalId");
             context.ChangeTracker.Clear();
             var units = await context.UnitsOfMeasure.IgnoreQueryFilters().AsNoTracking()
                 .OrderBy(unit => unit.Id).ToListAsync();
@@ -164,8 +165,6 @@ public sealed class MasterDataImportPostgreSqlIntegrationTests(PostgreSqlIntegra
                 ((long)(await command.ExecuteScalarAsync())!).Should().Be(3);
             }
 
-            // Leave only the unit-identity migration applied so its downgrade can be raced directly.
-            await migrator.MigrateAsync("20260916180000_AddUnitExternalId");
             var unitToMap = units.Single(unit => unit.TenantId == "legacy-a" && unit.Code == "EA");
             var mappedExternalId = "owner-approved-source-unit-42";
             var applicationName = $"unit-id-downgrade-{Guid.NewGuid():N}";
