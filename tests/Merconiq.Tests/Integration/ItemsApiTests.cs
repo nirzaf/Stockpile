@@ -309,10 +309,12 @@ public class ItemsApiTests : IClassFixture<CustomWebApplicationFactory>
     public async Task UnitImport_Admin_dry_run_returns200WithoutAntiforgeryToken()
     {
         var client = AuthClient;
+        var companyId = await SeedCompanyAsync();
         var request = new
         {
             Csv = "external_id,code,name,decimal_places,whole_unit_only\nunit-1,EA,Each,0,false",
-            DryRun = true
+            DryRun = true,
+            CompanyId = companyId
         };
 
         var response = await client.PostAsJsonAsync("/api/v1/organization/units/import", request);
@@ -324,10 +326,12 @@ public class ItemsApiTests : IClassFixture<CustomWebApplicationFactory>
     public async Task UnitImport_Admin_invalid_csv_values_returnRowLevelValidationErrors()
     {
         var client = AuthClient;
+        var companyId = await SeedCompanyAsync();
         var request = new
         {
             Csv = "external_id,code,name,decimal_places,whole_unit_only\nunit-1,EA,Each,invalid,false",
-            DryRun = false
+            DryRun = false,
+            CompanyId = companyId
         };
 
         var response = await client.PostAsJsonAsync("/api/v1/organization/units/import", request);

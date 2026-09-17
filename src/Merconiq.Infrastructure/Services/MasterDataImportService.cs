@@ -580,7 +580,9 @@ public sealed class MasterDataImportService(
         if (!codes.Add(row.Code)) return "Code is duplicated in the import.";
         if (string.IsNullOrWhiteSpace(row.Name) || row.Name.Length > 100)
             return "Name is required and must be at most 100 characters.";
-        if (!row.DecimalPlacesParsed || row.DecimalPlaces is < 0 or > 6)
+        if (!row.DecimalPlacesParsed)
+            return "Decimal places must be an integer between 0 and 6.";
+        if (row.DecimalPlaces is < 0 or > 6)
             return "Decimal places must be between 0 and 6.";
         if (!row.IsWholeUnitOnlyParsed) return "Whole-unit-only must be true or false.";
         if (row.IsWholeUnitOnly && row.DecimalPlaces != 0)
@@ -592,8 +594,9 @@ public sealed class MasterDataImportService(
     {
         if (string.IsNullOrWhiteSpace(csv)) throw new ArgumentException("CSV content is required.", nameof(csv));
         var records = ParseCsvRecords(csv.TrimStart('\uFEFF'));
-        if (records.Count < 2
-            || records[0].Error is not null
+        if (records.Count < 2)
+            throw new ArgumentException("CSV must include at least one data row.", nameof(csv));
+        if (records[0].Error is not null
             || records[0].Fields.Count != 5
             || !records[0].Fields.Select(value => value.Trim()).SequenceEqual(
                 ["external_id", "code", "name", "decimal_places", "whole_unit_only"],
