@@ -28,6 +28,50 @@ public sealed class CompanyCapabilityPostgreSqlApiTests(PostgreSqlIntegrationFix
     private readonly PostgreSqlCompanyApiFactory _factory = new(fixture);
 
     [PostgreSqlFact]
+    public async Task Real_jwt_can_import_branches_only_for_a_granted_company()
+    {
+        fixture.EnsureEnabled();
+        var suffix = Guid.NewGuid().ToString("N");
+        var tenant = await SeedCompanyStockAsync(fixture, suffix);
+        var buyer = await CreatePersonaAsync(
+            "Buyer", CompanyCapability.View | CompanyCapability.Edit, suffix, tenant.CompanyAId);
+
+        const string authorizedCsv = "external_id,code,name,address,time_zone_id,is_active\n"
+            + "branch-a,BR-A,Authorized branch,,UTC,true";
+        var authorizedResponse = await buyer.Client.PostAsJsonAsync(
+            "/api/v1/organization/branches/import",
+            new { csv = authorizedCsv, dryRun = false, companyId = tenant.CompanyAId });
+
+        authorizedResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+        using (var authorizedBody = await authorizedResponse.Content.ReadFromJsonAsync<JsonDocument>())
+        {
+            authorizedBody!.RootElement.GetProperty("data").GetProperty("created").GetInt32().Should().Be(1);
+        }
+
+        const string forbiddenCsv = "external_id,code,name,address,time_zone_id,is_active\n"
+            + "branch-b,BR-B,Unauthorized branch,,UTC,true";
+        var forbiddenResponse = await buyer.Client.PostAsJsonAsync(
+            "/api/v1/organization/branches/import",
+            new { csv = forbiddenCsv, dryRun = false, companyId = tenant.CompanyBId });
+
+        forbiddenResponse.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+
+        await using var verification = fixture.CreateContext(tenant.TenantId);
+        var companyABranches = await verification.Branches.IgnoreQueryFilters()
+            .Where(branch => branch.TenantId == tenant.TenantId &&
+                (branch.ExternalId == "branch-a" || branch.ExternalId == "branch-b"))
+            .Select(branch => new { branch.ExternalId, branch.CompanyId })
+            .ToListAsync();
+        companyABranches.Should().ContainSingle();
+        companyABranches[0].ExternalId.Should().Be("branch-a");
+        companyABranches[0].CompanyId.Should().Be(tenant.CompanyAId);
+
+        (await verification.Branches.IgnoreQueryFilters()
+            .CountAsync(branch => branch.TenantId == tenant.TenantId && branch.ExternalId == "branch-b"))
+            .Should().Be(0, "a denied import must not create a branch for the ungranted company");
+    }
+
+    [PostgreSqlFact]
     public async Task Real_jwt_persona_matrix_filters_companies_and_enforces_transfer_approval_separation()
     {
         fixture.EnsureEnabled();
