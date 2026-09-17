@@ -575,7 +575,7 @@ public class StockService : IStockService
                 var key = group.Key;
                 var reserved = reservedByLot.GetValueOrDefault(key);
                 var onHand = group.Sum(row => row.Quantity);
-                return new StockAvailabilityView(key.Item1, key.Item2, key.BatchNumber, key.ExpiryDate,
+                return new StockAvailabilityView(key.ItemId, key.LocationId, key.BatchNumber, key.ExpiryDate,
                     onHand, reserved, Math.Max(0, onHand - reserved));
             })
             .OrderBy(row => row.ItemId)

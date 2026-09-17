@@ -127,7 +127,6 @@ public sealed class StockReservationIntegrationTests
         int locationId;
         var requestedExpiry = DateTime.UtcNow.Date.AddDays(2);
         var expiredDate = DateTime.UtcNow.Date.AddDays(-1);
-        var request = new CreateStockReservationRequest(0, 0, 1, "line-idempotent-fefo");
 
         await using (var context = CreateContext(database, tenant))
         {
@@ -149,7 +148,7 @@ public sealed class StockReservationIntegrationTests
             await context.SaveChangesAsync();
         }
 
-        request = request with { ItemId = itemId, LocationId = locationId };
+        var request = new CreateStockReservationRequest(itemId, locationId, 1, "line-idempotent-fefo");
         await using (var context = CreateContext(database, tenant))
             await CreateService(context, tenant).CreateReservationAsync(request);
 
@@ -173,8 +172,11 @@ public sealed class StockReservationIntegrationTests
         var reservation = await verify.StockReservations.SingleAsync();
         reservation.BatchNumber.Should().Be("FUTURE");
         reservation.ExpiryDate.Should().Be(requestedExpiry);
-        (await verify.StockInHand.OrderBy(stock => stock.BatchNumber).Select(stock => stock.ReservedQuantity).ToArrayAsync())
-            .Should().Equal(0, 1);
+        var reservedQuantities = await verify.StockInHand
+            .OrderBy(stock => stock.BatchNumber)
+            .Select(stock => stock.ReservedQuantity)
+            .ToArrayAsync();
+        reservedQuantities.Should().Equal(0, 1);
     }
 
     [Fact]

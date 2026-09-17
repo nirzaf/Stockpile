@@ -50,4 +50,11 @@ The current PostgreSQL schema stores expiry in `timestamp with time zone`
 columns. At service lookup and EF persistence boundaries, Merconiq preserves the
 supplied year/month/day and normalizes the value to UTC midnight. An unspecified
 `DateTime` or a value with a time component therefore cannot shift the expiry
-calendar date or create a second identity for the same lot.
+calendar date or create a second identity for the same lot. Date-based lookup
+also recognizes an existing row with a non-midnight timestamp on that UTC day;
+the row is canonicalized when it is next modified. If multiple stock rows match
+the same item, location, batch and expiry date, mutation fails with a conflict
+so the balances can be reconciled explicitly instead of silently choosing one.
+Availability groups matching stock and reservation timestamps by calendar date.
+An idempotent retry returns its existing active reservation before re-running
+first-expiry selection; reservation consumption still enforces expiry.
