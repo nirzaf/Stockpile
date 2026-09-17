@@ -1,11 +1,15 @@
 @page "/PurchaseOrders/Create"
 @using Microsoft.AspNetCore.Authorization
 @using Microsoft.AspNetCore.Components.Authorization
+@using Merconiq.Core.Entities
+@using Merconiq.Core.Interfaces
+@using Merconiq.Core.Services
 @using Merconiq.Web.Security
 @attribute [Authorize(Policy = CapabilityPolicies.TenantAdministrator)]
 @inject IPurchaseOrderService POService
 @inject ISupplierService SupplierService
 @inject IItemService ItemService
+@inject IRepository<TaxRule> TaxRuleRepository
 @inject AuthenticationStateProvider AuthenticationStateProvider
 @inject ICurrentUserAuthorization CurrentUserAuthorization
 @inject ISnackbar Snackbar
@@ -62,6 +66,34 @@
                         <MudItem xs="3">
                             <MudNumericField T="decimal" @bind-Value="item.UnitPrice" Label="Unit Price" Format="N2" Required="true" />
                         </MudItem>
+                        <MudItem xs="3">
+                            <MudNumericField T="decimal" @bind-Value="item.DiscountPercent" Label="Discount %" Min="0" Max="100" Format="N2" />
+                        </MudItem>
+                        <MudItem xs="3">
+                            <MudSelect T="int?" @bind-Value="item.TaxRuleId" Label="Tax rule" AnchorOrigin="Origin.BottomCenter">
+                                <MudSelectItem T="int?" Value="@((int?)null)">-- Explicit tax input --</MudSelectItem>
+                                @foreach (var rule in _taxRules)
+                                {
+                                    <MudSelectItem T="int?" Value="@((int?)rule.Id)">@rule.Code (@rule.RatePercent%)</MudSelectItem>
+                                }
+                            </MudSelect>
+                        </MudItem>
+                        <MudItem xs="3">
+                            <MudSelect T="TaxCategory" @bind-Value="item.TaxCategory" Label="Tax category" Disabled="@item.TaxRuleId.HasValue">
+                                @foreach (var category in Enum.GetValues<TaxCategory>())
+                                {
+                                    <MudSelectItem T="TaxCategory" Value="@category">@category</MudSelectItem>
+                                }
+                            </MudSelect>
+                        </MudItem>
+                        <MudItem xs="3">
+                            <MudSelect T="TaxCalculationMode" @bind-Value="item.TaxMode" Label="Tax pricing" Disabled="@item.TaxRuleId.HasValue">
+                                @foreach (var mode in Enum.GetValues<TaxCalculationMode>())
+                                {
+                                    <MudSelectItem T="TaxCalculationMode" Value="@mode">@mode</MudSelectItem>
+                                }
+                            </MudSelect>
+                        </MudItem>
                         <MudItem xs="1" Class="d-flex justify-center align-end">
                             <MudIconButton Icon="@Icons.Material.Filled.Delete" Color="Color.Error" OnClick="@(e => RemoveLineItem(item))" />
                         </MudItem>
@@ -87,6 +119,7 @@
     };
     private IEnumerable<Supplier> _suppliers = new List<Supplier>();
     private IEnumerable<Item> _items = new List<Item>();
+    private IEnumerable<TaxRule> _taxRules = new List<TaxRule>();
     private string? _message;
     private readonly string _createRequestKey = Guid.NewGuid().ToString("N");
 
@@ -101,6 +134,7 @@
 
         _suppliers = await SupplierService.GetAllAsync();
         _items = await ItemService.GetAllAsync();
+        _taxRules = await TaxRuleRepository.FindAsync(rule => rule.IsActive);
     }
 
     private void AddLineItem()

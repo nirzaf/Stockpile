@@ -28,6 +28,21 @@ public class PurchaseOrder : AuditableEntity
     /// <summary>Monetary total of all line items.</summary>
     public decimal TotalAmount { get; set; }
 
+    /// <summary>Rounded subtotal before tax after line discounts.</summary>
+    public decimal NetAmount { get; set; }
+
+    /// <summary>Total line discounts.</summary>
+    public decimal DiscountAmount { get; set; }
+
+    /// <summary>Total tax amount.</summary>
+    public decimal TaxAmount { get; set; }
+
+    /// <summary>Currency precision used by all lines in this document.</summary>
+    public int CurrencyScale { get; set; } = 2;
+
+    /// <summary>Calculation-policy version used for the persisted document snapshot.</summary>
+    public int CalculationVersion { get; set; }
+
     /// <summary>Current lifecycle status of the purchase order.</summary>
     public PurchaseOrderStatus Status { get; set; }
 

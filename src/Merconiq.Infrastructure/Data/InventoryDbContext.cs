@@ -59,6 +59,9 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
     /// <summary>Purchase order line items.</summary>
     public DbSet<OrderDetail> OrderDetails { get; set; } = null!;
 
+    /// <summary>Effective-dated tenant tax policies.</summary>
+    public DbSet<TaxRule> TaxRules { get; set; } = null!;
+
     /// <summary>Historical stock movements (receive, transfer, sell).</summary>
     public DbSet<StockTransaction> StockTransactions { get; set; } = null!;
 
@@ -517,7 +520,12 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
             entity.HasIndex(e => e.TenantId);
             entity.HasIndex(e => new { e.TenantId, e.PONumber }).IsUnique();
             entity.Property(e => e.PONumber).HasMaxLength(50).IsRequired();
-            entity.Property(e => e.TotalAmount).HasColumnType("decimal(18,2)");
+            entity.Property(e => e.TotalAmount).HasColumnType("decimal(18,6)");
+            entity.Property(e => e.NetAmount).HasColumnType("decimal(18,6)");
+            entity.Property(e => e.DiscountAmount).HasColumnType("decimal(18,6)");
+            entity.Property(e => e.TaxAmount).HasColumnType("decimal(18,6)");
+            entity.Property(e => e.CurrencyScale).IsRequired();
+            entity.Property(e => e.CalculationVersion).IsRequired();
             entity.Property(e => e.Status).HasConversion<string>().HasMaxLength(50);
             entity.Property(e => e.DocumentId)
                 .HasConversion(id => id.Value, value => new DocumentIdentityId(value))
@@ -561,11 +569,42 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
                   .HasForeignKey(od => od.ItemId)
                   .OnDelete(DeleteBehavior.Restrict);
 
+            entity.Property(e => e.DiscountPercent).HasColumnType("decimal(18,6)");
+            entity.Property(e => e.TaxRatePercent).HasColumnType("decimal(18,6)");
+            entity.Property(e => e.TaxCategory).HasConversion<string>().HasMaxLength(32).IsRequired();
+            entity.Property(e => e.TaxMode).HasConversion<string>().HasMaxLength(32).IsRequired();
+            entity.Property(e => e.Direction).HasConversion<string>().HasMaxLength(32).IsRequired();
+            entity.Property(e => e.CurrencyScale).IsRequired();
+            entity.Property(e => e.CalculationVersion).IsRequired();
+            entity.Property(e => e.NetAmount).HasColumnType("decimal(18,6)");
+            entity.Property(e => e.DiscountAmount).HasColumnType("decimal(18,6)");
+            entity.Property(e => e.TaxableAmount).HasColumnType("decimal(18,6)");
+            entity.Property(e => e.TaxAmount).HasColumnType("decimal(18,6)");
+            entity.Property(e => e.GrossAmount).HasColumnType("decimal(18,6)");
+
+            entity.HasOne(od => od.TaxRule)
+                .WithMany()
+                .HasForeignKey(od => od.TaxRuleId)
+                .OnDelete(DeleteBehavior.Restrict);
+
             entity.HasOne(od => od.DocumentLineIdentity)
                 .WithOne(line => line.OrderDetail)
                 .HasForeignKey<OrderDetail>(od => new { od.DocumentLineId, od.TenantId })
                 .HasPrincipalKey<DocumentLineIdentity>(line => new { line.Id, line.TenantId })
                 .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<TaxRule>(entity =>
+        {
+            entity.HasQueryFilter(rule => rule.TenantId == CurrentTenantId);
+            entity.Property(rule => rule.TenantId).HasMaxLength(64).IsRequired();
+            entity.Property(rule => rule.Code).HasMaxLength(64).IsRequired();
+            entity.Property(rule => rule.Category).HasConversion<string>().HasMaxLength(32).IsRequired();
+            entity.Property(rule => rule.RatePercent).HasColumnType("decimal(18,6)");
+            entity.Property(rule => rule.CalculationMode).HasConversion<string>().HasMaxLength(32).IsRequired();
+            entity.Property(rule => rule.EffectiveFromUtc).IsRequired();
+            entity.HasIndex(rule => new { rule.TenantId, rule.Code, rule.EffectiveFromUtc }).IsUnique();
+            entity.HasIndex(rule => new { rule.TenantId, rule.Code, rule.IsActive });
         });
 
         modelBuilder.Entity<DocumentIdentity>(entity =>

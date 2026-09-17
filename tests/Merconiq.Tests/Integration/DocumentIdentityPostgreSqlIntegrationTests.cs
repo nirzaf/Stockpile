@@ -2,13 +2,18 @@ using System.Security.Cryptography;
 using System.Text;
 using FluentAssertions;
 using Merconiq.Core.Entities;
+using Merconiq.Core.Interfaces;
+using Merconiq.Core.Services;
 using Merconiq.Infrastructure.Data;
+using Merconiq.Infrastructure.Repositories;
 using Merconiq.Infrastructure.Services;
 using Merconiq.Tests.Infrastructure;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
+using Microsoft.Extensions.Logging.Abstractions;
 using Npgsql;
+using Moq;
 
 namespace Merconiq.Tests.Integration;
 
@@ -218,6 +223,100 @@ public sealed class DocumentIdentityPostgreSqlIntegrationTests(PostgreSqlIntegra
     }
 
     [PostgreSqlFact]
+    public async Task Purchase_order_amount_snapshots_survive_a_tax_rule_change()
+    {
+        fixture.EnsureEnabled();
+        var tenantId = $"tax-snapshot-{Guid.NewGuid():N}";
+        await using var context = fixture.CreateContext(tenantId);
+        var supplier = new Supplier { Name = "Tax snapshot supplier" };
+        var item = new Item { ItemCode = "TAX-SNAPSHOT-ITEM", Description = "Tax snapshot item", Rate = 100m };
+        var rule = new TaxRule
+        {
+            Code = "STANDARD-15",
+            Category = TaxCategory.Standard,
+            RatePercent = 15m,
+            CalculationMode = TaxCalculationMode.Exclusive,
+            EffectiveFromUtc = DateTime.UtcNow.AddDays(-1),
+            IsActive = true
+        };
+        context.Suppliers.Add(supplier);
+        context.Items.Add(item);
+        context.TaxRules.Add(rule);
+        await context.SaveChangesAsync();
+
+        var unitOfWork = new UnitOfWork(context);
+        var purchaseOrders = new Repository<PurchaseOrder>(context);
+        var taxRules = new Repository<TaxRule>(context);
+        var service = new PurchaseOrderService(
+            purchaseOrders,
+            unitOfWork,
+            new DocumentIdentityService(context, unitOfWork, new DocumentNumberService(context, unitOfWork)),
+            new Mock<IWebhookDispatcher>().Object,
+            new TestTenantContext(tenantId),
+            NullLogger<PurchaseOrderService>.Instance,
+            taxRules);
+        var order = new PurchaseOrder
+        {
+            PONumber = "TAX-SNAPSHOT-001",
+            SupplierId = supplier.Id,
+            CurrencyScale = 2
+        };
+        var detail = new OrderDetail
+        {
+            ItemId = item.Id,
+            Quantity = 1,
+            UnitPrice = 100m,
+            TaxRuleId = rule.Id
+        };
+
+        var requestKey = Guid.NewGuid().ToString("N");
+        var created = await service.CreateAsync(order, [detail], requestKey);
+        created.TotalAmount.Should().Be(115m);
+        created.TaxAmount.Should().Be(15m);
+        detail.TaxRatePercent.Should().Be(15m);
+
+        var storedRule = await context.TaxRules.SingleAsync(value => value.Id == rule.Id);
+        storedRule.RatePercent = 20m;
+        await context.SaveChangesAsync();
+
+        await using (var replayContext = fixture.CreateContext(tenantId))
+        {
+            var replayUnitOfWork = new UnitOfWork(replayContext);
+            var replayService = new PurchaseOrderService(
+                new Repository<PurchaseOrder>(replayContext),
+                replayUnitOfWork,
+                new DocumentIdentityService(
+                    replayContext,
+                    replayUnitOfWork,
+                    new DocumentNumberService(replayContext, replayUnitOfWork)),
+                new Mock<IWebhookDispatcher>().Object,
+                new TestTenantContext(tenantId),
+                NullLogger<PurchaseOrderService>.Instance,
+                new Repository<TaxRule>(replayContext));
+            var replay = await replayService.CreateAsync(
+                new PurchaseOrder
+                {
+                    PONumber = "TAX-SNAPSHOT-001",
+                    SupplierId = supplier.Id,
+                    CurrencyScale = 2
+                },
+                [new OrderDetail { ItemId = item.Id, Quantity = 1, UnitPrice = 100m, TaxRuleId = rule.Id }],
+                requestKey);
+            replay.Id.Should().Be(created.Id);
+            replay.TotalAmount.Should().Be(115m);
+        }
+
+        await using var verify = fixture.CreateContext(tenantId);
+        var storedOrder = await verify.PurchaseOrders
+            .Include(value => value.OrderDetails)
+            .SingleAsync(value => value.Id == created.Id);
+        storedOrder.TotalAmount.Should().Be(115m);
+        storedOrder.TaxAmount.Should().Be(15m);
+        storedOrder.OrderDetails.Single().TaxRatePercent.Should().Be(15m);
+        storedOrder.OrderDetails.Single().GrossAmount.Should().Be(115m);
+    }
+
+    [PostgreSqlFact]
     public async Task Migration_backfills_existing_purchase_order_numbers_and_lines_without_company_ownership()
     {
         fixture.EnsureEnabled();
@@ -292,10 +391,19 @@ public sealed class DocumentIdentityPostgreSqlIntegrationTests(PostgreSqlIntegra
             mapped.DocumentIdentity.HumanNumber.Should().Be("EXISTING-PO-731");
             mapped.DocumentIdentity.CompanyId.Should().BeNull();
             mapped.DocumentIdentity.Status.Should().Be(DocumentLifecycleStatus.Active);
+            mapped.TotalAmount.Should().Be(2m);
+            mapped.NetAmount.Should().Be(2m);
+            mapped.DiscountAmount.Should().Be(0m);
+            mapped.TaxAmount.Should().Be(0m);
+            mapped.CurrencyScale.Should().Be(2);
+            mapped.CalculationVersion.Should().Be(DocumentAmountCalculator.CalculationVersion);
             mapped.OrderDetails.Should().ContainSingle();
             mapped.OrderDetails.Single().DocumentLineId.Value.Should().NotBeEmpty();
             mapped.OrderDetails.Single().DocumentLineIdentity!.DocumentId.Should().Be(mapped.DocumentId);
             mapped.OrderDetails.Single().DocumentLineIdentity!.CompanyId.Should().BeNull();
+            mapped.OrderDetails.Single().GrossAmount.Should().Be(2m);
+            mapped.OrderDetails.Single().TaxAmount.Should().Be(0m);
+            mapped.OrderDetails.Single().CalculationVersion.Should().Be(DocumentAmountCalculator.CalculationVersion);
         }
         finally
         {

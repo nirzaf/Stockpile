@@ -36,6 +36,42 @@ public sealed class DocumentAmountCalculatorTests
         result.GrossAmount.Should().Be(20.01m);
     }
 
+    [Fact]
+    public void ExemptTax_RejectsNonZeroRate()
+    {
+        var action = () => DocumentAmountCalculator.Calculate(new DocumentLineAmount(
+            1, 10m, TaxRatePercent: 5m, TaxCategory: TaxCategory.Exempt));
+
+        action.Should().Throw<ArgumentException>()
+            .WithMessage("Zero-rated and exempt lines must use a zero tax rate.*");
+    }
+
+    [Fact]
+    public void Reversal_ReturnsSignedRoundedAmounts()
+    {
+        var result = DocumentAmountCalculator.Calculate(new DocumentLineAmount(
+            2, 10m, TaxRatePercent: 15m, Direction: DocumentLineDirection.Reversal));
+
+        result.NetAmount.Should().Be(-20m);
+        result.TaxAmount.Should().Be(-3m);
+        result.GrossAmount.Should().Be(-23m);
+        result.Direction.Should().Be(DocumentLineDirection.Reversal);
+    }
+
+    [Fact]
+    public void DocumentTotals_SumIndependentlyRoundedLines()
+    {
+        var result = DocumentAmountCalculator.CalculateDocument(
+        [
+            new DocumentLineAmount(1, 10.005m),
+            new DocumentLineAmount(1, 0.005m)
+        ]);
+
+        result.NetAmount.Should().Be(10.02m);
+        result.GrossAmount.Should().Be(10.02m);
+        result.CalculationVersion.Should().Be(DocumentAmountCalculator.CalculationVersion);
+    }
+
     [Theory]
     [InlineData(-1, 10, 0, 0)]
     [InlineData(1, 10, 101, 0)]

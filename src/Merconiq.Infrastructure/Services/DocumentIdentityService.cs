@@ -308,7 +308,21 @@ public sealed class DocumentIdentityService(
             AppendField(payload, detail.ItemId.ToString(CultureInfo.InvariantCulture));
             AppendField(payload, detail.Quantity.ToString(CultureInfo.InvariantCulture));
             AppendField(payload, detail.UnitPrice.ToString("G29", CultureInfo.InvariantCulture));
+            AppendField(payload, detail.TaxRuleId?.ToString(CultureInfo.InvariantCulture));
+            AppendField(payload, detail.Direction.ToString());
+            AppendField(payload, detail.DiscountPercent.ToString("G29", CultureInfo.InvariantCulture));
+            AppendField(payload, detail.CurrencyScale.ToString(CultureInfo.InvariantCulture));
+            // A tax-rule ID is the request input; its resolved rate/category/mode are
+            // snapshots and must not make a retry conflict after the master is revised.
+            if (!detail.TaxRuleId.HasValue)
+            {
+                AppendField(payload, detail.TaxCategory.ToString());
+                AppendField(payload, detail.TaxMode.ToString());
+                AppendField(payload, detail.TaxRatePercent.ToString("G29", CultureInfo.InvariantCulture));
+            }
         }
+
+        AppendField(payload, purchaseOrder.CurrencyScale.ToString(CultureInfo.InvariantCulture));
 
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(payload.ToString())));
     }
