@@ -6,6 +6,7 @@ public sealed record PurchaseOrderCommercialSnapshot(
     string TenantId,
     Guid DocumentId,
     string PONumber,
+    DateTime OrderDate,
     int? CompanyId,
     int SupplierId,
     string SupplierName,

@@ -129,9 +129,103 @@ public sealed class PurchaseOrderApprovalPostgreSqlIntegrationTests(PostgreSqlIn
             upgraded.ApprovedCommercialVersion.Should().Be(1);
             using var snapshot = System.Text.Json.JsonDocument.Parse(upgraded.ApprovedCommercialSnapshotJson!);
             snapshot.RootElement.GetProperty("supplierName").GetString().Should().Be("Legacy approved supplier");
+            snapshot.RootElement.GetProperty("orderDate").GetDateTime().Should().Be(upgraded.OrderDate);
             snapshot.RootElement.GetProperty("companyId").ValueKind.Should().Be(System.Text.Json.JsonValueKind.Null);
             snapshot.RootElement.GetProperty("lines")[0].GetProperty("unitOfMeasureCode").GetString().Should().Be("EA");
             snapshot.RootElement.GetProperty("lines")[0].GetProperty("grossAmount").GetDecimal().Should().Be(8m);
+        }
+        finally
+        {
+            await using var dropSchema = new NpgsqlConnection(fixture.ConnectionString);
+            await dropSchema.OpenAsync();
+            await using var command = new NpgsqlCommand($"DROP SCHEMA IF EXISTS \"{schema}\" CASCADE", dropSchema);
+            await command.ExecuteNonQueryAsync();
+        }
+    }
+
+    [PostgreSqlFact]
+    public async Task Approval_migration_fails_atomically_when_an_approved_order_has_no_lines()
+    {
+        fixture.EnsureEnabled();
+        const string migrationId = "20260918010000_AddPurchaseOrderApprovalVersioning";
+        var schema = $"po_approval_empty_{Guid.NewGuid():N}";
+        var tenantId = $"po-approval-empty-{Guid.NewGuid():N}";
+        var connectionString = new NpgsqlConnectionStringBuilder(fixture.ConnectionString) { SearchPath = schema };
+        await using (var createSchema = new NpgsqlConnection(fixture.ConnectionString))
+        {
+            await createSchema.OpenAsync();
+            await using var command = new NpgsqlCommand($"CREATE SCHEMA \"{schema}\"", createSchema);
+            await command.ExecuteNonQueryAsync();
+        }
+
+        try
+        {
+            var options = new DbContextOptionsBuilder<InventoryDbContext>()
+                .UseNpgsql(connectionString.ConnectionString)
+                .ConfigureWarnings(warnings => warnings.Ignore(RelationalEventId.PendingModelChangesWarning))
+                .Options;
+            await using var context = new InventoryDbContext(options, new TestTenantContext(tenantId));
+            var migrator = context.GetService<IMigrator>();
+            await migrator.MigrateAsync("20260918000000_AddMasterDataExternalIds");
+
+            var supplier = new Supplier { Name = "Legacy supplier without PO lines" };
+            var number = $"PO-EMPTY-{Guid.NewGuid():N}"[..20];
+            var document = DocumentIdentity.Create(
+                DocumentIdentityId.New(), tenantId, null, "PurchaseOrder", number, 2026,
+                DocumentLifecycleStatus.Active, "PurchaseOrderApprovalEmptyBackfillTest");
+            context.Suppliers.Add(supplier);
+            context.DocumentIdentities.Add(document);
+            await context.SaveChangesAsync();
+
+            await using (var connection = new NpgsqlConnection(connectionString.ConnectionString))
+            {
+                await connection.OpenAsync();
+                await using var insertOrder = new NpgsqlCommand(
+                    """
+                    INSERT INTO "PurchaseOrders" (
+                        "PONumber", "OrderDate", "SupplierId", "TotalAmount", "NetAmount",
+                        "DiscountAmount", "TaxAmount", "CurrencyScale", "CalculationVersion",
+                        "Status", "Notes", "TenantId", "CreatedAt", "DocumentId")
+                    VALUES (@number, @date, @supplier, 0, 0, 0, 0, 2, 1,
+                        'Approved', NULL, @tenant, now(), @document)
+                    """,
+                    connection);
+                insertOrder.Parameters.AddWithValue("number", number);
+                insertOrder.Parameters.AddWithValue("date", new DateTime(2026, 9, 17, 0, 0, 0, DateTimeKind.Utc));
+                insertOrder.Parameters.AddWithValue("supplier", supplier.Id);
+                insertOrder.Parameters.AddWithValue("tenant", tenantId);
+                insertOrder.Parameters.AddWithValue("document", document.Id.Value);
+                await insertOrder.ExecuteNonQueryAsync();
+            }
+
+            var failure = await FluentActions.Awaiting(() => migrator.MigrateAsync(migrationId))
+                .Should().ThrowAsync<PostgresException>();
+            failure.Which.MessageText.Should().Contain(
+                "Approval snapshot backfill blocked: an approved purchase order has no lines.");
+
+            await using var verification = new NpgsqlConnection(connectionString.ConnectionString);
+            await verification.OpenAsync();
+            await using var columns = new NpgsqlCommand(
+                """
+                SELECT COUNT(*)
+                FROM information_schema.columns
+                WHERE table_schema = @schema
+                  AND table_name = 'PurchaseOrders'
+                  AND column_name IN (
+                      'ApprovedCommercialSnapshotJson', 'ApprovedCommercialVersion',
+                      'CommercialVersion', 'DeliveryTerms')
+                """,
+                verification);
+            columns.Parameters.AddWithValue("schema", schema);
+            ((long)(await columns.ExecuteScalarAsync())!).Should().Be(0,
+                "the failed migration must roll back its column additions");
+
+            await using var history = new NpgsqlCommand(
+                "SELECT EXISTS (SELECT 1 FROM \"__EFMigrationsHistory\" WHERE \"MigrationId\" = @id)",
+                verification);
+            history.Parameters.AddWithValue("id", migrationId);
+            ((bool)(await history.ExecuteScalarAsync())!).Should().BeFalse(
+                "a failed migration must not be marked as applied");
         }
         finally
         {
@@ -191,6 +285,10 @@ public sealed class PurchaseOrderApprovalPostgreSqlIntegrationTests(PostgreSqlIn
         await service.UpdateStatusAsync(order.Id, nameof(PurchaseOrderStatus.Approved));
         order.ApprovedCommercialVersion.Should().Be(1);
         order.ApprovedCommercialSnapshotJson.Should().Contain("\"unitOfMeasureCode\":\"EA\"");
+        using (var approvedSnapshot = System.Text.Json.JsonDocument.Parse(order.ApprovedCommercialSnapshotJson!))
+        {
+            approvedSnapshot.RootElement.GetProperty("orderDate").GetDateTime().Should().Be(order.OrderDate);
+        }
 
         // Exercise the amendment page's read-then-save sequence on one scoped context.
         var amendmentForm = await service.GetForAmendmentAsync(order.Id);

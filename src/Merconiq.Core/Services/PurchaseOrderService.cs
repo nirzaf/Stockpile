@@ -442,6 +442,7 @@ public class PurchaseOrderService : IPurchaseOrderService
             TenantId: po.TenantId,
             DocumentId: po.DocumentId.Value,
             PONumber: po.PONumber,
+            OrderDate: po.OrderDate,
             CompanyId: document?.CompanyId,
             SupplierId: supplier.Id,
             SupplierName: supplier.Name,

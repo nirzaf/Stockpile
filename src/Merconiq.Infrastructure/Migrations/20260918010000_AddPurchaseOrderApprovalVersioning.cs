@@ -52,6 +52,19 @@ namespace Merconiq.Infrastructure.Migrations
                     IF EXISTS (
                         SELECT 1
                         FROM "PurchaseOrders" AS po
+                        WHERE po."Status" = 'Approved'
+                          AND NOT EXISTS (
+                              SELECT 1
+                              FROM "OrderDetails" AS line
+                              WHERE line."PurchaseOrderId" = po."Id"
+                                AND line."TenantId" = po."TenantId"))
+                    THEN
+                        RAISE EXCEPTION 'Approval snapshot backfill blocked: an approved purchase order has no lines.';
+                    END IF;
+
+                    IF EXISTS (
+                        SELECT 1
+                        FROM "PurchaseOrders" AS po
                         INNER JOIN "OrderDetails" AS line
                             ON line."PurchaseOrderId" = po."Id"
                            AND line."TenantId" = po."TenantId"
@@ -73,6 +86,7 @@ namespace Merconiq.Infrastructure.Migrations
                         'tenantId', po."TenantId",
                         'documentId', po."DocumentId",
                         'poNumber', po."PONumber",
+                        'orderDate', po."OrderDate",
                         'companyId', (SELECT document."CompanyId"
                                       FROM "DocumentIdentities" AS document
                                       WHERE document."Id" = po."DocumentId"
