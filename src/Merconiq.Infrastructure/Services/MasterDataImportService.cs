@@ -268,6 +268,7 @@ public sealed class MasterDataImportService(
 
     private static List<CsvRecord> ParseCsvRecords(string csv)
     {
+        // Quoting state keeps commas and line breaks inside quoted fields from becoming record delimiters.
         var records = new List<CsvRecord>();
         var fields = new List<string>();
         var field = new System.Text.StringBuilder();
