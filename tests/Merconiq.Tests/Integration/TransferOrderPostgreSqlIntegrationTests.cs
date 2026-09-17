@@ -58,6 +58,8 @@ public sealed class TransferOrderPostgreSqlIntegrationTests(PostgreSqlIntegratio
                 sourceLocationId,
                 destinationLocationId,
                 [new TransferOrderLineRequest(itemId, 3), new TransferOrderLineRequest(itemId, 2)]), "transfer-create-1");
+            (await orders.GetRecentForCompaniesAsync([companyId]))
+                .Should().ContainSingle().Which.Id.Should().Be(order.Id);
             await orders.ApproveAsync(order.Id, new StockMutationScope(companyId));
 
             (await operation.StockTransactions.CountAsync()).Should().Be(0);

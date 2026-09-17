@@ -38,6 +38,7 @@ public sealed class TransferOrderServiceTests
         await context.SaveChangesAsync();
 
         var unitOfWork = new UnitOfWork(context);
+        var stockService = new Mock<IStockService>();
         var service = new TransferOrderService(
             new Repository<TransferOrder>(context),
             new Repository<TransferOrderLine>(context),
@@ -49,7 +50,7 @@ public sealed class TransferOrderServiceTests
             new Repository<Item>(context),
             unitOfWork,
             new DocumentIdentityService(context, unitOfWork, new DocumentNumberService(context, unitOfWork)),
-            new Mock<IStockService>().Object,
+            stockService.Object,
             tenant,
             new Mock<IWebhookDispatcher>().Object,
             NullLogger<TransferOrderService>.Instance);
@@ -65,6 +66,43 @@ public sealed class TransferOrderServiceTests
         result.Lines.Should().ContainSingle().Which.Quantity.Should().Be(4);
         (await context.TransferOrders.CountAsync()).Should().Be(1);
         (await context.DocumentLineIdentities.CountAsync()).Should().Be(1);
+
+        var otherCompany = new Company { Code = "TO-CO-2", LegalName = "Other Transfer Order Company" };
+        context.Companies.Add(otherCompany);
+        await context.SaveChangesAsync();
+        var otherBranchA = new Branch { CompanyId = otherCompany.Id, Code = "A", Name = "A" };
+        var otherBranchB = new Branch { CompanyId = otherCompany.Id, Code = "B", Name = "B" };
+        context.Branches.AddRange(otherBranchA, otherBranchB);
+        await context.SaveChangesAsync();
+        var otherSource = new Location { BranchId = otherBranchA.Id, Name = "Other Source" };
+        var otherDestination = new Location { BranchId = otherBranchB.Id, Name = "Other Destination" };
+        context.Locations.AddRange(otherSource, otherDestination);
+        await context.SaveChangesAsync();
+        var otherResult = await service.CreateAsync(new CreateTransferOrderRequest(
+            otherCompany.Id,
+            otherSource.Id,
+            otherDestination.Id,
+            [new TransferOrderLineRequest(item.Id, 2)]), "create-2");
+
+        (await service.GetRecentForCompaniesAsync([company.Id])).Should()
+            .ContainSingle().Which.Id.Should().Be(result.Id);
+        (await service.GetRecentForCompaniesAsync([otherCompany.Id])).Should()
+            .ContainSingle().Which.Id.Should().Be(otherResult.Id);
+
+        var persistedOrder = await context.TransferOrders.SingleAsync(order => order.Id == result.Id);
+        persistedOrder.Status = TransferOrderStatus.Approved;
+        await context.SaveChangesAsync();
+        await service.AmendAsync(result.Id, new CreateTransferOrderRequest(
+            company.Id,
+            source.Id,
+            destination.Id,
+            [new TransferOrderLineRequest(item.Id, 4, LineId: result.Lines[0].Id)]),
+            new StockMutationScope(company.Id));
+
+        (await context.TransferOrders.SingleAsync(order => order.Id == result.Id)).Status.Should()
+            .Be(TransferOrderStatus.Approved);
+        stockService.Verify(stock => stock.ReleaseReservationAsync(
+            It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<StockMutationScope?>()), Times.Never);
     }
 
     [Fact]

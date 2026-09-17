@@ -28,6 +28,7 @@ public sealed class TransferOrderService(
     private const string DocumentType = "TransferOrder";
     private const string RequestScope = "TransferOrder.Create";
     private const string NumberPrefix = "TO-";
+    private const int RecentOrderLimit = 100;
     private static readonly DateTimeOffset ReservationUntilResolution =
         new(9999, 12, 31, 0, 0, 0, TimeSpan.Zero);
 
@@ -38,6 +39,44 @@ public sealed class TransferOrderService(
 
         var order = await orderRepository.GetByIdAsync(id);
         return order is null ? null : await ToViewAsync(order, cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<TransferOrderView>> GetRecentForCompaniesAsync(
+        IReadOnlyCollection<int> companyIds,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(companyIds);
+        var scopedCompanyIds = companyIds.Where(companyId => companyId > 0).Distinct().ToArray();
+        if (scopedCompanyIds.Length == 0)
+            return Array.Empty<TransferOrderView>();
+
+        var orders = (await orderRepository.FindPageAsync(
+                order => scopedCompanyIds.Contains(order.CompanyId),
+                query => query.OrderByDescending(order => order.OrderDate).ThenByDescending(order => order.Id),
+                RecentOrderLimit))
+            .ToArray();
+        if (orders.Length == 0)
+            return Array.Empty<TransferOrderView>();
+
+        var orderIds = orders.Select(order => order.Id).ToArray();
+        var documentIds = orders.Select(order => order.DocumentId).Distinct().ToArray();
+        var lines = await lineRepository.FindAsync(
+            line => orderIds.Contains(line.TransferOrderId), cancellationToken);
+        var identities = await documentRepository.FindAsync(
+            document => documentIds.Contains(document.Id), cancellationToken);
+        var linesByOrder = lines.GroupBy(line => line.TransferOrderId)
+            .ToDictionary(group => group.Key, group => group.OrderBy(line => line.Id).ToArray());
+        var identitiesById = identities.ToDictionary(identity => identity.Id);
+
+        return orders.Select(order => ToView(
+                order,
+                identitiesById.TryGetValue(order.DocumentId, out var identity)
+                    ? identity
+                    : throw new InvalidOperationException("Transfer-order document identity not found."),
+                linesByOrder.TryGetValue(order.Id, out var orderLines)
+                    ? orderLines
+                    : Array.Empty<TransferOrderLine>()))
+            .ToArray();
     }
 
     public async Task<TransferOrderView> CreateAsync(
@@ -145,7 +184,7 @@ public sealed class TransferOrderService(
             var requestedIds = lines.Select(line => line.LineId!.Value).OrderBy(lineId => lineId).ToArray();
             if (!requestedIds.SequenceEqual(existingLines.Select(line => line.Id).OrderBy(lineId => lineId)))
                 throw new InvalidOperationException("An amendment must retain every existing transfer-order line identity.");
-            if (order.Status == TransferOrderStatus.Draft && AmendmentMatches(order, existingLines, request, lines))
+            if (AmendmentMatches(order, existingLines, request, lines))
                 return;
 
             if (order.Status == TransferOrderStatus.Approved)
@@ -282,16 +321,15 @@ public sealed class TransferOrderService(
             ?? throw new InvalidOperationException("Transfer-order document identity not found.");
         var lines = (await lineRepository.FindAsync(line => line.TransferOrderId == order.Id))
             .OrderBy(line => line.Id)
-            .Select(line => new TransferOrderLineView(
-                line.Id,
-                line.DocumentLineId.Value,
-                line.ItemId,
-                line.Quantity,
-                line.BatchNumber,
-                line.ExpiryDate,
-                line.ReservationSourceLineReference))
             .ToArray();
-        return new TransferOrderView(
+        return ToView(order, identity, lines);
+    }
+
+    private static TransferOrderView ToView(
+        TransferOrder order,
+        DocumentIdentity identity,
+        IReadOnlyCollection<TransferOrderLine> lines) =>
+        new(
             order.Id,
             order.DocumentId.Value,
             identity.HumanNumber,
@@ -301,8 +339,14 @@ public sealed class TransferOrderService(
             order.OrderDate,
             order.Status,
             order.Notes,
-            lines);
-    }
+            lines.Select(line => new TransferOrderLineView(
+                line.Id,
+                line.DocumentLineId.Value,
+                line.ItemId,
+                line.Quantity,
+                line.BatchNumber,
+                line.ExpiryDate,
+                line.ReservationSourceLineReference)).ToArray());
 
     private void ValidateHeader(int companyId, int fromLocationId, int toLocationId)
     {
