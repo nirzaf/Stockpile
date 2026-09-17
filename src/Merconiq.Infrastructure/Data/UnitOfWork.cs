@@ -189,11 +189,26 @@ public class UnitOfWork : IUnitOfWork
             return;
         }
 
+        if (_context.ChangeTracker.HasChanges())
+        {
+            throw new InvalidOperationException(
+                "A read-snapshot retry boundary cannot start while the DbContext has unsaved changes.");
+        }
+
         var strategy = _context.Database.CreateExecutionStrategy();
+        var attempt = 0;
         await strategy.ExecuteAsync(
             state: 0,
             operation: async (_, _, transactionCancellationToken) =>
             {
+                if (attempt++ > 0)
+                {
+                    // BeginTransactionAsync can fail before the callback reaches its catch
+                    // block. A retry still needs a fresh view of any entities the previous
+                    // attempt may have materialized.
+                    _context.ChangeTracker.Clear();
+                }
+
                 await using var transaction = await _context.Database.BeginTransactionAsync(
                     IsolationLevel.RepeatableRead, transactionCancellationToken);
                 _currentTransaction = transaction;
@@ -204,7 +219,21 @@ public class UnitOfWork : IUnitOfWork
                 }
                 catch
                 {
-                    await transaction.RollbackAsync(CancellationToken.None);
+                    try
+                    {
+                        await transaction.RollbackAsync(CancellationToken.None);
+                    }
+                    catch
+                    {
+                        // A commit can succeed in PostgreSQL and still surface a transient
+                        // connection error to the client. Preserve that original exception
+                        // so the execution strategy can retry from fresh database state.
+                    }
+
+                    // SaveChanges accepts tracked values before commit. If commit failed or
+                    // its result was ambiguous, replaying against those values can skip the
+                    // write after a rollback. Force the next attempt to reload from PostgreSQL.
+                    _context.ChangeTracker.Clear();
                     throw;
                 }
                 finally

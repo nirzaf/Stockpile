@@ -237,6 +237,57 @@ public sealed class PurchaseOrderApprovalPostgreSqlIntegrationTests(PostgreSqlIn
     }
 
     [PostgreSqlFact]
+    public async Task Approval_retry_after_ambiguous_commit_reloads_purchase_order_state()
+    {
+        fixture.EnsureEnabled();
+        var tenantId = $"po-approval-retry-{Guid.NewGuid():N}";
+        var commitInterceptor = new ThrowOnceAfterCommitInterceptor();
+        var options = new DbContextOptionsBuilder<InventoryDbContext>()
+            .UseNpgsql(fixture.ConnectionString, postgres => postgres.EnableRetryOnFailure(3))
+            .ConfigureWarnings(warnings => warnings.Ignore(RelationalEventId.PendingModelChangesWarning))
+            .AddInterceptors(commitInterceptor)
+            .Options;
+        await using var context = new InventoryDbContext(options, new TestTenantContext(tenantId));
+
+        var unit = new UnitOfMeasure { Code = "EA", Name = "Each", DecimalPlaces = 0, IsWholeUnitOnly = true };
+        var supplier = new Supplier { Name = "Retry supplier" };
+        context.UnitsOfMeasure.Add(unit);
+        context.Suppliers.Add(supplier);
+        await context.SaveChangesAsync();
+
+        var item = new Item
+        {
+            ItemCode = $"RETRY-{Guid.NewGuid():N}"[..20], Description = "Approval retry item", Rate = 1m,
+            BaseUnitId = unit.Id, PurchaseUnitId = unit.Id, PurchaseToBaseFactor = 1m,
+            QuantityPrecision = 0, WholeUnitOnly = true
+        };
+        context.Items.Add(item);
+        await context.SaveChangesAsync();
+
+        var service = CreateService(context, tenantId);
+        var order = await service.CreateAsync(
+            new PurchaseOrder
+            {
+                PONumber = $"PO-RETRY-{Guid.NewGuid():N}"[..32],
+                SupplierId = supplier.Id,
+                CurrencyScale = 2
+            },
+            [new OrderDetail { ItemId = item.Id, Quantity = 2, UnitPrice = 4m }],
+            Guid.NewGuid().ToString("N"));
+
+        commitInterceptor.Arm();
+        await service.UpdateStatusAsync(order.Id, nameof(PurchaseOrderStatus.Approved));
+
+        commitInterceptor.CommitCallbacksAfterArm.Should().Be(2,
+            "the first successful database commit reports a transient client-side error and must be retried");
+        await using var verification = fixture.CreateContext(tenantId);
+        var persistedOrder = await verification.PurchaseOrders.AsNoTracking().SingleAsync(po => po.Id == order.Id);
+        persistedOrder.Status.Should().Be(PurchaseOrderStatus.Approved);
+        persistedOrder.ApprovedCommercialVersion.Should().Be(persistedOrder.CommercialVersion);
+        persistedOrder.ApprovedCommercialSnapshotJson.Should().NotBeNullOrWhiteSpace();
+    }
+
+    [PostgreSqlFact]
     public async Task Approved_purchase_order_amendment_round_trips_four_decimal_unit_price()
     {
         fixture.EnsureEnabled();
@@ -772,6 +823,38 @@ public sealed class PurchaseOrderApprovalPostgreSqlIntegrationTests(PostgreSqlIn
 
             _paused.TrySetResult(true);
             await _release.Task.WaitAsync(cancellationToken);
+        }
+    }
+
+    private sealed class ThrowOnceAfterCommitInterceptor : DbTransactionInterceptor
+    {
+        private int _armed;
+        private int _failureInjected;
+        private int _commitCallbacksAfterArm;
+
+        public int CommitCallbacksAfterArm => Volatile.Read(ref _commitCallbacksAfterArm);
+
+        public void Arm() => Volatile.Write(ref _armed, 1);
+
+        public override Task TransactionCommittedAsync(
+            DbTransaction transaction,
+            TransactionEndEventData eventData,
+            CancellationToken cancellationToken = default)
+        {
+            if (Volatile.Read(ref _armed) == 0)
+            {
+                return Task.CompletedTask;
+            }
+
+            Interlocked.Increment(ref _commitCallbacksAfterArm);
+            if (Interlocked.Exchange(ref _failureInjected, 1) == 0)
+            {
+                throw new NpgsqlException(
+                    "Simulated transient connection loss after PostgreSQL committed the transaction.",
+                    new IOException("Simulated lost commit acknowledgement."));
+            }
+
+            return Task.CompletedTask;
         }
     }
 }
