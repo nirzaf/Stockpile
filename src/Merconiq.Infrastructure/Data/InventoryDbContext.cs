@@ -97,6 +97,7 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
     public override int SaveChanges(bool acceptAllChangesOnSuccess)
     {
         EnsureValuationEntriesAreAppendOnly();
+        EnsureDocumentLineLinksAreAppendOnly();
         NormalizeStockLotExpiryDates();
         return base.SaveChanges(acceptAllChangesOnSuccess);
     }
@@ -106,6 +107,7 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
         CancellationToken cancellationToken = default)
     {
         EnsureValuationEntriesAreAppendOnly();
+        EnsureDocumentLineLinksAreAppendOnly();
         NormalizeStockLotExpiryDates();
         return base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
     }
@@ -127,6 +129,7 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
     public override async Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
     {
         EnsureValuationEntriesAreAppendOnly();
+        EnsureDocumentLineLinksAreAppendOnly();
         NormalizeStockLotExpiryDates();
         var currentUser = _httpContextAccessor?.HttpContext?.User?.Identity?.Name ?? "System";
         var utcNow = DateTime.UtcNow;
@@ -179,6 +182,15 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
             .Any(entry => entry.State is EntityState.Modified or EntityState.Deleted))
         {
             throw new InvalidOperationException("Stock valuation entries are append-only and cannot be updated or deleted.");
+        }
+    }
+
+    private void EnsureDocumentLineLinksAreAppendOnly()
+    {
+        if (ChangeTracker.Entries<DocumentLineLink>()
+            .Any(entry => entry.State is EntityState.Modified or EntityState.Deleted))
+        {
+            throw new InvalidOperationException("Document line links are append-only and cannot be updated or deleted.");
         }
     }
 
