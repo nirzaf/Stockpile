@@ -64,7 +64,8 @@ public class LocationService : ILocationService
             await _unitOfWork.AcquireTenantOperationLockAsync("organization-state");
             await _unitOfWork.AcquireLocationLocksAsync([location.Id]);
             var persisted = (await _repo.FindAsync(candidate => candidate.Id == location.Id)).SingleOrDefault();
-            if (persisted is not null && persisted.BranchId != location.BranchId)
+            if (persisted is not null &&
+                (persisted.BranchId != location.BranchId || (!persisted.IsDeleted && location.IsDeleted)))
                 await EnsureNoActiveTransferReferenceAsync(location.Id);
             await _repo.UpdateAsync(location);
             await _unitOfWork.SaveChangesAsync();

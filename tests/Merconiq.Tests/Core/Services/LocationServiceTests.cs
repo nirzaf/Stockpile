@@ -105,6 +105,23 @@ public class LocationServiceTests
     }
 
     [Fact]
+    public async Task UpdateAsync_WhenSoftDeletingActiveTransferLocation_Throws()
+    {
+        var location = new Location { Id = 7, BranchId = 1, IsDeleted = true };
+        var persisted = new Location { Id = 7, BranchId = 1, IsDeleted = false };
+        _repoMock.Setup(r => r.FindAsync(It.IsAny<Expression<Func<Location, bool>>>()))
+            .ReturnsAsync([persisted]);
+        _transferOrdersMock.Setup(r => r.FindAsync(It.IsAny<Expression<Func<TransferOrder, bool>>>()))
+            .ReturnsAsync([new TransferOrder { ToLocationId = location.Id, Status = TransferOrderStatus.Draft }]);
+
+        var act = () => _sut.UpdateAsync(location);
+
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("A location cannot be reassigned or deleted while an active transfer order references it.");
+        _repoMock.Verify(r => r.UpdateAsync(It.IsAny<Location>()), Times.Never);
+    }
+
+    [Fact]
     public async Task DeleteAsync_WhenExists_RemovesAndSaves()
     {
         var location = _fixture.Create<Location>();
