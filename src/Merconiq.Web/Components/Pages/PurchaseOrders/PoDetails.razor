@@ -20,6 +20,13 @@
 }
 else
 {
+    @if (_po.ApprovedCommercialVersion.HasValue && _po.ApprovedCommercialVersion != _po.CommercialVersion)
+    {
+        <MudAlert Severity="Severity.Warning" Class="mb-3">
+            Commercial version @_po.CommercialVersion is not approved. Version @_po.ApprovedCommercialVersion was last approved; reapproval is required before this order can proceed.
+        </MudAlert>
+    }
+
     <MudPaper Elevation="1" Class="pa-4 mb-4">
         <MudGrid>
             <MudItem xs="6" sm="3"><MudText Typo="Typo.subtitle2" Color="Color.Secondary">PO Number</MudText></MudItem>
@@ -47,6 +54,15 @@ else
 
             <MudItem xs="6" sm="3"><MudText Typo="Typo.subtitle2" Color="Color.Secondary">Calculation</MudText></MudItem>
             <MudItem xs="6" sm="3"><MudText>v@_po.CalculationVersion, @_po.CurrencyScale decimals</MudText></MudItem>
+
+            <MudItem xs="6" sm="3"><MudText Typo="Typo.subtitle2" Color="Color.Secondary">Commercial version</MudText></MudItem>
+            <MudItem xs="6" sm="3"><MudText>v@_po.CommercialVersion (approved: @(_po.ApprovedCommercialVersion?.ToString() ?? "never"))</MudText></MudItem>
+
+            @if (!string.IsNullOrWhiteSpace(_po.DeliveryTerms))
+            {
+                <MudItem xs="6" sm="3"><MudText Typo="Typo.subtitle2" Color="Color.Secondary">Delivery terms</MudText></MudItem>
+                <MudItem xs="6" sm="9"><MudText>@_po.DeliveryTerms</MudText></MudItem>
+            }
         </MudGrid>
     </MudPaper>
 
@@ -79,6 +95,7 @@ else
         }
         @if (_po.Status == PurchaseOrderStatus.Approved)
         {
+            <MudButton Variant="Variant.Outlined" Color="Color.Warning" Href="@($"/PurchaseOrders/Amend/{_po.Id}")">Amend commercial terms</MudButton>
             <MudButton Variant="Variant.Filled" Color="Color.Info" OnClick="@(() => UpdateStatus(PurchaseOrderStatus.Received))">Mark as Received</MudButton>
         }
         @if (_po.Status is PurchaseOrderStatus.Submitted or PurchaseOrderStatus.Approved)

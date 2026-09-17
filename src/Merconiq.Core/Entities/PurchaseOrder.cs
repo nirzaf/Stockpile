@@ -43,6 +43,21 @@ public class PurchaseOrder : AuditableEntity
     /// <summary>Calculation-policy version used for the persisted document snapshot.</summary>
     public int CalculationVersion { get; set; }
 
+    /// <summary>Monotonically increasing version of the commercial terms.</summary>
+    public int CommercialVersion { get; set; } = 1;
+
+    /// <summary>Commercial version captured by the most recent approval.</summary>
+    public int? ApprovedCommercialVersion { get; set; }
+
+    /// <summary>JSON snapshot of the commercial terms at the most recent approval.</summary>
+    public string? ApprovedCommercialSnapshotJson { get; set; }
+
+    /// <summary>Supplier-agreed delivery terms captured with the order.</summary>
+    public string? DeliveryTerms { get; set; }
+
+    /// <summary>PostgreSQL row version used to reject concurrent PO status/amendment writes.</summary>
+    public uint Version { get; private set; }
+
     /// <summary>Current lifecycle status of the purchase order.</summary>
     public PurchaseOrderStatus Status { get; set; }
 

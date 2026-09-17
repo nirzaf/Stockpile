@@ -545,6 +545,9 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
 
         modelBuilder.Entity<PurchaseOrder>(entity =>
         {
+            entity.ToTable("PurchaseOrders", table => table.HasCheckConstraint(
+                "CK_PurchaseOrders_ApprovedCommercialVersion",
+                "\"Status\" <> 'Approved' OR (\"ApprovedCommercialVersion\" IS NOT NULL AND \"ApprovedCommercialVersion\" = \"CommercialVersion\" AND \"ApprovedCommercialSnapshotJson\" IS NOT NULL)"));
             entity.HasQueryFilter(e => e.TenantId == CurrentTenantId);
             entity.Property(e => e.TenantId).HasMaxLength(64).IsRequired();
             entity.HasIndex(e => e.TenantId);
@@ -556,6 +559,14 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
             entity.Property(e => e.TaxAmount).HasColumnType("decimal(18,6)");
             entity.Property(e => e.CurrencyScale).IsRequired();
             entity.Property(e => e.CalculationVersion).IsRequired();
+            entity.Property(e => e.CommercialVersion).HasDefaultValue(1).IsRequired();
+            entity.Property(e => e.ApprovedCommercialSnapshotJson).HasColumnType("jsonb");
+            entity.Property(e => e.DeliveryTerms).HasMaxLength(1000);
+            entity.Property(e => e.Version)
+                .HasColumnName("xmin")
+                .HasColumnType("xid")
+                .ValueGeneratedOnAddOrUpdate()
+                .IsConcurrencyToken();
             entity.Property(e => e.Status).HasConversion<string>().HasMaxLength(50);
             entity.Property(e => e.DocumentId)
                 .HasConversion(id => id.Value, value => new DocumentIdentityId(value))
