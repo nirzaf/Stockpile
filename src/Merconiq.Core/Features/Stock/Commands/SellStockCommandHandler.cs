@@ -20,6 +20,7 @@ public class SellStockCommandHandler : IRequestHandler<SellStockCommand>
         _logger.LogDebug("Handling SellStockCommand item={ItemId}, loc={LocId}, qty={Qty}", request.ItemId, request.LocationId, request.Quantity);
         await _stockService.SellStockAsync(
             request.ItemId, request.LocationId, request.Quantity, request.Notes,
-            request.BatchNumber, request.ExpiryDate, mutationScope: request.MutationScope);
+            request.BatchNumber, request.ExpiryDate, mutationScope: request.MutationScope,
+            expiryExceptionReason: request.ExpiryExceptionReason);
     }
 }

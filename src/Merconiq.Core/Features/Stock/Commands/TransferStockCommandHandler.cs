@@ -21,6 +21,6 @@ public class TransferStockCommandHandler : IRequestHandler<TransferStockCommand>
             request.ItemId, request.FromLocationId, request.ToLocationId, request.Quantity);
         await _stockService.TransferStockAsync(
             request.ItemId, request.FromLocationId, request.ToLocationId, request.Quantity, request.Notes,
-            request.BatchNumber, request.ExpiryDate, request.MutationScope);
+            request.BatchNumber, request.ExpiryDate, request.MutationScope, request.ExpiryExceptionReason);
     }
 }

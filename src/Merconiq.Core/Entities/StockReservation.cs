@@ -18,6 +18,9 @@ public sealed class StockReservation : AuditableEntity
     public DateTimeOffset? ClosedAt { get; set; }
     public string? ResolutionReason { get; set; }
 
+    /// <summary>Reason recorded when an authorized user reserves stock from an expired lot.</summary>
+    public string? ExpiryExceptionReason { get; set; }
+
     /// <summary>PostgreSQL xmin value used for optimistic concurrency checks.</summary>
     public uint Version { get; set; }
 }

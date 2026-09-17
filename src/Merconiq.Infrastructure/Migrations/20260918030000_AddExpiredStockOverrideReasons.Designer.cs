@@ -3,6 +3,7 @@ using System;
 using Merconiq.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace Merconiq.Infrastructure.Migrations
 {
     [DbContext(typeof(InventoryDbContext))]
-    partial class InventoryDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260918030000_AddExpiredStockOverrideReasons")]
+    partial class AddExpiredStockOverrideReasons
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -1443,19 +1446,8 @@ namespace Merconiq.Infrastructure.Migrations
                         .HasMaxLength(500)
                         .HasColumnType("character varying(500)");
 
-                    b.Property<int?>("OriginalTransactionId")
-                        .HasColumnType("integer");
-
                     b.Property<int>("Quantity")
                         .HasColumnType("integer");
-
-                    b.Property<string>("ReturnDisposition")
-                        .HasMaxLength(32)
-                        .HasColumnType("character varying(32)");
-
-                    b.Property<string>("SourceLineReference")
-                        .HasMaxLength(128)
-                        .HasColumnType("character varying(128)");
 
                     b.Property<string>("TenantId")
                         .IsRequired()
@@ -1472,9 +1464,6 @@ namespace Merconiq.Infrastructure.Migrations
                         .IsRequired()
                         .HasMaxLength(50)
                         .HasColumnType("character varying(50)");
-
-                    b.Property<decimal?>("UnitCost")
-                        .HasColumnType("decimal(18,6)");
 
                     b.Property<DateTime?>("UpdatedAt")
                         .HasColumnType("timestamp with time zone");
@@ -1493,12 +1482,6 @@ namespace Merconiq.Infrastructure.Migrations
                     b.HasIndex("FromLocationId", "TenantId");
 
                     b.HasIndex("ItemId", "TransactionDate");
-
-                    b.HasIndex("OriginalTransactionId", "TenantId");
-
-                    b.HasIndex("TenantId", "SourceLineReference")
-                        .IsUnique()
-                        .HasFilter("\"SourceLineReference\" IS NOT NULL");
 
                     b.HasIndex("ToLocationId", "TenantId");
 
@@ -2349,12 +2332,6 @@ namespace Merconiq.Infrastructure.Migrations
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
 
-                    b.HasOne("Merconiq.Core.Entities.StockTransaction", "OriginalTransaction")
-                        .WithMany()
-                        .HasForeignKey("OriginalTransactionId", "TenantId")
-                        .HasPrincipalKey("Id", "TenantId")
-                        .OnDelete(DeleteBehavior.Restrict);
-
                     b.HasOne("Merconiq.Core.Entities.Location", "ToLocation")
                         .WithMany()
                         .HasForeignKey("ToLocationId", "TenantId")
@@ -2364,8 +2341,6 @@ namespace Merconiq.Infrastructure.Migrations
                     b.Navigation("FromLocation");
 
                     b.Navigation("Item");
-
-                    b.Navigation("OriginalTransaction");
 
                     b.Navigation("ToLocation");
                 });

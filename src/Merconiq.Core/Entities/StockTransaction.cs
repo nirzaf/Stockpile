@@ -48,4 +48,7 @@ public class StockTransaction : AuditableEntity
 
     /// <summary>Optional free-text notes.</summary>
     public string? Notes { get; set; }
+
+    /// <summary>Mandatory reason when an authorized user moves stock from an expired lot.</summary>
+    public string? ExpiryExceptionReason { get; set; }
 }

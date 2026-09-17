@@ -504,6 +504,7 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
             entity.Property(e => e.ExpiresAt).HasColumnType("timestamp with time zone").IsRequired();
             entity.Property(e => e.Status).HasConversion<string>().HasMaxLength(32).IsRequired();
             entity.Property(e => e.ResolutionReason).HasMaxLength(500);
+            entity.Property(e => e.ExpiryExceptionReason).HasMaxLength(500);
             entity.HasIndex(e => new { e.TenantId, e.SourceLineReference }).IsUnique();
             entity.HasIndex(e => new { e.TenantId, e.ItemId, e.LocationId, e.BatchNumber, e.ExpiryDate, e.Status });
             entity.HasOne(e => e.Item)
@@ -783,6 +784,7 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
             entity.HasIndex(e => e.TenantId);
             entity.Property(e => e.TransactionType).HasConversion<string>().HasMaxLength(50).IsRequired();
             entity.Property(e => e.Notes).HasMaxLength(500);
+            entity.Property(e => e.ExpiryExceptionReason).HasMaxLength(500);
             entity.Property(e => e.BatchNumber).HasMaxLength(100);
             entity.Property(e => e.SourceLineReference).HasMaxLength(128);
             entity.Property(e => e.ReturnDisposition).HasConversion<string>().HasMaxLength(32);
