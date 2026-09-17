@@ -25,7 +25,8 @@ public class UnitOfWorkContractTests
             nameof(IUnitOfWork.CommitTransactionAsync),
             nameof(IUnitOfWork.RollbackTransactionAsync),
             nameof(IUnitOfWork.ExecuteInReadSnapshotAsync),
-            nameof(IUnitOfWork.AcquireLocationLocksAsync));
+            nameof(IUnitOfWork.AcquireLocationLocksAsync),
+            nameof(IUnitOfWork.AcquireTenantOperationLockAsync));
 
         foreach (var methodName in new[]
         {
@@ -33,7 +34,8 @@ public class UnitOfWorkContractTests
             nameof(IUnitOfWork.CommitTransactionAsync),
             nameof(IUnitOfWork.RollbackTransactionAsync),
             nameof(IUnitOfWork.ExecuteInReadSnapshotAsync),
-            nameof(IUnitOfWork.AcquireLocationLocksAsync)
+            nameof(IUnitOfWork.AcquireLocationLocksAsync),
+            nameof(IUnitOfWork.AcquireTenantOperationLockAsync)
         })
         {
             typeof(UnitOfWork).GetMethod(methodName).Should().NotBeNull();

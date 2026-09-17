@@ -50,6 +50,11 @@ public interface IUnitOfWork
         IReadOnlyCollection<int> locationIds,
         CancellationToken cancellationToken = default);
 
+    /// <summary>Acquires a tenant-scoped transaction lock for a serialized one-shot operation.</summary>
+    Task AcquireTenantOperationLockAsync(
+        string operation,
+        CancellationToken cancellationToken = default);
+
     /// <summary>Clears the EF Core change tracker. Use after a failed <c>SaveChangesAsync</c> to retry.</summary>
     void ClearTracker();
 }

@@ -223,16 +223,10 @@ public class UnitOfWork : IUnitOfWork
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(locationIds);
-        if (locationIds.Count == 0 ||
-            _context.Database.ProviderName != "Npgsql.EntityFrameworkCore.PostgreSQL")
+        if (locationIds.Count == 0 || !IsPostgreSql)
         {
             return;
         }
-
-        if (!HasActiveTransaction)
-            throw new InvalidOperationException("Location locks must be acquired inside the stock operation transaction.");
-        if (string.IsNullOrWhiteSpace(_context.CurrentTenantId))
-            throw new InvalidOperationException("A resolved tenant is required to acquire location locks.");
 
         foreach (var locationId in locationIds.Distinct().Order())
         {
@@ -241,11 +235,39 @@ public class UnitOfWork : IUnitOfWork
 
             var lockKey = string.Create(CultureInfo.InvariantCulture,
                 $"stock-location:{_context.CurrentTenantId}:{locationId}");
-            await _context.Database.ExecuteSqlInterpolatedAsync(
-                $"SELECT pg_advisory_xact_lock(hashtextextended({lockKey}, 0))",
-                cancellationToken);
+            await AcquireTransactionAdvisoryLockAsync(lockKey, cancellationToken);
         }
     }
+
+    public Task AcquireTenantOperationLockAsync(
+        string operation,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(operation);
+        if (!IsPostgreSql)
+            return Task.CompletedTask;
+
+        var lockKey = string.Create(CultureInfo.InvariantCulture,
+            $"tenant-operation:{_context.CurrentTenantId}:{operation.Trim()}");
+        return AcquireTransactionAdvisoryLockAsync(lockKey, cancellationToken);
+    }
+
+    private async Task AcquireTransactionAdvisoryLockAsync(
+        string lockKey,
+        CancellationToken cancellationToken)
+    {
+        if (!HasActiveTransaction)
+            throw new InvalidOperationException("Advisory locks must be acquired inside the owning transaction.");
+        if (string.IsNullOrWhiteSpace(_context.CurrentTenantId))
+            throw new InvalidOperationException("A resolved tenant is required to acquire advisory locks.");
+
+        await _context.Database.ExecuteSqlInterpolatedAsync(
+            $"SELECT pg_advisory_xact_lock(hashtextextended({lockKey}, 0))",
+            cancellationToken);
+    }
+
+    private bool IsPostgreSql =>
+        _context.Database.ProviderName == "Npgsql.EntityFrameworkCore.PostgreSQL";
 
     public void ClearTracker()
     {

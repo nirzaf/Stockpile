@@ -54,6 +54,7 @@ public sealed class OpeningStockImportService(
         {
             await unitOfWork.ExecuteInTransactionAsync(async () =>
             {
+                await unitOfWork.AcquireTenantOperationLockAsync("opening-stock-baseline", cancellationToken);
                 var existing = await context.OpeningStockImports
                     .AsNoTracking()
                     .Include(import => import.Lines)
