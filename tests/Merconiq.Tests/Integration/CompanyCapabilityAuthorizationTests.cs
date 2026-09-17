@@ -30,7 +30,7 @@ public sealed class CompanyCapabilityAuthorizationTests : IClassFixture<CustomWe
             ("Operator", CompanyCapability.View | CompanyCapability.Post),
             ("Buyer", CompanyCapability.View | CompanyCapability.Edit),
             ("Accountant", CompanyCapability.View | CompanyCapability.Approve |
-                CompanyCapability.Post | CompanyCapability.Reverse),
+                CompanyCapability.Post | CompanyCapability.Reverse | CompanyCapability.OverrideExpiredStock),
             ("Cashier", CompanyCapability.View | CompanyCapability.Post),
             ("CompanyAdmin", CompanyCapability.View | CompanyCapability.Edit | CompanyCapability.Administer),
             ("RestrictedAuditor", CompanyCapability.View)
@@ -60,6 +60,75 @@ public sealed class CompanyCapabilityAuthorizationTests : IClassFixture<CustomWe
                     $"{role} with {grant} should {(roleCanPerform && grantIncludesCapability ? "have" : "not have")} {capability}");
             }
         }
+    }
+
+    [Fact]
+    public async Task Expired_stock_override_requires_a_company_grant_and_persists_its_reason()
+    {
+        var company = await CreateCompanyAsync();
+        var (location, _, item) = await CreateStockFixtureAsync(company.Id, company.Id);
+        var expiryDate = DateTime.UtcNow.Date.AddDays(-1);
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<InventoryDbContext>();
+            var stock = await db.StockInHand.SingleAsync(row => row.LocationId == location.Id);
+            stock.BatchNumber = "LOT-EXPIRED-AUTH";
+            stock.ExpiryDate = expiryDate;
+            await db.SaveChangesAsync();
+        }
+
+        using var operatorClient = _factory.CreateAuthenticatedClient("Operator");
+        using var accountantBootstrapClient = _factory.CreateAuthenticatedClient("Accountant");
+        var operatorUser = await GetTestUserAsync("Operator");
+        var accountant = await GetTestUserAsync("Accountant");
+        await ClearMembershipsAsync(operatorUser.Id);
+        await ClearMembershipsAsync(accountant.Id);
+        await AddMembershipAsync(company.Id, operatorUser.Id, CompanyCapability.View | CompanyCapability.Post);
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var memberships = scope.ServiceProvider.GetRequiredService<ICompanyMembershipService>();
+            await memberships.SetCapabilitiesAsync(company.Id, accountant.Id,
+                CompanyCapability.View | CompanyCapability.Post | CompanyCapability.OverrideExpiredStock);
+        }
+        using var accountantClient = _factory.CreateAuthenticatedClient("Accountant");
+
+        const string reason = "Approved exception for controlled disposal";
+        var request = new
+        {
+            itemId = item.Id,
+            locationId = location.Id,
+            quantity = 1,
+            batchNumber = "LOT-EXPIRED-AUTH",
+            expiryDate,
+            expiryExceptionReason = reason
+        };
+
+        var denied = await operatorClient.PostAsJsonAsync("/api/v1/stock/sell", request);
+        denied.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<InventoryDbContext>();
+            (await db.StockInHand.SingleAsync(row => row.LocationId == location.Id)).Quantity.Should().Be(3);
+            (await db.StockTransactions.CountAsync(row => row.ItemId == item.Id)).Should().Be(0);
+        }
+
+        var allowed = await accountantClient.PostAsJsonAsync("/api/v1/stock/sell", request);
+        allowed.StatusCode.Should().Be(HttpStatusCode.NoContent);
+
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<InventoryDbContext>();
+            (await db.StockInHand.SingleAsync(row => row.LocationId == location.Id)).Quantity.Should().Be(2);
+            var movement = await db.StockTransactions.SingleAsync(row => row.ItemId == item.Id);
+            movement.ExpiryExceptionReason.Should().Be(reason);
+            var audit = await db.AuditLogs.SingleAsync(row =>
+                row.EntityName == nameof(StockTransaction) && row.NewValues!.Contains(reason));
+            audit.NewValues.Should().Contain(nameof(StockTransaction.ExpiryExceptionReason));
+        }
+
+        await ClearMembershipsAsync(operatorUser.Id);
+        await ClearMembershipsAsync(accountant.Id);
     }
 
     [Fact]
@@ -311,6 +380,7 @@ public sealed class CompanyCapabilityAuthorizationTests : IClassFixture<CustomWe
         CompanyCapability.Approve => role == "Accountant",
         CompanyCapability.Post => role is "Operator" or "Accountant" or "Cashier",
         CompanyCapability.Reverse => role == "Accountant",
+        CompanyCapability.OverrideExpiredStock => role == "Accountant",
         CompanyCapability.Administer => role == "CompanyAdmin",
         _ => false
     };

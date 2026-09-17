@@ -62,6 +62,7 @@ public interface IStockService
     /// <param name="batchNumber">Optional lot/batch number.</param>
     /// <param name="expiryDate">Optional expiry date for perishable stock.</param>
     /// <param name="mutationScope">Company authorized by the caller before posting; revalidated under both location locks.</param>
+    /// <param name="expiryExceptionReason">Mandatory reason plus a separate company capability when the selected lot is expired.</param>
     /// <exception cref="Exceptions.ConcurrencyException">Thrown when concurrent updates are detected after retries are exhausted.</exception>
     /// <exception cref="InvalidOperationException">Thrown when the source location has insufficient stock.</exception>
     Task TransferStockAsync(
@@ -72,7 +73,8 @@ public interface IStockService
         string? notes,
         string? batchNumber = null,
         DateTime? expiryDate = null,
-        StockMutationScope? mutationScope = null);
+        StockMutationScope? mutationScope = null,
+        string? expiryExceptionReason = null);
 
     /// <summary>Sells stock out of a location, decreasing on-hand quantity.</summary>
     /// <param name="itemId">The item identifier.</param>
@@ -83,6 +85,7 @@ public interface IStockService
     /// <param name="expiryDate">Optional expiry date for perishable stock.</param>
     /// <param name="reservationSourceLineReference">Optional source line being consumed.</param>
     /// <param name="mutationScope">Company authorized by the caller before posting; revalidated under the location lock.</param>
+    /// <param name="expiryExceptionReason">Mandatory reason plus a separate company capability when the selected lot is expired.</param>
     /// <exception cref="Exceptions.ConcurrencyException">Thrown when concurrent updates are detected after retries are exhausted.</exception>
     /// <exception cref="InvalidOperationException">Thrown when the location has insufficient stock to sell.</exception>
     Task SellStockAsync(
@@ -93,7 +96,8 @@ public interface IStockService
         string? batchNumber = null,
         DateTime? expiryDate = null,
         string? reservationSourceLineReference = null,
-        StockMutationScope? mutationScope = null);
+        StockMutationScope? mutationScope = null,
+        string? expiryExceptionReason = null);
 
     /// <summary>Creates a lot-specific reservation for one source document line.</summary>
     Task CreateReservationAsync(CreateStockReservationRequest request, StockMutationScope? mutationScope = null);

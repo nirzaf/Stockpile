@@ -17,7 +17,8 @@ public sealed class CurrentUserAuthorization(
 {
     private const CompanyCapability AllCapabilities =
         CompanyCapability.View | CompanyCapability.Edit | CompanyCapability.Approve |
-        CompanyCapability.Post | CompanyCapability.Reverse | CompanyCapability.Administer;
+        CompanyCapability.Post | CompanyCapability.Reverse | CompanyCapability.Administer |
+        CompanyCapability.OverrideExpiredStock;
 
     public Task<bool> IsSessionCurrentAsync(ClaimsPrincipal principal) =>
         WithCurrentUserAsync(principal, false, (_, _, _) => Task.FromResult(true));
@@ -309,6 +310,7 @@ public sealed class CurrentUserAuthorization(
             CompanyCapability.Approve => roles.Any(role => role is "Admin" or "Accountant"),
             CompanyCapability.Post => roles.Any(role => role is "Admin" or "Manager" or "Staff" or "Operator" or "Accountant" or "Cashier"),
             CompanyCapability.Reverse => roles.Any(role => role is "Admin" or "Accountant"),
+            CompanyCapability.OverrideExpiredStock => roles.Any(role => role is "Admin" or "Accountant"),
         CompanyCapability.Administer => roles.Any(role => role is "Admin" or "CompanyAdmin"),
         _ => false
     };

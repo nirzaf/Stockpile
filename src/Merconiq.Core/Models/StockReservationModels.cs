@@ -9,14 +9,16 @@ public sealed record CreateStockReservationRequest(
     string SourceLineReference,
     string? BatchNumber = null,
     DateTime? ExpiryDate = null,
-    DateTimeOffset? ExpiresAt = null);
+    DateTimeOffset? ExpiresAt = null,
+    string? ExpiryExceptionReason = null);
 
 public sealed record StockReservationActionRequest(string SourceLineReference, string? Reason = null);
 
 public sealed record ConsumeStockReservationRequest(
     string SourceLineReference,
     int Quantity,
-    string? Notes = null);
+    string? Notes = null,
+    string? ExpiryExceptionReason = null);
 
 public sealed record StockReservationView(
     int Id,
@@ -29,7 +31,8 @@ public sealed record StockReservationView(
     int ConsumedQuantity,
     int RemainingQuantity,
     DateTimeOffset ExpiresAt,
-    StockReservationStatus Status);
+    StockReservationStatus Status,
+    string? ExpiryExceptionReason = null);
 
 public sealed record StockAvailabilityView(
     int ItemId,

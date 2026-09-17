@@ -176,6 +176,18 @@ public class StockController : ControllerBase
         {
             return Forbid();
         }
+        if (!string.IsNullOrWhiteSpace(command.ExpiryExceptionReason) &&
+            !await _authorization.CanAccessLocationAsync(
+                User, command.FromLocationId, CompanyCapability.OverrideExpiredStock))
+        {
+            return Forbid();
+        }
+
+        mutationScope = mutationScope with
+        {
+            ReauthorizeExpiredStockOverride = () => _authorization.CanAccessLocationAsync(
+                User, command.FromLocationId, CompanyCapability.OverrideExpiredStock)
+        };
 
         var idempotencyKey = Request.Headers["Idempotency-Key"].ToString();
         if (idempotencyKey.Length > 200)
@@ -221,6 +233,17 @@ public class StockController : ControllerBase
         {
             return Forbid();
         }
+        if (!string.IsNullOrWhiteSpace(command.ExpiryExceptionReason) &&
+            !await _authorization.CanAccessLocationAsync(
+                User, command.LocationId, CompanyCapability.OverrideExpiredStock))
+        {
+            return Forbid();
+        }
+        mutationScope = mutationScope with
+        {
+            ReauthorizeExpiredStockOverride = () => _authorization.CanAccessLocationAsync(
+                User, command.LocationId, CompanyCapability.OverrideExpiredStock)
+        };
 
         var idempotencyKey = Request.Headers["Idempotency-Key"].ToString();
         if (idempotencyKey.Length > 200)
