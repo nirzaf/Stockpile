@@ -32,6 +32,13 @@ public class PurchaseOrderServiceTests
             _taxRuleRepoMock.Object);
 
         _documentIdentityMock
+            .Setup(service => service.TryReplayPurchaseOrderAsync(
+                It.IsAny<PurchaseOrder>(),
+                It.IsAny<IReadOnlyCollection<OrderDetail>>(),
+                It.IsAny<string>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync((PurchaseOrder?)null);
+        _documentIdentityMock
             .Setup(service => service.CreatePurchaseOrderAsync(
                 It.IsAny<PurchaseOrder>(),
                 It.IsAny<IReadOnlyCollection<OrderDetail>>(),
@@ -150,6 +157,46 @@ public class PurchaseOrderServiceTests
         detail.TaxAmount.Should().Be(15m);
         detail.GrossAmount.Should().Be(115m);
         detail.CalculationVersion.Should().Be(DocumentAmountCalculator.CalculationVersion);
+    }
+
+    [Fact]
+    public async Task CreatePurchaseOrderAsync_ReplaysBeforeResolvingAnExpiredTaxRule()
+    {
+        var existingOrder = new PurchaseOrder
+        {
+            Id = 98,
+            PONumber = "EXISTING-98",
+            SupplierId = 5,
+            Status = PurchaseOrderStatus.Pending,
+            TotalAmount = 115m,
+            TaxAmount = 15m
+        };
+        _documentIdentityMock
+            .Setup(service => service.TryReplayPurchaseOrderAsync(
+                It.IsAny<PurchaseOrder>(),
+                It.IsAny<IReadOnlyCollection<OrderDetail>>(),
+                "expired-rule-retry",
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(existingOrder);
+        var order = new PurchaseOrder { PONumber = "EXISTING-98", SupplierId = 5, CurrencyScale = 3 };
+        var detail = new OrderDetail { ItemId = 1, Quantity = 1, UnitPrice = 100m, TaxRuleId = 14 };
+
+        var replay = await _sut.CreateAsync(order, [detail], "expired-rule-retry");
+
+        replay.Should().BeSameAs(existingOrder);
+        detail.CurrencyScale.Should().Be(3);
+        _documentIdentityMock.Verify(service => service.TryReplayPurchaseOrderAsync(
+            It.IsAny<PurchaseOrder>(),
+            It.Is<IReadOnlyCollection<OrderDetail>>(lines => lines.Count == 1 && lines.Single().CurrencyScale == 3),
+            "expired-rule-retry",
+            It.IsAny<CancellationToken>()), Times.Once);
+        _taxRuleRepoMock.Verify(repository => repository.FindAsync(
+            It.IsAny<System.Linq.Expressions.Expression<Func<TaxRule, bool>>>()), Times.Never);
+        _documentIdentityMock.Verify(service => service.CreatePurchaseOrderAsync(
+            It.IsAny<PurchaseOrder>(),
+            It.IsAny<IReadOnlyCollection<OrderDetail>>(),
+            It.IsAny<string>(),
+            It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
