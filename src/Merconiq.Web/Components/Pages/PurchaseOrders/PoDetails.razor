@@ -41,6 +41,12 @@ else
 
             <MudItem xs="6" sm="3"><MudText Typo="Typo.subtitle2" Color="Color.Secondary">Total Amount</MudText></MudItem>
             <MudItem xs="6" sm="3"><MudText>@_po.TotalAmount.ToString("C")</MudText></MudItem>
+
+            <MudItem xs="6" sm="3"><MudText Typo="Typo.subtitle2" Color="Color.Secondary">Tax</MudText></MudItem>
+            <MudItem xs="6" sm="3"><MudText>@_po.TaxAmount.ToString("C")</MudText></MudItem>
+
+            <MudItem xs="6" sm="3"><MudText Typo="Typo.subtitle2" Color="Color.Secondary">Calculation</MudText></MudItem>
+            <MudItem xs="6" sm="3"><MudText>v@_po.CalculationVersion, @_po.CurrencyScale decimals</MudText></MudItem>
         </MudGrid>
     </MudPaper>
 
@@ -51,13 +57,17 @@ else
             <MudTh>Item</MudTh>
             <MudTh Style="text-align:right">Quantity</MudTh>
             <MudTh Style="text-align:right">Unit Price</MudTh>
+            <MudTh Style="text-align:right">Discount</MudTh>
+            <MudTh Style="text-align:right">Tax</MudTh>
             <MudTh Style="text-align:right">Total</MudTh>
         </HeaderContent>
         <RowTemplate>
             <MudTd DataLabel="Item">@context.Item?.ItemCode - @context.Item?.Description</MudTd>
             <MudTd DataLabel="Quantity" Style="text-align:right">@context.Quantity</MudTd>
             <MudTd DataLabel="Unit Price" Style="text-align:right">@context.UnitPrice.ToString("C")</MudTd>
-            <MudTd DataLabel="Total" Style="text-align:right">@((context.Quantity * context.UnitPrice).ToString("C"))</MudTd>
+            <MudTd DataLabel="Discount" Style="text-align:right">@context.DiscountAmount.ToString("C")</MudTd>
+            <MudTd DataLabel="Tax" Style="text-align:right">@context.TaxAmount.ToString("C")</MudTd>
+            <MudTd DataLabel="Total" Style="text-align:right">@context.GrossAmount.ToString("C")</MudTd>
         </RowTemplate>
     </MudTable>
 

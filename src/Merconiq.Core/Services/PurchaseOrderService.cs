@@ -17,6 +17,7 @@ public class PurchaseOrderService : IPurchaseOrderService
     private readonly IWebhookDispatcher _webhookDispatcher;
     private readonly ITenantContext _tenantContext;
     private readonly ILogger<PurchaseOrderService> _logger;
+    private readonly IRepository<TaxRule>? _taxRuleRepository;
 
     public PurchaseOrderService(
         IRepository<PurchaseOrder> poRepo,
@@ -24,7 +25,8 @@ public class PurchaseOrderService : IPurchaseOrderService
         IDocumentIdentityService documentIdentityService,
         IWebhookDispatcher webhookDispatcher,
         ITenantContext tenantContext,
-        ILogger<PurchaseOrderService> logger)
+        ILogger<PurchaseOrderService> logger,
+        IRepository<TaxRule>? taxRuleRepository = null)
     {
         _poRepo = poRepo;
         _unitOfWork = unitOfWork;
@@ -32,6 +34,7 @@ public class PurchaseOrderService : IPurchaseOrderService
         _webhookDispatcher = webhookDispatcher;
         _tenantContext = tenantContext;
         _logger = logger;
+        _taxRuleRepository = taxRuleRepository;
     }
 
     /// <inheritdoc />
@@ -64,7 +67,62 @@ public class PurchaseOrderService : IPurchaseOrderService
         purchaseOrder.OrderDate = DateTime.UtcNow;
         purchaseOrder.Status = PurchaseOrderStatus.Pending;
         purchaseOrder.PONumber = purchaseOrder.PONumber.Trim();
-        purchaseOrder.TotalAmount = details.Sum(d => d.Quantity * d.UnitPrice);
+        if (purchaseOrder.CurrencyScale is < 0 or > 4)
+            throw new ArgumentOutOfRangeException(nameof(purchaseOrder.CurrencyScale));
+
+        var calculationInputs = new List<DocumentLineAmount>(details.Count);
+        foreach (var detail in details)
+        {
+            if (!detail.TaxRuleId.HasValue && detail.TaxRatePercent != 0m)
+            {
+                throw new InvalidOperationException("A configured tax rule is required for a non-zero tax rate.");
+            }
+
+            var taxRule = await ResolveTaxRuleAsync(detail.TaxRuleId, purchaseOrder.OrderDate, cancellationToken);
+            if (taxRule is not null)
+            {
+                detail.TaxCategory = taxRule.Category;
+                detail.TaxRatePercent = taxRule.RatePercent;
+                detail.TaxMode = taxRule.CalculationMode;
+                detail.TaxEffectiveFromUtc = taxRule.EffectiveFromUtc;
+            }
+
+            var calculated = DocumentAmountCalculator.Calculate(new DocumentLineAmount(
+                detail.Quantity,
+                detail.UnitPrice,
+                detail.DiscountPercent,
+                detail.TaxRatePercent,
+                detail.TaxMode,
+                purchaseOrder.CurrencyScale,
+                detail.TaxCategory,
+                detail.Direction));
+
+            detail.CurrencyScale = calculated.CurrencyScale;
+            detail.CalculationVersion = calculated.CalculationVersion;
+            detail.NetAmount = calculated.NetAmount;
+            detail.DiscountAmount = calculated.DiscountAmount;
+            detail.TaxableAmount = calculated.TaxableAmount;
+            detail.TaxAmount = calculated.TaxAmount;
+            detail.GrossAmount = calculated.GrossAmount;
+            calculationInputs.Add(new DocumentLineAmount(
+                detail.Quantity,
+                detail.UnitPrice,
+                detail.DiscountPercent,
+                detail.TaxRatePercent,
+                detail.TaxMode,
+                detail.CurrencyScale,
+                detail.TaxCategory,
+                detail.Direction));
+        }
+
+        var calculatedDocument = DocumentAmountCalculator.CalculateDocument(
+            calculationInputs,
+            purchaseOrder.CurrencyScale);
+        purchaseOrder.NetAmount = calculatedDocument.NetAmount;
+        purchaseOrder.DiscountAmount = calculatedDocument.DiscountAmount;
+        purchaseOrder.TaxAmount = calculatedDocument.TaxAmount;
+        purchaseOrder.TotalAmount = calculatedDocument.GrossAmount;
+        purchaseOrder.CalculationVersion = calculatedDocument.CalculationVersion;
         purchaseOrder.OrderDetails = details;
 
         _logger.LogInformation("Creating PO {PONumber}", purchaseOrder.PONumber);
@@ -74,6 +132,37 @@ public class PurchaseOrderService : IPurchaseOrderService
             idempotencyKey,
             cancellationToken);
         return created;
+    }
+
+    private async Task<TaxRule?> ResolveTaxRuleAsync(
+        int? taxRuleId,
+        DateTime effectiveAtUtc,
+        CancellationToken cancellationToken)
+    {
+        if (!taxRuleId.HasValue)
+        {
+            return null;
+        }
+
+        if (_taxRuleRepository is null)
+        {
+            throw new InvalidOperationException("Tax-rule resolution is not configured for this purchase-order flow.");
+        }
+
+        var rules = (await _taxRuleRepository.FindAsync(
+                rule => rule.Id == taxRuleId.Value && rule.IsActive))
+            .Where(rule => rule.EffectiveFromUtc <= effectiveAtUtc &&
+                (!rule.EffectiveToUtc.HasValue || rule.EffectiveToUtc > effectiveAtUtc))
+            .ToList();
+
+        return rules.Count switch
+        {
+            1 => rules[0],
+            0 => throw new InvalidOperationException(
+                $"Tax rule {taxRuleId.Value} is not active at {effectiveAtUtc:O}."),
+            _ => throw new InvalidOperationException(
+                $"Tax rule {taxRuleId.Value} has overlapping effective periods.")
+        };
     }
 
     /// <inheritdoc />

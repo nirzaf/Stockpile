@@ -86,6 +86,9 @@ mutations. Webhook administration is restricted to `Admin` and `Manager`.
 | POST | `/api/v1/items` | Any API JWT | `201` |
 | PUT | `/api/v1/items/{id}` | Any API JWT | `204` |
 | DELETE | `/api/v1/items/{id}` | Any API JWT | `204` |
+| GET | `/api/v1/tax-rules` | Any API JWT | `200` |
+| GET | `/api/v1/tax-rules/{id}` | Any API JWT | `200` or `404` |
+| POST | `/api/v1/tax-rules` | Edit capability | `201` or `400` |
 | GET | `/api/v1/stock/in-hand` | Any API JWT | `200` |
 | GET | `/api/v1/stock/in-hand/{itemId}/{locationId}` | Any API JWT | `200` or `404` |
 | GET | `/api/v1/stock/transactions` | Any API JWT | `200` |
@@ -149,6 +152,37 @@ the subscription.
 The item list validates `page >= 1` and `1 <= pageSize <= 100`. Item update
 also requires the route ID and body ID to match. Request validation failures
 are `400` responses.
+
+## Tax rules and deterministic amounts
+
+Tax rules are tenant-scoped, effective-dated policies. `EffectiveFromUtc` is
+inclusive and `EffectiveToUtc` is exclusive; periods for one code cannot
+overlap. Create a new dated rule instead of editing a rule used by a document:
+
+```json
+{
+  "code": "STANDARD-15",
+  "category": "Standard",
+  "ratePercent": 15,
+  "calculationMode": "Exclusive",
+  "effectiveFromUtc": "2026-01-01T00:00:00Z",
+  "effectiveToUtc": null,
+  "isActive": true
+}
+```
+
+Purchase-order creation calculates on the server. The shared policy rounds
+quantity × unit price, then the discount, taxable base, tax, and gross amount
+at the document currency scale using midpoint-away-from-zero. Inclusive tax is
+extracted from the rounded post-discount gross amount. Standard, zero-rated and
+exempt categories are supported; zero-rated and exempt rules must use a zero
+rate. Unsupported tax combinations are rejected rather than inferred.
+
+The selected rule ID, effective date, category, rate, discount, calculation
+version, rounded line amounts and document totals are stored as snapshots.
+Changing a tax master therefore cannot recalculate an existing document.
+These rules are configuration primitives and synthetic examples, not
+jurisdictional tax or compliance certification.
 
 ## Response envelopes
 

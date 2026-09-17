@@ -17,6 +17,7 @@ public class PurchaseOrderServiceTests
     private readonly Mock<IUnitOfWork> _uowMock = new();
     private readonly Mock<IDocumentIdentityService> _documentIdentityMock = new();
     private readonly Mock<IWebhookDispatcher> _webhookDispatcherMock = new();
+    private readonly Mock<IRepository<TaxRule>> _taxRuleRepoMock = new();
     private readonly PurchaseOrderService _sut;
 
     public PurchaseOrderServiceTests()
@@ -27,7 +28,8 @@ public class PurchaseOrderServiceTests
             _documentIdentityMock.Object,
             _webhookDispatcherMock.Object,
             new TestTenantContext("test-tenant"),
-            NullLogger<PurchaseOrderService>.Instance);
+            NullLogger<PurchaseOrderService>.Instance,
+            _taxRuleRepoMock.Object);
 
         _documentIdentityMock
             .Setup(service => service.CreatePurchaseOrderAsync(
@@ -50,6 +52,7 @@ public class PurchaseOrderServiceTests
         // Arrange
         var po = _fixture.Create<PurchaseOrder>();
         po.TotalAmount = 0m;
+        po.CurrencyScale = 2;
 
         var details = new List<OrderDetail>
         {
@@ -78,6 +81,7 @@ public class PurchaseOrderServiceTests
     {
         // Arrange
         var po = _fixture.Create<PurchaseOrder>();
+        po.CurrencyScale = 2;
         var details = new List<OrderDetail>
         {
             new() { ItemId = 1, Quantity = 1, UnitPrice = 1.00m }
@@ -99,11 +103,98 @@ public class PurchaseOrderServiceTests
         // Arrange
         var po = _fixture.Create<PurchaseOrder>();
         po.TotalAmount = 999m;
+        po.CurrencyScale = 2;
         // Act
         var result = await _sut.CreateAsync(po, new List<OrderDetail>(), "purchase-order-create-3");
 
         // Assert
         result.TotalAmount.Should().Be(0m);
+    }
+
+    [Fact]
+    public async Task CreatePurchaseOrderAsync_UsesEffectiveTaxRuleAndPersistsSnapshots()
+    {
+        var effectiveFrom = DateTime.UtcNow.AddDays(-1);
+        var rule = new TaxRule
+        {
+            Id = 7,
+            Code = "STANDARD-15",
+            Category = TaxCategory.Standard,
+            RatePercent = 15m,
+            CalculationMode = TaxCalculationMode.Exclusive,
+            EffectiveFromUtc = effectiveFrom,
+            IsActive = true
+        };
+        _taxRuleRepoMock
+            .Setup(repository => repository.FindAsync(It.IsAny<System.Linq.Expressions.Expression<Func<TaxRule, bool>>>() ))
+            .ReturnsAsync([rule]);
+
+        var po = _fixture.Create<PurchaseOrder>();
+        po.CurrencyScale = 2;
+        var detail = new OrderDetail
+        {
+            ItemId = 1,
+            Quantity = 1,
+            UnitPrice = 100m,
+            TaxRuleId = rule.Id
+        };
+
+        var result = await _sut.CreateAsync(po, [detail], "purchase-order-tax-rule-1");
+
+        result.TotalAmount.Should().Be(115m);
+        result.TaxAmount.Should().Be(15m);
+        detail.TaxRatePercent.Should().Be(15m);
+        detail.TaxCategory.Should().Be(TaxCategory.Standard);
+        detail.TaxEffectiveFromUtc.Should().Be(effectiveFrom);
+        detail.TaxableAmount.Should().Be(100m);
+        detail.TaxAmount.Should().Be(15m);
+        detail.GrossAmount.Should().Be(115m);
+        detail.CalculationVersion.Should().Be(DocumentAmountCalculator.CalculationVersion);
+    }
+
+    [Fact]
+    public async Task CreatePurchaseOrderAsync_RejectsTaxRuleOutsideItsEffectivePeriod()
+    {
+        _taxRuleRepoMock
+            .Setup(repository => repository.FindAsync(It.IsAny<System.Linq.Expressions.Expression<Func<TaxRule, bool>>>() ))
+            .ReturnsAsync([
+                new TaxRule
+                {
+                    Id = 8,
+                    Code = "FUTURE",
+                    Category = TaxCategory.Standard,
+                    RatePercent = 5m,
+                    EffectiveFromUtc = DateTime.UtcNow.AddDays(1),
+                    IsActive = true
+                }
+            ]);
+
+        var po = _fixture.Create<PurchaseOrder>();
+        po.CurrencyScale = 2;
+        var detail = new OrderDetail { ItemId = 1, Quantity = 1, UnitPrice = 10m, TaxRuleId = 8 };
+
+        var act = () => _sut.CreateAsync(po, [detail], "purchase-order-tax-rule-2");
+
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("Tax rule 8 is not active at *.");
+    }
+
+    [Fact]
+    public async Task CreatePurchaseOrderAsync_RejectsAnUnconfiguredNonZeroTaxRate()
+    {
+        var po = _fixture.Create<PurchaseOrder>();
+        po.CurrencyScale = 2;
+        var detail = new OrderDetail { ItemId = 1, Quantity = 1, UnitPrice = 10m, TaxRatePercent = 5m };
+
+        var act = () => _sut.CreateAsync(po, [detail], "purchase-order-tax-rule-3");
+
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("A configured tax rule is required for a non-zero tax rate.");
+        _documentIdentityMock.Verify(service => service.CreatePurchaseOrderAsync(
+            It.IsAny<PurchaseOrder>(),
+            It.IsAny<IReadOnlyCollection<OrderDetail>>(),
+            It.IsAny<string>(),
+            It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
