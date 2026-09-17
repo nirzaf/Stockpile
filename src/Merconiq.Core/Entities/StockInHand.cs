@@ -18,6 +18,9 @@ public class StockInHand : AuditableEntity
     /// <summary>Quantity held by active reservations and unavailable to direct operations.</summary>
     public int ReservedQuantity { get; set; }
 
+    /// <summary>Quantity held in quarantine and unavailable to reservations or direct operations.</summary>
+    public int QuarantinedQuantity { get; set; }
+
     /// <summary>PostgreSQL xmin value used for optimistic concurrency checks.</summary>
     public uint Version { get; set; }
 
