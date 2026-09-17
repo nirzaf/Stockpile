@@ -72,7 +72,10 @@ public class PurchaseOrderService : IPurchaseOrderService
     /// <inheritdoc />
     public async Task<PurchaseOrder?> GetForAmendmentAsync(int id)
     {
-        var order = await _poRepo.GetByIdAsync(id);
+        // This is a read-only form model and can share a scoped DbContext with the later save.
+        // Keep both the header and lines detached rather than assigning detached lines to a
+        // tracked purchase order.
+        var order = (await _poRepo.FindAsync(candidate => candidate.Id == id)).SingleOrDefault();
         if (order is null)
             return null;
 

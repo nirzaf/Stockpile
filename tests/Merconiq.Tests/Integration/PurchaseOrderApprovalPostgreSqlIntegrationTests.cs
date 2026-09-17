@@ -191,9 +191,14 @@ public sealed class PurchaseOrderApprovalPostgreSqlIntegrationTests(PostgreSqlIn
         order.ApprovedCommercialVersion.Should().Be(1);
         order.ApprovedCommercialSnapshotJson.Should().Contain("\"unitOfMeasureCode\":\"EA\"");
 
-        var line = order.OrderDetails.Single();
+        // Exercise the amendment page's read-then-save sequence on one scoped context.
+        var amendmentForm = await service.GetForAmendmentAsync(order.Id);
+        amendmentForm.Should().NotBeNull();
+        context.Entry(amendmentForm!).State.Should().Be(EntityState.Detached);
+        var line = amendmentForm!.OrderDetails.Single();
+        context.Entry(line).State.Should().Be(EntityState.Detached);
         await service.AmendApprovedAsync(order.Id, new PurchaseOrderAmendment(
-            ExpectedCommercialVersion: 1,
+            ExpectedCommercialVersion: amendmentForm.CommercialVersion,
             SupplierId: supplier.Id,
             DeliveryTerms: "Deliver to Dock 2",
             Notes: null,

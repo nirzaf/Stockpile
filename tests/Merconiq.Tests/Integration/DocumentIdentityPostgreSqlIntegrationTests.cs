@@ -135,8 +135,10 @@ public sealed class DocumentIdentityPostgreSqlIntegrationTests(PostgreSqlIntegra
         }
 
         var requestKey = Guid.NewGuid().ToString("N");
-        var first = await CreatePurchaseOrderAsync(tenantId, supplierId, itemId, requestKey, notes: "deliver to receiving");
-        var replay = await CreatePurchaseOrderAsync(tenantId, supplierId, itemId, requestKey, notes: "deliver to receiving");
+        var first = await CreatePurchaseOrderAsync(
+            tenantId, supplierId, itemId, requestKey, notes: "deliver to receiving", deliveryTerms: " Dock 4 ");
+        var replay = await CreatePurchaseOrderAsync(
+            tenantId, supplierId, itemId, requestKey, notes: "deliver to receiving", deliveryTerms: "Dock 4");
 
         replay.Id.Should().Be(first.Id);
         replay.DocumentId.Should().Be(first.DocumentId);
@@ -158,6 +160,16 @@ public sealed class DocumentIdentityPostgreSqlIntegrationTests(PostgreSqlIntegra
                 itemId,
                 requestKey,
                 notes: "different request"))
+            .Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("The idempotency key was already used with a different document request.");
+
+        await FluentActions.Invoking(() => CreatePurchaseOrderAsync(
+                tenantId,
+                supplierId,
+                itemId,
+                requestKey,
+                notes: "deliver to receiving",
+                deliveryTerms: "Dock 5"))
             .Should().ThrowAsync<InvalidOperationException>()
             .WithMessage("The idempotency key was already used with a different document request.");
     }
@@ -473,7 +485,8 @@ public sealed class DocumentIdentityPostgreSqlIntegrationTests(PostgreSqlIntegra
         int supplierId,
         int itemId,
         string requestKey,
-        string? notes)
+        string? notes,
+        string? deliveryTerms = null)
     {
         await using var context = fixture.CreateContext(tenantId);
         var unitOfWork = new UnitOfWork(context);
@@ -484,6 +497,7 @@ public sealed class DocumentIdentityPostgreSqlIntegrationTests(PostgreSqlIntegra
             OrderDate = new DateTime(2026, 9, 17, 0, 0, 0, DateTimeKind.Utc),
             SupplierId = supplierId,
             Notes = notes,
+            DeliveryTerms = deliveryTerms,
             Status = PurchaseOrderStatus.Pending
         };
         var details = new List<OrderDetail> { new() { ItemId = itemId, Quantity = 1, UnitPrice = 3m } };
