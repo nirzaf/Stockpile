@@ -16,6 +16,7 @@ public sealed class WebhookDelivery : ITenantScoped
     public DateTimeOffset NextAttemptAt { get; set; } = DateTimeOffset.UtcNow;
     public DateTimeOffset? LastAttemptAt { get; set; }
     public DateTimeOffset? LeaseUntil { get; set; }
+    public Guid? LeaseToken { get; set; }
     public int? LastStatusCode { get; set; }
     public string? LastResponse { get; set; }
     public string? LastError { get; set; }
