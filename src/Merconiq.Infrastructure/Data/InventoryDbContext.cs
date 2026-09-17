@@ -738,6 +738,11 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
             entity.Property(e => e.Status).HasConversion<string>().HasMaxLength(32).IsRequired();
             entity.Property(e => e.ResponseBody).HasMaxLength(16384);
             entity.Property(e => e.LastError).HasMaxLength(4096);
+            entity.Property(e => e.Version)
+                .HasColumnName("xmin")
+                .HasColumnType("xid")
+                .ValueGeneratedOnAddOrUpdate()
+                .IsConcurrencyToken();
             entity.HasIndex(e => new { e.TenantId, e.Scope, e.Key }).IsUnique();
             entity.HasIndex(e => e.ExpiresAt);
         });

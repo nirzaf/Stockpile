@@ -19,6 +19,9 @@ public sealed class IdempotencyRecord : ITenantScoped
     public int? ResponseStatusCode { get; set; }
     public string? ResponseBody { get; set; }
     public string? LastError { get; set; }
+
+    /// <summary>PostgreSQL row version used to fence concurrent and expired claims.</summary>
+    public uint Version { get; set; }
 }
 
 public enum IdempotencyRecordStatus
