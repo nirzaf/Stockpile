@@ -275,6 +275,15 @@ The PO is saved with status `Pending`.
    - **Approved** → `Mark as Received`.
 3. Click the action you want.
 
+### Amending an approved purchase order
+
+1. Open an **Approved** PO's details and choose **Amend commercial terms**.
+2. Update the supplier, delivery terms, notes, currency precision, or the commercial/tax values on its existing lines.
+3. Save the amendment. The PO returns to `Pending`; the former approved commercial version remains recorded and cannot be restored by changing only the status.
+4. Review the changed terms and approve the pending PO again. Approval captures the new version's supplier, company mapping (when assigned), item and purchase-unit details, quantities, pricing, tax calculation, delivery terms, and totals.
+
+This slice preserves existing PO line identities and does not support adding or removing lines. Company assignment is not yet available in the current PO workflow; the approval snapshot records a null company until ownership mapping is delivered. Receiving and stock posting remain separate workflows.
+
 > **Important:** Marking a PO as `Received` does **not** automatically add stock to a location. You still need to go to **Stock → Receive Stock** to record the actual quantities received. This is by design, so partial deliveries are supported.
 
 ---

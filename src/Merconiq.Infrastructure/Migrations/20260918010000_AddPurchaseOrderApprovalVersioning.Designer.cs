@@ -3,6 +3,7 @@ using System;
 using Merconiq.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace Merconiq.Infrastructure.Migrations
 {
     [DbContext(typeof(InventoryDbContext))]
-    partial class InventoryDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260918010000_AddPurchaseOrderApprovalVersioning")]
+    partial class AddPurchaseOrderApprovalVersioning
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -172,10 +175,6 @@ namespace Merconiq.Infrastructure.Migrations
                     b.Property<string>("CreatedBy")
                         .HasColumnType("text");
 
-                    b.Property<string>("ExternalId")
-                        .HasMaxLength(128)
-                        .HasColumnType("character varying(128)");
-
                     b.Property<bool>("IsActive")
                         .HasColumnType("boolean");
 
@@ -205,9 +204,6 @@ namespace Merconiq.Infrastructure.Migrations
                     b.HasIndex("CompanyId", "TenantId");
 
                     b.HasIndex("Id", "TenantId")
-                        .IsUnique();
-
-                    b.HasIndex("TenantId", "ExternalId")
                         .IsUnique();
 
                     b.HasIndex("TenantId", "CompanyId", "Code")
@@ -247,10 +243,6 @@ namespace Merconiq.Infrastructure.Migrations
                     b.Property<int?>("CurrencyScale")
                         .HasColumnType("integer");
 
-                    b.Property<string>("ExternalId")
-                        .HasMaxLength(128)
-                        .HasColumnType("character varying(128)");
-
                     b.Property<bool>("IsActive")
                         .HasColumnType("boolean");
 
@@ -288,9 +280,6 @@ namespace Merconiq.Infrastructure.Migrations
                         .IsUnique();
 
                     b.HasIndex("TenantId", "Code")
-                        .IsUnique();
-
-                    b.HasIndex("TenantId", "ExternalId")
                         .IsUnique();
 
                     b.ToTable("Companies", null, t =>
@@ -785,10 +774,6 @@ namespace Merconiq.Infrastructure.Migrations
                     b.Property<string>("CreatedBy")
                         .HasColumnType("text");
 
-                    b.Property<string>("ExternalId")
-                        .HasMaxLength(128)
-                        .HasColumnType("character varying(128)");
-
                     b.Property<bool>("IsDeleted")
                         .HasColumnType("boolean");
 
@@ -815,9 +800,6 @@ namespace Merconiq.Infrastructure.Migrations
                     b.HasIndex("BranchId", "TenantId");
 
                     b.HasIndex("TenantId", "BranchId");
-
-                    b.HasIndex("TenantId", "ExternalId")
-                        .IsUnique();
 
                     b.ToTable("Locations");
                 });
@@ -1114,7 +1096,7 @@ namespace Merconiq.Infrastructure.Migrations
                         .HasColumnType("character varying(64)");
 
                     b.Property<decimal>("UnitPrice")
-                        .HasColumnType("decimal(20,4)");
+                        .HasColumnType("decimal(18,2)");
 
                     b.Property<DateTime?>("UpdatedAt")
                         .HasColumnType("timestamp with time zone");
@@ -1614,10 +1596,6 @@ namespace Merconiq.Infrastructure.Migrations
                         .HasMaxLength(200)
                         .HasColumnType("character varying(200)");
 
-                    b.Property<string>("ExternalId")
-                        .HasMaxLength(128)
-                        .HasColumnType("character varying(128)");
-
                     b.Property<bool>("IsDeleted")
                         .HasColumnType("boolean");
 
@@ -1644,9 +1622,6 @@ namespace Merconiq.Infrastructure.Migrations
                     b.HasKey("Id");
 
                     b.HasIndex("TenantId");
-
-                    b.HasIndex("TenantId", "ExternalId")
-                        .IsUnique();
 
                     b.ToTable("Suppliers");
                 });

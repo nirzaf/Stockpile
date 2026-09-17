@@ -1,4 +1,5 @@
 using Merconiq.Core.Entities;
+using Merconiq.Core.Models;
 
 namespace Merconiq.Core.Interfaces;
 
@@ -27,6 +28,9 @@ public interface IPurchaseOrderService
     /// <returns>The purchase order, or <see langword="null"/> if not found.</returns>
     Task<PurchaseOrder?> GetByIdAsync(int id);
 
+    /// <summary>Gets a purchase order and its existing lines for a controlled amendment form.</summary>
+    Task<PurchaseOrder?> GetForAmendmentAsync(int id);
+
     /// <summary>Creates a new purchase order with its line items.</summary>
     /// <param name="purchaseOrder">The purchase order header.</param>
     /// <param name="details">The purchase order line items.</param>
@@ -44,6 +48,12 @@ public interface IPurchaseOrderService
     /// <param name="status">The new status. See <see cref="PurchaseOrderStatus"/> for valid values.</param>
     /// <exception cref="ArgumentException">Thrown when <paramref name="status"/> is not a known purchase order status.</exception>
     Task UpdateStatusAsync(int id, string status);
+
+    /// <summary>
+    /// Applies commercial changes to an approved PO's existing lines. A material change
+    /// returns the order to Pending and makes its prior approval version stale.
+    /// </summary>
+    Task AmendApprovedAsync(int id, PurchaseOrderAmendment amendment);
 
     /// <summary>Cancels an editable purchase order without deleting its identity or number.</summary>
     /// <param name="id">The identifier of the purchase order to cancel.</param>
