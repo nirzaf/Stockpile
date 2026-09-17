@@ -700,6 +700,11 @@ public class StockService : IStockService
                 request.ItemId, request.LocationId, request.BatchNumber, expiryDate)
                 ?? throw new StockAvailabilityConflictException(
                     "No stock row matches the requested quarantine lot.");
+            if (!expiryDate.HasValue && stock.ExpiryDate.HasValue)
+            {
+                throw new StockAvailabilityConflictException(
+                    "Provide the expiry date to identify this dated stock lot.");
+            }
 
             if (transactionType == TransactionType.Quarantine)
             {

@@ -160,6 +160,23 @@ public sealed class StockQuarantineServiceTests
         harness.Webhooks.Should().BeEmpty();
     }
 
+    [Fact]
+    public async Task Quarantine_requires_expiry_date_when_batch_selects_a_dated_lot()
+    {
+        var harness = CreateHarness(quantity: 5, reserved: 0, quarantined: 0);
+        var request = new ChangeStockQuarantineRequest(
+            7, 11, 1, "quarantine-line-1", "LOT-7", null, "Quality review");
+
+        var quarantine = () => harness.Service.QuarantineStockAsync(request);
+        await quarantine.Should().ThrowAsync<StockAvailabilityConflictException>()
+            .WithMessage("Provide the expiry date to identify this dated stock lot.");
+
+        harness.Stock.Quantity.Should().Be(5);
+        harness.Stock.QuarantinedQuantity.Should().Be(0);
+        harness.Transactions.Should().BeEmpty();
+        harness.Webhooks.Should().BeEmpty();
+    }
+
     private static Harness CreateHarness(int quantity, int reserved, int quarantined)
     {
         var tenant = "quarantine-unit-test";

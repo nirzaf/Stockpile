@@ -69,7 +69,9 @@ available-to-promise quantity and cannot be reserved, sold, or transferred out.
 Quarantining moves only currently available units into the quarantine balance;
 it does not change physical quantity or valuation. Each quarantine and release
 requires a source-line reference and a reason recorded with the stock movement.
-Replaying the same source line is idempotent only when its request matches.
+When a selected lot has an expiry date, the request must include that date so
+the movement is tied to one exact lot. Replaying the same source line is
+idempotent only when its request matches.
 
 Releasing quarantined units requires the normal company-scoped stock-post grant
 and an additional explicit `OverrideQuarantinedStock` company grant. This
