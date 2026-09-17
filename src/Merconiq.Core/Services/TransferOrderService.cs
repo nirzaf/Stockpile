@@ -56,6 +56,11 @@ public sealed class TransferOrderService(
 
         await unitOfWork.ExecuteInTransactionAsync(async () =>
         {
+            await unitOfWork.AcquireTenantOperationLockAsync("organization-state", cancellationToken);
+            await unitOfWork.AcquireLocationLocksAsync(
+                [request.FromLocationId, request.ToLocationId],
+                cancellationToken);
+
             var identity = await documentIdentityService.CreateNumberedAsync(
                 request.CompanyId,
                 DocumentType,
