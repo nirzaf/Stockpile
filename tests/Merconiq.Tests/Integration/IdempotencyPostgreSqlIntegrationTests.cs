@@ -127,4 +127,88 @@ public sealed class IdempotencyPostgreSqlIntegrationTests
         record.Status.Should().Be(IdempotencyRecordStatus.Completed);
         record.AttemptCount.Should().Be(1);
     }
+
+    [PostgreSqlFact]
+    public async Task Expired_worker_cannot_commit_business_changes_after_claim_is_reacquired()
+    {
+        _fixture.EnsureEnabled();
+        var tenantId = $"idempotency-expired-worker-{Guid.NewGuid():N}";
+        var scope = $"POST:/stock/{Guid.NewGuid():N}";
+        const string key = "expired-worker-request";
+        const string hash = "expired-worker-hash";
+        var operationStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseFirstOperation = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        await using (var setup = _fixture.CreateContext(tenantId))
+        {
+            setup.IdempotencyRecords.Add(new IdempotencyRecord
+            {
+                TenantId = tenantId,
+                Scope = scope,
+                Key = key,
+                RequestHash = hash,
+                Status = IdempotencyRecordStatus.Failed,
+                AttemptCount = 1,
+                CreatedAt = DateTimeOffset.UtcNow.AddMinutes(-1),
+                ExpiresAt = DateTimeOffset.UtcNow.AddHours(1)
+            });
+            await setup.SaveChangesAsync();
+        }
+
+        await using var firstContext = _fixture.CreateContext(tenantId, "expired-worker-first");
+        var firstStore = new IdempotencyKeyStore(
+            firstContext,
+            new TestTenantContext(tenantId),
+            new UnitOfWork(firstContext));
+
+        var first = firstStore.ExecuteAsync(scope, key, hash, async () =>
+        {
+            firstContext.Items.Add(new Item
+            {
+                ItemCode = "EXPIRED-WORKER-ITEM",
+                Description = "must roll back when its claim is fenced",
+                Rate = 1m
+            });
+            await firstContext.SaveChangesAsync();
+            operationStarted.SetResult();
+            await releaseFirstOperation.Task;
+        });
+
+        await operationStarted.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+        await using (var expire = _fixture.CreateContext(tenantId, "expired-worker-expirer"))
+        {
+            var record = await expire.IdempotencyRecords.SingleAsync(item => item.Scope == scope && item.Key == key);
+            record.LeaseUntil = DateTimeOffset.UtcNow.AddSeconds(-1);
+            await expire.SaveChangesAsync();
+        }
+
+        await using (var secondContext = _fixture.CreateContext(tenantId, "expired-worker-reclaimer"))
+        {
+            var secondStore = new IdempotencyKeyStore(
+                secondContext,
+                new TestTenantContext(tenantId),
+                new UnitOfWork(secondContext));
+            await secondStore.ExecuteAsync(scope, key, hash, () =>
+            {
+                secondContext.Items.Add(new Item
+                {
+                    ItemCode = "RECLAIMED-WORKER-ITEM",
+                    Description = "committed by the current claim owner",
+                    Rate = 1m
+                });
+                return Task.CompletedTask;
+            });
+        }
+
+        releaseFirstOperation.SetResult();
+        await first;
+
+        await using var verify = _fixture.CreateContext(tenantId);
+        (await verify.Items.CountAsync(item => item.ItemCode == "EXPIRED-WORKER-ITEM")).Should().Be(0);
+        (await verify.Items.CountAsync(item => item.ItemCode == "RECLAIMED-WORKER-ITEM")).Should().Be(1);
+        var completed = await verify.IdempotencyRecords.SingleAsync(item => item.Scope == scope && item.Key == key);
+        completed.Status.Should().Be(IdempotencyRecordStatus.Completed);
+        completed.AttemptCount.Should().Be(3);
+    }
 }

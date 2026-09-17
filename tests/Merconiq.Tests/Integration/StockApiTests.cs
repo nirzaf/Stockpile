@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using FluentAssertions;
 using Merconiq.Core.Entities;
+using Merconiq.Core.Models;
 using Merconiq.Infrastructure.Data;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -106,6 +107,39 @@ public class StockApiTests : IClassFixture<CustomWebApplicationFactory>
         var response = await client.GetAsync($"/api/v1/stock/transactions?from={from}&to={to}");
 
         response.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    [Fact]
+    public async Task GetValuation_ReturnsCurrentBucketAndLedgerEntries()
+    {
+        var client = AuthClient;
+        var (item, loc) = await SeedItemAndLocationAsync();
+
+        (await client.PostAsJsonAsync("/api/v1/stock/receive", new
+        {
+            itemId = item.Id,
+            locationId = loc.Id,
+            quantity = 10,
+            unitCost = 10m,
+            notes = "costed receipt"
+        })).StatusCode.Should().Be(HttpStatusCode.NoContent);
+        (await client.PostAsJsonAsync("/api/v1/stock/sell", new
+        {
+            itemId = item.Id,
+            locationId = loc.Id,
+            quantity = 5,
+            notes = "valued issue"
+        })).StatusCode.Should().Be(HttpStatusCode.NoContent);
+
+        var response = await client.GetFromJsonAsync<ApiResponse<List<StockValuationView>>>(
+            $"/api/v1/stock/valuation?itemId={item.Id}&locationId={loc.Id}");
+
+        response!.Data.Should().ContainSingle();
+        response.Data![0].Quantity.Should().Be(5);
+        response.Data[0].Value.Should().Be(50m);
+        response.Data[0].Entries.Should().HaveCount(2);
+        response.Data[0].Entries.Select(entry => entry.EntryType)
+            .Should().Equal(StockValuationEntryType.Receipt, StockValuationEntryType.Sale);
     }
 
     [Fact]
