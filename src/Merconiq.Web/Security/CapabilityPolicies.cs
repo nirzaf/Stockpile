@@ -11,4 +11,5 @@ public static class CapabilityPolicies
     public const string Reverse = "Capability.Reverse";
     public const string Administer = "Capability.Administer";
     public const string OverrideExpiredStock = "Capability.OverrideExpiredStock";
+    public const string OverrideQuarantinedStock = "Capability.OverrideQuarantinedStock";
 }

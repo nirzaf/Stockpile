@@ -18,5 +18,11 @@ public enum TransactionType
     Return,
 
     /// <summary>Approved opening-baseline quantity at a cutover instant.</summary>
-    Opening
+    Opening,
+
+    /// <summary>Available stock moved into quarantine without changing on-hand quantity.</summary>
+    Quarantine,
+
+    /// <summary>Previously quarantined stock made available again.</summary>
+    QuarantineRelease
 }

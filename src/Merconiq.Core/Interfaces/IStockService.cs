@@ -19,7 +19,24 @@ public interface IStockService
     /// <param name="batchNumber">Optional batch or lot identifier.</param>
     /// <param name="expiryDate">Optional expiry date for the lot.</param>
     /// <returns>The stock-in-hand row, or <see langword="null"/> if none exists.</returns>
-    Task<StockInHand?> GetByItemAndLocationAsync(int itemId, int locationId, string? batchNumber = null, DateTime? expiryDate = null);
+    Task<StockInHand?> GetByItemAndLocationAsync(
+        int itemId,
+        int locationId,
+        string? batchNumber = null,
+        DateTime? expiryDate = null);
+    /// <summary>Gets stock in an item/location while observing request cancellation.</summary>
+    /// <param name="itemId">The item identifier.</param>
+    /// <param name="locationId">The location identifier.</param>
+    /// <param name="batchNumber">Optional batch or lot identifier.</param>
+    /// <param name="expiryDate">Optional expiry date for the lot.</param>
+    /// <param name="cancellationToken">A token that can cancel the query.</param>
+    /// <returns>The stock-in-hand row, or <see langword="null"/> if none exists.</returns>
+    Task<StockInHand?> GetByItemAndLocationAsync(
+        int itemId,
+        int locationId,
+        string? batchNumber,
+        DateTime? expiryDate,
+        CancellationToken cancellationToken);
 
     /// <summary>Gets stock transactions within an optional date range.</summary>
     /// <param name="from">Inclusive start date, or <see langword="null"/> for no lower bound.</param>
@@ -104,6 +121,18 @@ public interface IStockService
 
     /// <summary>Posts an atomic, source-linked return against an original sale.</summary>
     Task ReturnStockAsync(CreateStockReturnRequest request, StockMutationScope? mutationScope = null);
+
+    /// <summary>Moves available stock into quarantine without changing on-hand quantity or valuation.</summary>
+    Task QuarantineStockAsync(
+        ChangeStockQuarantineRequest request,
+        StockMutationScope? mutationScope = null,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>Releases quarantined stock after an explicit company-scoped override authorization.</summary>
+    Task ReleaseQuarantinedStockAsync(
+        ChangeStockQuarantineRequest request,
+        StockMutationScope? mutationScope = null,
+        CancellationToken cancellationToken = default);
 
     /// <summary>Creates a lot-specific reservation for one source document line.</summary>
     Task CreateReservationAsync(CreateStockReservationRequest request, StockMutationScope? mutationScope = null);

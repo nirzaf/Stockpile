@@ -22,6 +22,14 @@ public class StockTransactionValidator : AbstractValidator<StockTransaction>
         RuleFor(x => x.Notes)
             .MaximumLength(500).WithMessage("Notes must not exceed 500 characters");
 
+        RuleFor(x => x.QuarantineReason)
+            .MaximumLength(500).WithMessage("Quarantine reason must not exceed 500 characters");
+
+        RuleFor(x => x.QuarantineReason)
+            .Must(reason => !string.IsNullOrWhiteSpace(reason))
+            .WithMessage("A quarantine reason is required for quarantine movements")
+            .When(x => x.TransactionType is TransactionType.Quarantine or TransactionType.QuarantineRelease);
+
         RuleFor(x => x.ToLocationId)
             .GreaterThan(0).WithMessage("Destination location is required")
             .When(x => x.TransactionType == TransactionType.Transfer);

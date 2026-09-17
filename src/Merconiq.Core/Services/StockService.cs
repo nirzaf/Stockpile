@@ -1,3 +1,4 @@
+using System.Linq.Expressions;
 using Merconiq.Core.Entities;
 using Merconiq.Core.Interfaces;
 using Merconiq.Core.Models;
@@ -71,31 +72,46 @@ public class StockService : IStockService
     }
 
     /// <inheritdoc />
-    public async Task<StockInHand?> GetByItemAndLocationAsync(
+    public Task<StockInHand?> GetByItemAndLocationAsync(
         int itemId,
         int locationId,
         string? batchNumber = null,
-        DateTime? expiryDate = null)
+        DateTime? expiryDate = null) =>
+        GetByItemAndLocationAsync(itemId, locationId, batchNumber, expiryDate, CancellationToken.None);
+
+    /// <inheritdoc />
+    public async Task<StockInHand?> GetByItemAndLocationAsync(
+        int itemId,
+        int locationId,
+        string? batchNumber,
+        DateTime? expiryDate,
+        CancellationToken cancellationToken)
     {
         expiryDate = StockLotExpiryDate.Normalize(expiryDate);
         IEnumerable<StockInHand> results;
         if (expiryDate is DateTime expiryDayStart)
         {
             var expiryDayEnd = expiryDayStart.AddDays(1);
-            results = await _stockRepo.FindAsync(s =>
+            Expression<Func<StockInHand, bool>> predicate = s =>
                 s.ItemId == itemId &&
                 s.LocationId == locationId &&
                 s.BatchNumber == batchNumber &&
                 s.ExpiryDate >= expiryDayStart &&
-                s.ExpiryDate < expiryDayEnd);
+                s.ExpiryDate < expiryDayEnd;
+            results = cancellationToken.CanBeCanceled
+                ? await _stockRepo.FindAsync(predicate, cancellationToken)
+                : await _stockRepo.FindAsync(predicate);
         }
         else
         {
-            results = await _stockRepo.FindAsync(s =>
+            Expression<Func<StockInHand, bool>> predicate = s =>
                 s.ItemId == itemId &&
                 s.LocationId == locationId &&
                 s.BatchNumber == batchNumber &&
-                s.ExpiryDate == null);
+                s.ExpiryDate == null;
+            results = cancellationToken.CanBeCanceled
+                ? await _stockRepo.FindAsync(predicate, cancellationToken)
+                : await _stockRepo.FindAsync(predicate);
         }
 
         var matchingRows = results.Take(2).ToArray();
@@ -110,13 +126,20 @@ public class StockService : IStockService
         int itemId,
         int locationId,
         string? batchNumber,
-        DateTime? expiryDate)
+        DateTime? expiryDate,
+        CancellationToken cancellationToken = default)
     {
         if (batchNumber is null || expiryDate.HasValue)
-            return await GetByItemAndLocationAsync(itemId, locationId, batchNumber, expiryDate);
+            return cancellationToken.CanBeCanceled
+                ? await GetByItemAndLocationAsync(itemId, locationId, batchNumber, expiryDate, cancellationToken)
+                : await GetByItemAndLocationAsync(itemId, locationId, batchNumber, expiryDate);
 
-        var matches = (await _stockRepo.FindAsync(stock =>
-            stock.ItemId == itemId && stock.LocationId == locationId && stock.BatchNumber == batchNumber))
+        Expression<Func<StockInHand, bool>> predicate = stock =>
+            stock.ItemId == itemId && stock.LocationId == locationId && stock.BatchNumber == batchNumber;
+        var rows = cancellationToken.CanBeCanceled
+            ? await _stockRepo.FindAsync(predicate, cancellationToken)
+            : await _stockRepo.FindAsync(predicate);
+        var matches = rows
             .Take(2)
             .ToArray();
         if (matches.Length > 1)
@@ -170,7 +193,9 @@ public class StockService : IStockService
     private async Task ExecuteWithRetryAsync(
         int itemId,
         Func<Task> action,
-        Func<Task<bool>> verifySucceeded)
+        Func<Task<bool>> verifySucceeded,
+        bool checkLowStock = true,
+        CancellationToken cancellationToken = default)
     {
         // PostgreSQL surfaces an optimistic-concurrency conflict as a DbUpdateConcurrencyException
         // (driven by the StockInHand.xmin token). Three retries matches the default
@@ -179,22 +204,28 @@ public class StockService : IStockService
         int retries = 3;
         while (true)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var ownsTransaction = !_unitOfWork.HasActiveTransaction;
             try
             {
                 await _unitOfWork.ExecuteInTransactionAsync(async () =>
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
                     // Keep stock postings in the same lock domain as company currency
                     // freeze checks. ponytail: tenant-wide serialization is the smallest
                     // correct boundary; split by company if throughput requires it.
-                    await _unitOfWork.AcquireTenantOperationLockAsync("organization-state");
-                    var item = await _itemRepo.GetByIdAsync(itemId);
+                    await _unitOfWork.AcquireTenantOperationLockAsync("organization-state", cancellationToken);
+                    var item = cancellationToken.CanBeCanceled
+                        ? await _itemRepo.GetByIdAsync(itemId, cancellationToken)
+                        : await _itemRepo.GetByIdAsync(itemId);
+                    cancellationToken.ThrowIfCancellationRequested();
                     if (item is not null && !item.IsActive)
                         throw new InvalidOperationException("Inactive items cannot be used in stock operations.");
                     await action();
-                    if (item is not null)
+                    cancellationToken.ThrowIfCancellationRequested();
+                    if (item is not null && checkLowStock)
                         await CheckLowStockAsync(item);
-                }, CancellationToken.None, verifySucceeded);
+                }, cancellationToken, verifySucceeded);
                 break;
             }
             catch (Merconiq.Core.Exceptions.ConcurrencyException ex)
@@ -623,6 +654,150 @@ public class StockService : IStockService
 
         _logger.LogInformation("Returned {Qty} of item {ItemId} against sale {TransactionId}",
             request.Quantity, initialOriginal.ItemId, initialOriginal.Id);
+    }
+
+    /// <inheritdoc />
+    public Task QuarantineStockAsync(
+        ChangeStockQuarantineRequest request,
+        StockMutationScope? mutationScope = null,
+        CancellationToken cancellationToken = default) =>
+        ChangeStockQuarantineAsync(request, TransactionType.Quarantine, mutationScope, cancellationToken);
+
+    /// <inheritdoc />
+    public Task ReleaseQuarantinedStockAsync(
+        ChangeStockQuarantineRequest request,
+        StockMutationScope? mutationScope = null,
+        CancellationToken cancellationToken = default) =>
+        ChangeStockQuarantineAsync(request, TransactionType.QuarantineRelease, mutationScope, cancellationToken);
+
+    private async Task ChangeStockQuarantineAsync(
+        ChangeStockQuarantineRequest request,
+        TransactionType transactionType,
+        StockMutationScope? mutationScope,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        cancellationToken.ThrowIfCancellationRequested();
+        if (request.ItemId <= 0)
+            throw new ArgumentOutOfRangeException(nameof(request.ItemId));
+        if (request.LocationId <= 0)
+            throw new ArgumentOutOfRangeException(nameof(request.LocationId));
+        if (request.Quantity <= 0)
+            throw new ArgumentOutOfRangeException(nameof(request.Quantity), "Quantity must be positive.");
+
+        EnsureSourceLineReference(request.SourceLineReference);
+        EnsureReservationFields(request.BatchNumber, request.Reason);
+        if (string.IsNullOrWhiteSpace(request.Reason))
+            throw new ArgumentException("A quarantine reason is required.", nameof(request));
+
+        var sourceLineReference = request.SourceLineReference.Trim();
+        var reason = request.Reason.Trim();
+        var expiryDate = StockLotExpiryDate.Normalize(request.ExpiryDate);
+        StockTransaction? transaction = null;
+
+        await ExecuteWithRetryAsync(request.ItemId, async () =>
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            await _unitOfWork.AcquireLocationLocksAsync([request.LocationId], cancellationToken);
+            var location = await EnsureLocationUsableAsync(request.LocationId, cancellationToken);
+            await EnsureAuthorizedCompanyScopeAsync(location, mutationScope);
+            cancellationToken.ThrowIfCancellationRequested();
+
+            if (transactionType == TransactionType.QuarantineRelease &&
+                (mutationScope?.ReauthorizeQuarantinedStockOverride is not { } reauthorizeOverride ||
+                 !await reauthorizeOverride()))
+            {
+                throw new UnauthorizedAccessException(
+                    "An explicit company-scoped quarantined-stock override capability is required.");
+            }
+
+            var priorTransactions = cancellationToken.CanBeCanceled
+                ? await _txRepo.FindAsync(candidate =>
+                    candidate.SourceLineReference == sourceLineReference, cancellationToken)
+                : await _txRepo.FindAsync(candidate =>
+                    candidate.SourceLineReference == sourceLineReference);
+            var priorTransaction = priorTransactions.FirstOrDefault();
+            cancellationToken.ThrowIfCancellationRequested();
+            if (priorTransaction is not null)
+            {
+                var sameLot = priorTransaction.BatchNumber == request.BatchNumber &&
+                    StockLotExpiryDate.Normalize(priorTransaction.ExpiryDate) == expiryDate;
+                if (priorTransaction.TransactionType == transactionType &&
+                    priorTransaction.ItemId == request.ItemId &&
+                    priorTransaction.FromLocationId == request.LocationId &&
+                    priorTransaction.Quantity == request.Quantity &&
+                    priorTransaction.QuarantineReason == reason &&
+                    sameLot)
+                {
+                    transaction = priorTransaction;
+                    return;
+                }
+
+                throw new StockAvailabilityConflictException(
+                    "The source line already identifies a different stock quarantine operation.");
+            }
+
+            var stock = await GetStockForRequestedLotAsync(
+                request.ItemId, request.LocationId, request.BatchNumber, expiryDate, cancellationToken)
+                ?? throw new StockAvailabilityConflictException(
+                    "No stock row matches the requested quarantine lot.");
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!expiryDate.HasValue && stock.ExpiryDate.HasValue)
+            {
+                throw new StockAvailabilityConflictException(
+                    "Provide the expiry date to identify this dated stock lot.");
+            }
+
+            if (transactionType == TransactionType.Quarantine)
+            {
+                EnsureAvailable(stock, request.Quantity, "quarantine");
+                stock.QuarantinedQuantity = checked(stock.QuarantinedQuantity + request.Quantity);
+            }
+            else
+            {
+                if (stock.QuarantinedQuantity < request.Quantity)
+                    throw new StockAvailabilityConflictException(
+                        "Insufficient quarantined stock is available for release.");
+
+                stock.QuarantinedQuantity -= request.Quantity;
+            }
+
+            await _stockRepo.UpdateAsync(stock);
+            cancellationToken.ThrowIfCancellationRequested();
+            transaction = new StockTransaction
+            {
+                ItemId = request.ItemId,
+                FromLocationId = request.LocationId,
+                Quantity = request.Quantity,
+                TransactionType = transactionType,
+                TransactionDate = DateTime.UtcNow,
+                BatchNumber = stock.BatchNumber,
+                ExpiryDate = stock.ExpiryDate,
+                SourceLineReference = sourceLineReference,
+                QuarantineReason = reason
+            };
+            await _txRepo.AddAsync(transaction);
+
+            var eventType = transactionType == TransactionType.Quarantine
+                ? "Stock.Quarantined"
+                : "Stock.QuarantineReleased";
+            await _webhookDispatcher.EnqueueAsync(WebhookEventFactory.Create(
+                _tenantContext,
+                eventType,
+                new StockQuarantineWebhookPayload(
+                    request.ItemId,
+                    request.LocationId,
+                    request.Quantity,
+                    sourceLineReference,
+                    stock.BatchNumber,
+                    stock.ExpiryDate,
+                    reason)));
+            cancellationToken.ThrowIfCancellationRequested();
+            await _unitOfWork.SaveChangesAsync(cancellationToken);
+        },
+            () => VerifyTransactionCommitAsync(transaction),
+            checkLowStock: false,
+            cancellationToken: cancellationToken);
     }
 
     /// <inheritdoc />
@@ -1255,15 +1430,19 @@ public class StockService : IStockService
         }
     }
 
-    private async Task<Location> EnsureLocationUsableAsync(int locationId)
+    private async Task<Location> EnsureLocationUsableAsync(
+        int locationId,
+        CancellationToken cancellationToken = default)
     {
         if (!_tenantContext.IsResolved)
             throw new InvalidOperationException("A tenant context is required for stock operations.");
 
         // Filtered queries apply tenant and soft-delete predicates even when this DbContext
         // has already tracked an entity with the requested key.
-        var location = (await _locationRepo.FindAsync(candidate => candidate.Id == locationId))
-            .FirstOrDefault();
+        var locationRows = cancellationToken.CanBeCanceled
+            ? await _locationRepo.FindAsync(candidate => candidate.Id == locationId, cancellationToken)
+            : await _locationRepo.FindAsync(candidate => candidate.Id == locationId);
+        var location = locationRows.FirstOrDefault();
         if (location is null || location.IsDeleted ||
             !string.Equals(location.TenantId, _tenantContext.TenantId, StringComparison.Ordinal))
             throw new InvalidOperationException("Location does not exist in the current tenant or is deleted.");
@@ -1271,8 +1450,10 @@ public class StockService : IStockService
         if (location.BranchId is not int branchId)
             return location;
 
-        var branch = (await _branchRepo.FindAsync(candidate => candidate.Id == branchId))
-            .FirstOrDefault();
+        var branchRows = cancellationToken.CanBeCanceled
+            ? await _branchRepo.FindAsync(candidate => candidate.Id == branchId, cancellationToken)
+            : await _branchRepo.FindAsync(candidate => candidate.Id == branchId);
+        var branch = branchRows.FirstOrDefault();
         if (branch is null ||
             !string.Equals(branch.TenantId, _tenantContext.TenantId, StringComparison.Ordinal) ||
             !string.Equals(branch.TenantId, location.TenantId, StringComparison.Ordinal))
