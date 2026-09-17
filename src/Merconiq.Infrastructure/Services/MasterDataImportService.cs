@@ -208,12 +208,16 @@ public sealed class MasterDataImportService(
 
     private static string? Validate(Row row, HashSet<string> externalIds, HashSet<string> codes)
     {
+        if (row.CsvError is not null) return row.CsvError;
+        if (!row.HasCorrectFieldCount) return "CSV row must contain exactly 5 fields.";
         if (string.IsNullOrWhiteSpace(row.ExternalId) || row.ExternalId.Length > 128) return "External ID is required and must be at most 128 characters.";
         if (!externalIds.Add(row.ExternalId)) return "External ID is duplicated in the import.";
         if (string.IsNullOrWhiteSpace(row.Code) || row.Code.Length > 32) return "Code is required and must be at most 32 characters.";
         if (!codes.Add(row.Code)) return "Code is duplicated in the import.";
         if (string.IsNullOrWhiteSpace(row.Name) || row.Name.Length > 100) return "Name is required and must be at most 100 characters.";
+        if (!row.DecimalPlacesParsed) return "Decimal places must be an integer between 0 and 6.";
         if (row.DecimalPlaces is < 0 or > 6) return "Decimal places must be between 0 and 6.";
+        if (!row.IsWholeUnitOnlyParsed) return "Whole-unit-only must be true or false.";
         if (row.IsWholeUnitOnly && row.DecimalPlaces != 0)
             return "Whole-unit-only units must use zero decimal places.";
         return null;
@@ -222,19 +226,155 @@ public sealed class MasterDataImportService(
     private static List<Row> Parse(string? csv)
     {
         if (string.IsNullOrWhiteSpace(csv)) throw new ArgumentException("CSV content is required.", nameof(csv));
-        var lines = csv.Split(new[] { "\r\n", "\n" }, StringSplitOptions.RemoveEmptyEntries);
-        if (lines.Length < 2 || !lines[0].Trim().Equals("external_id,code,name,decimal_places,whole_unit_only", StringComparison.OrdinalIgnoreCase))
-            throw new ArgumentException("CSV header must be external_id,code,name,decimal_places,whole_unit_only.", nameof(csv));
-        var rows = new List<Row>();
-        for (var index = 1; index < lines.Length; index++)
+        var records = ParseCsvRecords(csv.TrimStart('\uFEFF'));
+        if (records.Count < 2
+            || records[0].Error is not null
+            || records[0].Fields.Count != 5
+            || !records[0].Fields.Select(value => value.Trim()).SequenceEqual(
+                ["external_id", "code", "name", "decimal_places", "whole_unit_only"],
+                StringComparer.OrdinalIgnoreCase))
         {
-            var values = lines[index].Split(',');
-            if (values.Length != 5) { rows.Add(new(index + 1, string.Empty, string.Empty, string.Empty, -1, false)); continue; }
-            _ = int.TryParse(values[3].Trim(), out var decimalPlaces);
-            _ = bool.TryParse(values[4].Trim(), out var wholeUnitOnly);
-            rows.Add(new(index + 1, values[0].Trim(), values[1].Trim(), values[2].Trim(), decimalPlaces, wholeUnitOnly));
+            throw new ArgumentException("CSV header must be external_id,code,name,decimal_places,whole_unit_only.", nameof(csv));
         }
+
+        var rows = new List<Row>();
+        foreach (var record in records.Skip(1))
+        {
+            if (record.Error is not null)
+            {
+                rows.Add(new(record.RowNumber, string.Empty, string.Empty, string.Empty, 0, false,
+                    CsvError: record.Error));
+                continue;
+            }
+
+            if (record.Fields.Count != 5)
+            {
+                rows.Add(new(record.RowNumber, string.Empty, string.Empty, string.Empty, 0, false,
+                    HasCorrectFieldCount: false));
+                continue;
+            }
+
+            var decimalPlacesParsed = int.TryParse(
+                record.Fields[3].Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var decimalPlaces);
+            var wholeUnitOnlyParsed = bool.TryParse(record.Fields[4].Trim(), out var wholeUnitOnly);
+            rows.Add(new(record.RowNumber, record.Fields[0].Trim(), record.Fields[1].Trim(),
+                record.Fields[2].Trim(), decimalPlaces, wholeUnitOnly,
+                DecimalPlacesParsed: decimalPlacesParsed,
+                IsWholeUnitOnlyParsed: wholeUnitOnlyParsed));
+        }
+
         return rows;
+    }
+
+    private static List<CsvRecord> ParseCsvRecords(string csv)
+    {
+        // Quoting state keeps commas and line breaks inside quoted fields from becoming record delimiters.
+        var records = new List<CsvRecord>();
+        var fields = new List<string>();
+        var field = new System.Text.StringBuilder();
+        var state = CsvFieldState.Start;
+        string? error = null;
+        var lineNumber = 1;
+        var recordLineNumber = 1;
+        var hasRecordContent = false;
+
+        void CompleteRecord()
+        {
+            if (hasRecordContent || fields.Count > 0 || field.Length > 0 || error is not null)
+            {
+                fields.Add(field.ToString());
+                records.Add(new(recordLineNumber, fields.ToArray(), error));
+            }
+
+            fields.Clear();
+            field.Clear();
+            state = CsvFieldState.Start;
+            error = null;
+            hasRecordContent = false;
+        }
+
+        for (var index = 0; index < csv.Length; index++)
+        {
+            var character = csv[index];
+            if (state == CsvFieldState.Quoted)
+            {
+                if (character == '"')
+                {
+                    if (index + 1 < csv.Length && csv[index + 1] == '"')
+                    {
+                        field.Append('"');
+                        index++;
+                    }
+                    else
+                    {
+                        state = CsvFieldState.AfterQuote;
+                    }
+                }
+                else if (character == '\r')
+                {
+                    field.Append(character);
+                    if (index + 1 < csv.Length && csv[index + 1] == '\n')
+                    {
+                        field.Append('\n');
+                        index++;
+                    }
+                    lineNumber++;
+                }
+                else
+                {
+                    field.Append(character);
+                    if (character == '\n') lineNumber++;
+                }
+
+                continue;
+            }
+
+            if (character is '\r' or '\n')
+            {
+                CompleteRecord();
+                if (character == '\r' && index + 1 < csv.Length && csv[index + 1] == '\n') index++;
+                lineNumber++;
+                recordLineNumber = lineNumber;
+                continue;
+            }
+
+            if (character == ',')
+            {
+                fields.Add(field.ToString());
+                field.Clear();
+                state = CsvFieldState.Start;
+                hasRecordContent = true;
+                continue;
+            }
+
+            if (state == CsvFieldState.Start && character == '"')
+            {
+                state = CsvFieldState.Quoted;
+                hasRecordContent = true;
+                continue;
+            }
+
+            if (state == CsvFieldState.AfterQuote)
+            {
+                error ??= "Only a comma or line break may follow a closing quote.";
+            }
+            else if (character == '"')
+            {
+                error ??= "A quote may only begin a quoted field.";
+            }
+
+            field.Append(character);
+            state = CsvFieldState.Unquoted;
+            hasRecordContent = true;
+        }
+
+        if (state == CsvFieldState.Quoted)
+        {
+            error ??= "A quoted CSV field is not closed.";
+        }
+
+        CompleteRecord();
+        return records;
     }
 
     private static ImportUnitsResult Summarize(bool dryRun, IReadOnlyList<ImportRowResult> rows) =>
@@ -367,7 +507,27 @@ public sealed class MasterDataImportService(
 
     private static string? NullIfEmpty(string value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
-    private sealed record Row(int RowNumber, string ExternalId, string Code, string Name, int DecimalPlaces, bool IsWholeUnitOnly);
+    private enum CsvFieldState
+    {
+        Start,
+        Unquoted,
+        Quoted,
+        AfterQuote
+    }
+
+    private sealed record CsvRecord(int RowNumber, IReadOnlyList<string> Fields, string? Error);
+
+    private sealed record Row(
+        int RowNumber,
+        string ExternalId,
+        string Code,
+        string Name,
+        int DecimalPlaces,
+        bool IsWholeUnitOnly,
+        bool HasCorrectFieldCount = true,
+        bool DecimalPlacesParsed = true,
+        bool IsWholeUnitOnlyParsed = true,
+        string? CsvError = null);
 
     private sealed record ItemRow(
         int RowNumber,
