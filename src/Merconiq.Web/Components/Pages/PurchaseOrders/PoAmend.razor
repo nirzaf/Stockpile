@@ -63,7 +63,7 @@ else
                             </MudSelect>
                         </MudItem>
                         <MudItem xs="6" md="2"><MudNumericField T="int" @bind-Value="line.Quantity" Label="Quantity" Min="1" Required="true" /></MudItem>
-                        <MudItem xs="6" md="2"><MudNumericField T="decimal" @bind-Value="line.UnitPrice" Label="Unit price" Min="0" Format="N2" Required="true" /></MudItem>
+                        <MudItem xs="6" md="2"><MudNumericField T="decimal" @bind-Value="line.UnitPrice" Label="Unit price" Min="0" Format="@UnitPriceFormat" Required="true" /></MudItem>
                         <MudItem xs="6" md="2"><MudNumericField T="decimal" @bind-Value="line.DiscountPercent" Label="Discount %" Min="0" Max="100" Format="N2" /></MudItem>
                         <MudItem xs="6" md="2">
                             <MudSelect T="int?" @bind-Value="line.TaxRuleId" Label="Tax rule">
@@ -110,6 +110,7 @@ else
     private int _expectedVersion;
     private int _supplierId;
     private int _currencyScale;
+    private string UnitPriceFormat => $"N{_currencyScale}";
     private string? _deliveryTerms;
     private string? _notes;
     private List<Supplier> _suppliers = [];

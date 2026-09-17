@@ -237,6 +237,202 @@ public sealed class PurchaseOrderApprovalPostgreSqlIntegrationTests(PostgreSqlIn
     }
 
     [PostgreSqlFact]
+    public async Task Approved_purchase_order_amendment_round_trips_four_decimal_unit_price()
+    {
+        fixture.EnsureEnabled();
+        var tenantId = $"po-approval-price-{Guid.NewGuid():N}";
+        await using var context = fixture.CreateContext(tenantId);
+        var unit = new UnitOfMeasure { Code = "EA", Name = "Each", DecimalPlaces = 0, IsWholeUnitOnly = true };
+        var supplier = new Supplier { Name = "Precision supplier" };
+        context.UnitsOfMeasure.Add(unit);
+        context.Suppliers.Add(supplier);
+        await context.SaveChangesAsync();
+
+        var item = new Item
+        {
+            ItemCode = $"PREC-{Guid.NewGuid():N}"[..20], Description = "Precision test item", Rate = 1m,
+            BaseUnitId = unit.Id, PurchaseUnitId = unit.Id, PurchaseToBaseFactor = 1m,
+            QuantityPrecision = 0, WholeUnitOnly = true
+        };
+        context.Items.Add(item);
+        await context.SaveChangesAsync();
+
+        var service = CreateService(context, tenantId);
+        var order = await service.CreateAsync(
+            new PurchaseOrder
+            {
+                PONumber = $"PO-PRICE-{Guid.NewGuid():N}"[..32],
+                SupplierId = supplier.Id,
+                CurrencyScale = 4
+            },
+            [new OrderDetail { ItemId = item.Id, Quantity = 3, UnitPrice = 1m }],
+            Guid.NewGuid().ToString("N"));
+        await service.UpdateStatusAsync(order.Id, nameof(PurchaseOrderStatus.Approved));
+
+        var form = await service.GetForAmendmentAsync(order.Id);
+        var line = form!.OrderDetails.Single();
+        await service.AmendApprovedAsync(order.Id, new PurchaseOrderAmendment(
+            form.CommercialVersion,
+            supplier.Id,
+            "Precision-checked delivery",
+            null,
+            4,
+            [new PurchaseOrderAmendmentLine(
+                line.Id, item.Id, 3, 1.2345m, 0m, null, 0m,
+                TaxCategory.Standard, TaxCalculationMode.Exclusive, DocumentLineDirection.Charge)]));
+
+        context.ChangeTracker.Clear();
+        var storedOrder = await context.PurchaseOrders.SingleAsync(candidate => candidate.Id == order.Id);
+        var storedLine = await context.OrderDetails.SingleAsync(candidate => candidate.PurchaseOrderId == order.Id);
+        storedLine.UnitPrice.Should().Be(1.2345m);
+        storedLine.GrossAmount.Should().Be(3.7035m);
+        storedOrder.TotalAmount.Should().Be(3.7035m);
+    }
+
+    [PostgreSqlFact]
+    public async Task Unit_price_precision_migration_refuses_to_round_values_on_downgrade()
+    {
+        fixture.EnsureEnabled();
+        const string precisionMigrationId = "20260918015000_ExpandPurchaseOrderUnitPricePrecision";
+        var tenantId = $"po-approval-price-down-{Guid.NewGuid():N}";
+        var schema = $"po_price_down_{Guid.NewGuid():N}";
+        var connectionString = new NpgsqlConnectionStringBuilder(fixture.ConnectionString) { SearchPath = schema };
+        await using (var createSchema = new NpgsqlConnection(fixture.ConnectionString))
+        {
+            await createSchema.OpenAsync();
+            await using var command = new NpgsqlCommand($"CREATE SCHEMA \"{schema}\"", createSchema);
+            await command.ExecuteNonQueryAsync();
+        }
+
+        try
+        {
+            var options = new DbContextOptionsBuilder<InventoryDbContext>()
+                .UseNpgsql(connectionString.ConnectionString)
+                .ConfigureWarnings(warnings => warnings.Ignore(RelationalEventId.PendingModelChangesWarning))
+                .Options;
+            await using var context = new InventoryDbContext(options, new TestTenantContext(tenantId));
+            await context.Database.MigrateAsync();
+
+            var unit = new UnitOfMeasure { Code = "EA", Name = "Each", DecimalPlaces = 0, IsWholeUnitOnly = true };
+            var supplier = new Supplier { Name = "Precision downgrade supplier" };
+            context.UnitsOfMeasure.Add(unit);
+            context.Suppliers.Add(supplier);
+            await context.SaveChangesAsync();
+            var item = new Item
+            {
+                ItemCode = $"DOWN-{Guid.NewGuid():N}"[..20], Description = "Precision downgrade item", Rate = 1m,
+                BaseUnitId = unit.Id, PurchaseUnitId = unit.Id, PurchaseToBaseFactor = 1m,
+                QuantityPrecision = 0, WholeUnitOnly = true
+            };
+            context.Items.Add(item);
+            await context.SaveChangesAsync();
+
+            var service = CreateService(context, tenantId);
+            var order = await service.CreateAsync(
+                new PurchaseOrder
+                {
+                    PONumber = $"PO-DOWN-{Guid.NewGuid():N}"[..32],
+                    SupplierId = supplier.Id,
+                    CurrencyScale = 4
+                },
+                [new OrderDetail { ItemId = item.Id, Quantity = 1, UnitPrice = 1.2345m }],
+                Guid.NewGuid().ToString("N"));
+            context.ChangeTracker.Clear();
+
+            var failure = await FluentActions.Awaiting(() => context.GetService<IMigrator>().MigrateAsync(
+                    "20260918010000_AddPurchaseOrderApprovalVersioning"))
+                .Should().ThrowAsync<PostgresException>();
+            failure.Which.MessageText.Should().Contain(
+                "Cannot downgrade UnitPrice precision while stored values require decimal(20,4).");
+
+            var storedLine = await context.OrderDetails.SingleAsync(line => line.PurchaseOrderId == order.Id);
+            storedLine.UnitPrice.Should().Be(1.2345m);
+            (await context.Database.GetAppliedMigrationsAsync()).Should().Contain(precisionMigrationId);
+        }
+        finally
+        {
+            await using var dropSchema = new NpgsqlConnection(fixture.ConnectionString);
+            await dropSchema.OpenAsync();
+            await using var command = new NpgsqlCommand($"DROP SCHEMA IF EXISTS \"{schema}\" CASCADE", dropSchema);
+            await command.ExecuteNonQueryAsync();
+        }
+    }
+
+    [PostgreSqlFact]
+    public async Task Amendment_preserves_tax_snapshot_when_the_original_rule_has_expired()
+    {
+        fixture.EnsureEnabled();
+        var tenantId = $"po-approval-expired-tax-{Guid.NewGuid():N}";
+        await using var context = fixture.CreateContext(tenantId);
+        var unit = new UnitOfMeasure { Code = "EA", Name = "Each", DecimalPlaces = 0, IsWholeUnitOnly = true };
+        var supplier = new Supplier { Name = "Historical tax supplier" };
+        context.UnitsOfMeasure.Add(unit);
+        context.Suppliers.Add(supplier);
+        await context.SaveChangesAsync();
+
+        var item = new Item
+        {
+            ItemCode = $"TAX-{Guid.NewGuid():N}"[..20], Description = "Historical tax item", Rate = 100m,
+            BaseUnitId = unit.Id, PurchaseUnitId = unit.Id, PurchaseToBaseFactor = 1m,
+            QuantityPrecision = 0, WholeUnitOnly = true
+        };
+        var rule = new TaxRule
+        {
+            Code = $"TAX-{Guid.NewGuid():N}"[..20],
+            Category = TaxCategory.Standard,
+            RatePercent = 7.5m,
+            CalculationMode = TaxCalculationMode.Inclusive,
+            EffectiveFromUtc = DateTime.UtcNow.AddDays(-2),
+            EffectiveToUtc = DateTime.UtcNow.AddDays(1),
+            IsActive = true
+        };
+        context.Items.Add(item);
+        context.TaxRules.Add(rule);
+        await context.SaveChangesAsync();
+
+        var service = CreateService(context, tenantId);
+        var order = await service.CreateAsync(
+            new PurchaseOrder
+            {
+                PONumber = $"PO-TAX-{Guid.NewGuid():N}"[..32],
+                SupplierId = supplier.Id,
+                CurrencyScale = 2
+            },
+            [new OrderDetail { ItemId = item.Id, Quantity = 1, UnitPrice = 100m, TaxRuleId = rule.Id }],
+            Guid.NewGuid().ToString("N"));
+        await service.UpdateStatusAsync(order.Id, nameof(PurchaseOrderStatus.Approved));
+
+        var originalLine = await context.OrderDetails.SingleAsync(line => line.PurchaseOrderId == order.Id);
+        var originalRate = originalLine.TaxRatePercent;
+        var originalCategory = originalLine.TaxCategory;
+        var originalMode = originalLine.TaxMode;
+        var originalEffectiveFrom = originalLine.TaxEffectiveFromUtc;
+        rule.IsActive = false;
+        rule.EffectiveToUtc = DateTime.UtcNow.AddMinutes(-1);
+        await context.SaveChangesAsync();
+
+        var form = await service.GetForAmendmentAsync(order.Id);
+        var line = form!.OrderDetails.Single();
+        await service.AmendApprovedAsync(order.Id, new PurchaseOrderAmendment(
+            form.CommercialVersion,
+            supplier.Id,
+            "New delivery bay, same tax terms",
+            null,
+            form.CurrencyScale,
+            [new PurchaseOrderAmendmentLine(
+                line.Id, item.Id, line.Quantity, line.UnitPrice, line.DiscountPercent,
+                line.TaxRuleId, line.TaxRatePercent, line.TaxCategory, line.TaxMode, line.Direction)]));
+
+        context.ChangeTracker.Clear();
+        var amendedLine = await context.OrderDetails.SingleAsync(candidate => candidate.PurchaseOrderId == order.Id);
+        amendedLine.TaxRuleId.Should().Be(rule.Id);
+        amendedLine.TaxRatePercent.Should().Be(originalRate);
+        amendedLine.TaxCategory.Should().Be(originalCategory);
+        amendedLine.TaxMode.Should().Be(originalMode);
+        amendedLine.TaxEffectiveFromUtc.Should().Be(originalEffectiveFrom);
+    }
+
+    [PostgreSqlFact]
     public async Task Material_amendment_requires_reapproval_and_status_only_update_is_rejected()
     {
         fixture.EnsureEnabled();

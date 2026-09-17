@@ -12,6 +12,9 @@ namespace Merconiq.Core.Services;
 /// </summary>
 public class PurchaseOrderService : IPurchaseOrderService
 {
+    private const int UnitPriceFractionalDigits = 4;
+    private const decimal UnitPriceExclusiveLimit = 10_000_000_000_000_000m;
+
     private readonly IRepository<PurchaseOrder> _poRepo;
     private readonly IUnitOfWork _unitOfWork;
     private readonly IDocumentIdentityService _documentIdentityService;
@@ -110,7 +113,10 @@ public class PurchaseOrderService : IPurchaseOrderService
         // Line scale is derived from the document currency. Normalize it before
         // the request hash is checked so retries use the same canonical inputs.
         foreach (var detail in details)
+        {
             detail.CurrencyScale = purchaseOrder.CurrencyScale;
+            ValidateUnitPriceStoragePrecision(detail.UnitPrice);
+        }
 
         var replay = await _documentIdentityService.TryReplayPurchaseOrderAsync(
             purchaseOrder, details, idempotencyKey, cancellationToken);
@@ -179,6 +185,16 @@ public class PurchaseOrderService : IPurchaseOrderService
             idempotencyKey,
             cancellationToken);
         return created;
+    }
+
+    private static void ValidateUnitPriceStoragePrecision(decimal unitPrice)
+    {
+        if (unitPrice <= -UnitPriceExclusiveLimit || unitPrice >= UnitPriceExclusiveLimit ||
+            decimal.Round(unitPrice, UnitPriceFractionalDigits, MidpointRounding.ToEven) != unitPrice)
+        {
+            throw new InvalidOperationException(
+                $"Unit price must fit within decimal(20,{UnitPriceFractionalDigits}) storage precision.");
+        }
     }
 
     private async Task<TaxRule?> ResolveTaxRuleAsync(
@@ -322,6 +338,7 @@ public class PurchaseOrderService : IPurchaseOrderService
             if (current.PurchaseOrderId != id)
                 throw new InvalidOperationException("A purchase-order line does not belong to this order.");
             var requested = requestedLines[index];
+            ValidateUnitPriceStoragePrecision(requested.UnitPrice);
             if (requested.Quantity <= 0 || requested.ItemId <= 0 || requested.UnitPrice < 0m ||
                 requested.DiscountPercent is < 0m or > 100m ||
                 !Enum.IsDefined(requested.TaxCategory) || !Enum.IsDefined(requested.TaxMode) ||
@@ -330,16 +347,28 @@ public class PurchaseOrderService : IPurchaseOrderService
             if (!requested.TaxRuleId.HasValue && requested.TaxRatePercent != 0m)
                 throw new InvalidOperationException("A configured tax rule is required for a non-zero tax rate.");
 
-            var taxRule = await ResolveTaxRuleAsync(requested.TaxRuleId, DateTime.UtcNow, CancellationToken.None);
+            var preserveSelectedTaxSnapshot = current.TaxRuleId.HasValue &&
+                current.TaxRuleId == requested.TaxRuleId;
+            var taxRule = preserveSelectedTaxSnapshot
+                ? null
+                : await ResolveTaxRuleAsync(requested.TaxRuleId, DateTime.UtcNow, CancellationToken.None);
             current.ItemId = requested.ItemId;
             current.Quantity = requested.Quantity;
             current.UnitPrice = requested.UnitPrice;
             current.DiscountPercent = requested.DiscountPercent;
             current.TaxRuleId = requested.TaxRuleId;
-            current.TaxCategory = taxRule?.Category ?? requested.TaxCategory;
-            current.TaxRatePercent = taxRule?.RatePercent ?? requested.TaxRatePercent;
-            current.TaxMode = taxRule?.CalculationMode ?? requested.TaxMode;
-            current.TaxEffectiveFromUtc = taxRule?.EffectiveFromUtc;
+            current.TaxCategory = preserveSelectedTaxSnapshot
+                ? current.TaxCategory
+                : taxRule?.Category ?? requested.TaxCategory;
+            current.TaxRatePercent = preserveSelectedTaxSnapshot
+                ? current.TaxRatePercent
+                : taxRule?.RatePercent ?? requested.TaxRatePercent;
+            current.TaxMode = preserveSelectedTaxSnapshot
+                ? current.TaxMode
+                : taxRule?.CalculationMode ?? requested.TaxMode;
+            current.TaxEffectiveFromUtc = preserveSelectedTaxSnapshot
+                ? current.TaxEffectiveFromUtc
+                : taxRule?.EffectiveFromUtc;
             current.Direction = requested.Direction;
             current.CurrencyScale = amendment.CurrencyScale;
 

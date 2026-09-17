@@ -594,7 +594,7 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
             entity.HasQueryFilter(e => e.TenantId == CurrentTenantId);
             entity.Property(e => e.TenantId).HasMaxLength(64).IsRequired();
             entity.HasIndex(e => e.TenantId);
-            entity.Property(e => e.UnitPrice).HasColumnType("decimal(18,2)");
+            entity.Property(e => e.UnitPrice).HasColumnType("decimal(20,4)");
             entity.Property(e => e.DocumentLineId)
                 .HasConversion(id => id.Value, value => new DocumentLineIdentityId(value))
                 .ValueGeneratedNever();

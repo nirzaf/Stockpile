@@ -118,6 +118,21 @@ public class PurchaseOrderServiceTests
     }
 
     [Fact]
+    public async Task CreatePurchaseOrderAsync_RejectsUnitPriceBeyondPersistedScale()
+    {
+        var order = new PurchaseOrder { PONumber = "PO-PRECISION", SupplierId = 1, CurrencyScale = 4 };
+        var detail = new OrderDetail { ItemId = 1, Quantity = 1, UnitPrice = 1.23456m };
+
+        var act = () => _sut.CreateAsync(order, [detail], "purchase-order-create-precision");
+
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("Unit price must fit within decimal(20,4) storage precision.");
+        _documentIdentityMock.Verify(service => service.TryReplayPurchaseOrderAsync(
+            It.IsAny<PurchaseOrder>(), It.IsAny<IReadOnlyCollection<OrderDetail>>(),
+            It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
     public async Task CreatePurchaseOrderAsync_WhenCalled_UsesTheProvidedIdempotencyKeyExactlyOnce()
     {
         // Arrange
@@ -511,6 +526,56 @@ public class PurchaseOrderServiceTests
         line.UnitPrice.Should().Be(6m);
         line.DocumentLineId.Should().Be(stableLineId);
         _uowMock.Verify(unitOfWork => unitOfWork.SaveChangesAsync(default), Times.Once);
+    }
+
+    [Fact]
+    public async Task AmendApprovedAsync_PreservesHistoricalTaxSnapshotWhenSelectedRuleIsNoLongerActive()
+    {
+        var effectiveFrom = new DateTime(2024, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+        var po = new PurchaseOrder
+        {
+            Id = 56,
+            PONumber = "PO-56",
+            SupplierId = 7,
+            Status = PurchaseOrderStatus.Approved,
+            CommercialVersion = 1,
+            ApprovedCommercialVersion = 1,
+            ApprovedCommercialSnapshotJson = "{\"schemaVersion\":1}",
+            CurrencyScale = 2
+        };
+        var line = new OrderDetail
+        {
+            Id = 11,
+            PurchaseOrderId = po.Id,
+            ItemId = 21,
+            Quantity = 2,
+            UnitPrice = 4m,
+            CurrencyScale = 2,
+            TaxRuleId = 77,
+            TaxRatePercent = 7.5m,
+            TaxCategory = TaxCategory.Standard,
+            TaxMode = TaxCalculationMode.Inclusive,
+            TaxEffectiveFromUtc = effectiveFrom
+        };
+        _poRepoMock.Setup(repository => repository.GetByIdAsync(po.Id)).ReturnsAsync(po);
+        SetupSnapshotData(po, line);
+
+        await _sut.AmendApprovedAsync(po.Id, new Merconiq.Core.Models.PurchaseOrderAmendment(
+            ExpectedCommercialVersion: 1,
+            SupplierId: po.SupplierId,
+            DeliveryTerms: "Updated receiving bay",
+            Notes: null,
+            CurrencyScale: 2,
+            Lines: [new Merconiq.Core.Models.PurchaseOrderAmendmentLine(
+                line.Id, line.ItemId, line.Quantity, line.UnitPrice, line.DiscountPercent,
+                line.TaxRuleId, line.TaxRatePercent, line.TaxCategory, line.TaxMode, line.Direction)]));
+
+        line.TaxRatePercent.Should().Be(7.5m);
+        line.TaxCategory.Should().Be(TaxCategory.Standard);
+        line.TaxMode.Should().Be(TaxCalculationMode.Inclusive);
+        line.TaxEffectiveFromUtc.Should().Be(effectiveFrom);
+        _taxRuleRepoMock.Verify(repository => repository.FindAsync(
+            It.IsAny<Expression<Func<TaxRule, bool>>>()), Times.Never);
     }
 
     [Fact]
