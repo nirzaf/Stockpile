@@ -118,6 +118,225 @@ public sealed class StockReservationIntegrationTests
         reservation.ExpiryDate.Should().Be(new DateTime(2027, 1, 1));
     }
 
+    [Fact]
+    public async Task Explicit_expired_lot_cannot_be_reserved_without_changing_stock_or_reservations()
+    {
+        var database = Guid.NewGuid().ToString();
+        var tenant = "expired-reserve-test";
+        var state = await SeedExpiredLotAsync(database, tenant, "existing-expired-reservation");
+
+        await using (var context = CreateContext(database, tenant))
+        {
+            var action = () => CreateService(context, tenant).CreateReservationAsync(
+                new CreateStockReservationRequest(state.ItemId, state.LocationId, 1, "new-line",
+                    "LOT-EXPIRED", state.ExpiryDate));
+            await action.Should().ThrowAsync<StockAvailabilityConflictException>()
+                .WithMessage("The selected stock lot has expired and cannot be reserved, sold, or transferred.");
+        }
+
+        await AssertExpiredLotStateUnchangedAsync(database, tenant, state);
+    }
+
+    [Fact]
+    public async Task Automatically_selected_expired_lot_is_rejected_before_expired_reservations_are_released()
+    {
+        var database = Guid.NewGuid().ToString();
+        var tenant = "expired-auto-reserve-test";
+        var state = await SeedExpiredLotAsync(database, tenant, "existing-expired-reservation");
+
+        await using (var context = CreateContext(database, tenant))
+        {
+            var action = () => CreateService(context, tenant).CreateReservationAsync(
+                new CreateStockReservationRequest(state.ItemId, state.LocationId, 1, "new-line"));
+            await action.Should().ThrowAsync<StockAvailabilityConflictException>()
+                .WithMessage("The selected stock lot has expired and cannot be reserved, sold, or transferred.");
+        }
+
+        await AssertExpiredLotStateUnchangedAsync(database, tenant, state);
+    }
+
+    [Fact]
+    public async Task Sale_of_explicit_expired_lot_is_rejected_without_changing_stock_or_reservations()
+    {
+        var database = Guid.NewGuid().ToString();
+        var tenant = "expired-sale-test";
+        var state = await SeedExpiredLotAsync(database, tenant, "existing-expired-reservation");
+
+        await using (var context = CreateContext(database, tenant))
+        {
+            var action = () => CreateService(context, tenant).SellStockAsync(
+                state.ItemId, state.LocationId, 1, "expired lot sale", "LOT-EXPIRED", state.ExpiryDate);
+            await action.Should().ThrowAsync<StockAvailabilityConflictException>()
+                .WithMessage("The selected stock lot has expired and cannot be reserved, sold, or transferred.");
+        }
+
+        await AssertExpiredLotStateUnchangedAsync(database, tenant, state);
+    }
+
+    [Fact]
+    public async Task Consuming_reservation_for_expired_lot_is_rejected_without_releasing_or_consuming_it()
+    {
+        var database = Guid.NewGuid().ToString();
+        var tenant = "expired-consume-test";
+        var state = await SeedExpiredLotAsync(database, tenant, "line-expired");
+
+        await using (var context = CreateContext(database, tenant))
+        {
+            var action = () => CreateService(context, tenant).ConsumeReservationAsync(
+                new ConsumeStockReservationRequest("line-expired", 1, "expired reservation sale"));
+            await action.Should().ThrowAsync<StockAvailabilityConflictException>()
+                .WithMessage("The selected stock lot has expired and cannot be reserved, sold, or transferred.");
+        }
+
+        await AssertExpiredLotStateUnchangedAsync(database, tenant, state);
+    }
+
+    [Fact]
+    public async Task Transfer_of_explicit_expired_lot_is_rejected_without_changing_stock_or_reservations()
+    {
+        var database = Guid.NewGuid().ToString();
+        var tenant = "expired-transfer-test";
+        var state = await SeedExpiredLotAsync(database, tenant, "existing-expired-reservation");
+
+        await using (var context = CreateContext(database, tenant))
+        {
+            var action = () => CreateService(context, tenant).TransferStockAsync(
+                state.ItemId, state.LocationId, state.DestinationLocationId, 1,
+                "expired lot transfer", "LOT-EXPIRED", state.ExpiryDate);
+            await action.Should().ThrowAsync<StockAvailabilityConflictException>()
+                .WithMessage("The selected stock lot has expired and cannot be reserved, sold, or transferred.");
+        }
+
+        await AssertExpiredLotStateUnchangedAsync(database, tenant, state);
+    }
+
+    [Fact]
+    public async Task Lot_expiring_today_remains_eligible_for_reservation()
+    {
+        var database = Guid.NewGuid().ToString();
+        var tenant = "expiry-today-test";
+        var (itemId, locationId) = await SeedAsync(database, tenant, 5);
+        var expiryDate = DateTime.UtcNow.Date;
+        await using (var setup = CreateContext(database, tenant))
+        {
+            var stock = await setup.StockInHand.SingleAsync();
+            stock.BatchNumber = "LOT-TODAY";
+            stock.ExpiryDate = expiryDate;
+            await setup.SaveChangesAsync();
+        }
+
+        await using (var context = CreateContext(database, tenant))
+        {
+            await CreateService(context, tenant).CreateReservationAsync(
+                new CreateStockReservationRequest(itemId, locationId, 1, "line-today", "LOT-TODAY", expiryDate));
+        }
+
+        await using var verify = CreateContext(database, tenant);
+        (await verify.StockInHand.SingleAsync()).ReservedQuantity.Should().Be(1);
+        var reservation = await verify.StockReservations.SingleAsync();
+        reservation.ExpiryDate.Should().Be(expiryDate);
+        reservation.BatchNumber.Should().Be("LOT-TODAY");
+    }
+
+    private static async Task<ExpiredLotSeed> SeedExpiredLotAsync(
+        string database,
+        string tenant,
+        string reservationReference)
+    {
+        await using var context = CreateContext(database, tenant);
+        var company = new Company
+        {
+            Code = $"EXP-{Guid.NewGuid():N}",
+            LegalName = "Expired lot test company",
+            TenantId = tenant
+        };
+        context.Companies.Add(company);
+        await context.SaveChangesAsync();
+
+        var branch = new Branch
+        {
+            CompanyId = company.Id,
+            Code = "TEST",
+            Name = "Expired lot test branch",
+            TenantId = tenant
+        };
+        context.Branches.Add(branch);
+        await context.SaveChangesAsync();
+
+        var source = new Location { Name = "Expired lot source", BranchId = branch.Id, TenantId = tenant };
+        var destination = new Location { Name = "Expired lot destination", BranchId = branch.Id, TenantId = tenant };
+        context.Locations.AddRange(source, destination);
+        await context.SaveChangesAsync();
+
+        var item = new Item
+        {
+            ItemCode = $"EXP-{Guid.NewGuid():N}",
+            Description = "Expired lot test item",
+            ReorderLevel = 0,
+            TenantId = tenant
+        };
+        context.Items.Add(item);
+        await context.SaveChangesAsync();
+
+        var expiryDate = DateTime.UtcNow.Date.AddDays(-1);
+        context.StockInHand.Add(new StockInHand
+        {
+            ItemId = item.Id,
+            LocationId = source.Id,
+            Quantity = 10,
+            ReservedQuantity = 2,
+            BatchNumber = "LOT-EXPIRED",
+            ExpiryDate = expiryDate,
+            TenantId = tenant
+        });
+        context.StockReservations.Add(new StockReservation
+        {
+            ItemId = item.Id,
+            LocationId = source.Id,
+            SourceLineReference = reservationReference,
+            BatchNumber = "LOT-EXPIRED",
+            ExpiryDate = expiryDate,
+            Quantity = 2,
+            ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(-1),
+            Status = StockReservationStatus.Active,
+            TenantId = tenant
+        });
+        await context.SaveChangesAsync();
+        return new ExpiredLotSeed(item.Id, source.Id, destination.Id, expiryDate, reservationReference);
+    }
+
+    private static async Task AssertExpiredLotStateUnchangedAsync(
+        string database,
+        string tenant,
+        ExpiredLotSeed state)
+    {
+        await using var verify = CreateContext(database, tenant);
+        var stock = await verify.StockInHand.SingleAsync();
+        stock.ItemId.Should().Be(state.ItemId);
+        stock.LocationId.Should().Be(state.LocationId);
+        stock.Quantity.Should().Be(10);
+        stock.ReservedQuantity.Should().Be(2);
+        stock.BatchNumber.Should().Be("LOT-EXPIRED");
+        stock.ExpiryDate.Should().Be(state.ExpiryDate);
+
+        var reservation = await verify.StockReservations.SingleAsync();
+        reservation.SourceLineReference.Should().Be(state.ReservationReference);
+        reservation.Status.Should().Be(StockReservationStatus.Active);
+        reservation.Quantity.Should().Be(2);
+        reservation.ConsumedQuantity.Should().Be(0);
+        reservation.ExpiresAt.Should().BeBefore(DateTimeOffset.UtcNow);
+        reservation.ClosedAt.Should().BeNull();
+        reservation.ResolutionReason.Should().BeNull();
+        (await verify.StockTransactions.CountAsync()).Should().Be(0);
+    }
+
+    private sealed record ExpiredLotSeed(
+        int ItemId,
+        int LocationId,
+        int DestinationLocationId,
+        DateTime ExpiryDate,
+        string ReservationReference);
+
     private static async Task<(int ItemId, int LocationId)> SeedAsync(string database, string tenant, int quantity)
     {
         await using var context = CreateContext(database, tenant);

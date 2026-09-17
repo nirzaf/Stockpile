@@ -28,10 +28,20 @@ are not enabled by this stock slice. A baseline correction uses the approved
 reversal endpoint, which posts forward stock/valuation effects and retains the
 original baseline. Backups and restore rehearsals remain operational prerequisites;
 rollback of a failed request is the surrounding database transaction, not a
-production database reset. FIFO, lot/expiry valuation, transfers, reservations,
-and GL postings remain separate follow-up work.
+production database reset. FIFO, lot/expiry valuation and GL postings remain
+separate follow-up work; transfers, reservations, and expiry eligibility are
+controlled by the stock service rather than this valuation slice.
 
 A quantity-only sale with no valuation bucket remains unvalued and creates no
 valuation entry. If a bucket exists, a sale must be fully covered by its valued
 quantity; a sale that would combine valued and unvalued quantities is rejected
 atomically. Partial valuation of one sale is not inferred in this slice.
+
+## Lot expiry restrictions
+
+Stock operations that target an expired lot reject it before reserving, selling
+(including consuming a reservation), or transferring its quantity out. Expiry
+is date-only and compared with the current UTC calendar date; a lot remains
+eligible through its recorded expiry date. Rejection does not change on-hand
+quantity, reservations, or stock movements. Expired stock is not automatically
+quarantined, and audited exceptions or overrides are not supported.
