@@ -56,10 +56,27 @@ public sealed class CompanyCapabilityPostgreSqlApiTests(PostgreSqlIntegrationFix
 
         forbiddenResponse.StatusCode.Should().Be(HttpStatusCode.Forbidden);
 
+        await using (var revoke = fixture.CreateContext(tenant.TenantId))
+        {
+            var membership = await revoke.CompanyMemberships.SingleAsync(candidate =>
+                candidate.CompanyId == tenant.CompanyAId && candidate.UserId == buyer.User.Id);
+            membership.IsActive = false;
+            await revoke.SaveChangesAsync();
+        }
+
+        const string revokedCsv = "external_id,code,name,address,time_zone_id,is_active\n"
+            + "branch-revoked,BR-REVOKED,Revoked branch,,UTC,true";
+        var revokedResponse = await buyer.Client.PostAsJsonAsync(
+            "/api/v1/organization/branches/import",
+            new { csv = revokedCsv, dryRun = false, companyId = tenant.CompanyAId });
+        revokedResponse.StatusCode.Should().Be(HttpStatusCode.Forbidden,
+            "the same still-valid JWT must lose Edit access as soon as its company membership is revoked");
+
         await using var verification = fixture.CreateContext(tenant.TenantId);
         var companyABranches = await verification.Branches.IgnoreQueryFilters()
             .Where(branch => branch.TenantId == tenant.TenantId &&
-                (branch.ExternalId == "branch-a" || branch.ExternalId == "branch-b"))
+                (branch.ExternalId == "branch-a" || branch.ExternalId == "branch-b" ||
+                 branch.ExternalId == "branch-revoked"))
             .Select(branch => new { branch.ExternalId, branch.CompanyId })
             .ToListAsync();
         companyABranches.Should().ContainSingle();
@@ -69,6 +86,9 @@ public sealed class CompanyCapabilityPostgreSqlApiTests(PostgreSqlIntegrationFix
         (await verification.Branches.IgnoreQueryFilters()
             .CountAsync(branch => branch.TenantId == tenant.TenantId && branch.ExternalId == "branch-b"))
             .Should().Be(0, "a denied import must not create a branch for the ungranted company");
+        (await verification.Branches.IgnoreQueryFilters()
+            .CountAsync(branch => branch.TenantId == tenant.TenantId && branch.ExternalId == "branch-revoked"))
+            .Should().Be(0, "revoking the company membership must prevent subsequent imports by its existing JWT");
     }
 
     [PostgreSqlFact]
