@@ -373,5 +373,30 @@ transfer order cannot be amended or cancelled.
 
 This increment accepts only valued, unbatched source stock. Lot/expiry and
 quantity-only stock are rejected because current M03 valuation does not provide
-lot-level or historical acquisition-cost evidence. Partial receipts, returns,
-and transit reconciliation remain in issue #282 and #283.
+lot-level or historical acquisition-cost evidence.
+
+Resolve a dispatched transit entry with company-scoped `Post` permission and a
+required `Idempotency-Key`:
+
+```http
+POST /api/v1/transfer-orders/123/lines/456/transit/789/receive
+Idempotency-Key: receive-2026-09-17-001
+Content-Type: application/json
+
+{"quantity":20,"notes":"Received in good condition"}
+```
+
+Use the same route with `/quarantine` (a non-blank `reason` is required) or
+`/return`. Receipt and quarantine increase destination on-hand quantity; only
+quarantined quantity is unavailable for further stock operations. Quarantine
+is a custody step, not an approved write-off or final disposition; quarantined
+goods remain valued stock until the separately approved M03 disposition
+workflow is used. Returns move the captured transit value back to the source.
+Partial settlement allocates the transit entry's captured total value, with the
+final settlement receiving any rounding remainder so the ledger conserves the
+dispatched value. Each settlement is append-only, lineage-linked, limited to
+the unsettled dispatched quantity, and idempotent. The order reports
+`PartiallyReceived` only after destination receipt; it becomes `Completed` when
+all ordered quantity has been dispatched and every dispatched unit has been
+received, quarantined, or returned. Lot/expiry inputs must match the dispatched
+entry.

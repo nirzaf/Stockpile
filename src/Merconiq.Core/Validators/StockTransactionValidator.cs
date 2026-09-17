@@ -32,6 +32,7 @@ public class StockTransactionValidator : AbstractValidator<StockTransaction>
 
         RuleFor(x => x.ToLocationId)
             .GreaterThan(0).WithMessage("Destination location is required")
-            .When(x => x.TransactionType == TransactionType.Transfer);
+            .When(x => x.TransactionType is TransactionType.Transfer or
+                TransactionType.TransferReceipt or TransactionType.TransferReturn);
     }
 }

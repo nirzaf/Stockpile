@@ -146,6 +146,66 @@ public sealed class TransferOrdersController(
             : Ok(ApiResponse<TransferDispatchView>.CreateSuccess(result));
     }
 
+    [HttpPost("{id:int}/lines/{lineId:int}/transit/{transitEntryId:int}/receive")]
+    [Authorize(Policy = CapabilityPolicies.Post)]
+    [ValidateAntiForgeryToken]
+    [IgnoreAntiforgeryToken]
+    public Task<IActionResult> ReceiveTransit(
+        int id,
+        int lineId,
+        int transitEntryId,
+        [FromBody] TransferTransitSettlementRequest request,
+        [FromServices] IIdempotencyKeyStore idempotencyKeyStore,
+        CancellationToken cancellationToken) =>
+        ResolveTransitAsync(
+            id,
+            lineId,
+            transitEntryId,
+            request,
+            TransferTransitSettlementType.Received,
+            idempotencyKeyStore,
+            cancellationToken);
+
+    [HttpPost("{id:int}/lines/{lineId:int}/transit/{transitEntryId:int}/quarantine")]
+    [Authorize(Policy = CapabilityPolicies.Post)]
+    [ValidateAntiForgeryToken]
+    [IgnoreAntiforgeryToken]
+    public Task<IActionResult> QuarantineTransit(
+        int id,
+        int lineId,
+        int transitEntryId,
+        [FromBody] TransferTransitSettlementRequest request,
+        [FromServices] IIdempotencyKeyStore idempotencyKeyStore,
+        CancellationToken cancellationToken) =>
+        ResolveTransitAsync(
+            id,
+            lineId,
+            transitEntryId,
+            request,
+            TransferTransitSettlementType.Quarantined,
+            idempotencyKeyStore,
+            cancellationToken);
+
+    [HttpPost("{id:int}/lines/{lineId:int}/transit/{transitEntryId:int}/return")]
+    [Authorize(Policy = CapabilityPolicies.Post)]
+    [ValidateAntiForgeryToken]
+    [IgnoreAntiforgeryToken]
+    public Task<IActionResult> ReturnTransit(
+        int id,
+        int lineId,
+        int transitEntryId,
+        [FromBody] TransferTransitSettlementRequest request,
+        [FromServices] IIdempotencyKeyStore idempotencyKeyStore,
+        CancellationToken cancellationToken) =>
+        ResolveTransitAsync(
+            id,
+            lineId,
+            transitEntryId,
+            request,
+            TransferTransitSettlementType.Returned,
+            idempotencyKeyStore,
+            cancellationToken);
+
     [HttpPost("{id:int}/cancel")]
     [Authorize(Policy = CapabilityPolicies.Edit)]
     [ValidateAntiForgeryToken]
@@ -175,6 +235,61 @@ public sealed class TransferOrdersController(
     private async Task<bool> CanEditTransferAsync(int fromLocationId, int toLocationId, int companyId) =>
         await authorization.CanAccessTransferAsync(User, fromLocationId, toLocationId, CompanyCapability.Edit) &&
         await authorization.GetLocationCompanyIdAsync(User, fromLocationId) == companyId;
+
+    private async Task<IActionResult> ResolveTransitAsync(
+        int id,
+        int lineId,
+        int transitEntryId,
+        TransferTransitSettlementRequest request,
+        TransferTransitSettlementType settlementType,
+        IIdempotencyKeyStore idempotencyKeyStore,
+        CancellationToken cancellationToken)
+    {
+        var settledBy = User.FindFirstValue(ClaimTypes.NameIdentifier) ??
+                        User.FindFirstValue("sub") ??
+                        User.Identity?.Name;
+        if (string.IsNullOrWhiteSpace(settledBy))
+            return Unauthorized(ApiResponse<object>.CreateFailure("An authenticated settlement identity is required."));
+        if (request is null)
+            return BadRequest(ApiResponse<object>.CreateFailure("A settlement request is required."));
+
+        var order = await transferOrders.GetByIdAsync(id, cancellationToken);
+        if (order is null)
+            return NotFound(ApiResponse<object>.CreateFailure("Transfer order not found."));
+        if (!await authorization.CanAccessTransferAsync(
+                User, order.FromLocationId, order.ToLocationId, CompanyCapability.Post))
+            return Forbid();
+
+        var resolvedRequest = request with { SettlementType = settlementType };
+        var idempotencyKey = Request.Headers["Idempotency-Key"].ToString();
+        if (string.IsNullOrWhiteSpace(idempotencyKey))
+            return BadRequest(ApiResponse<object>.CreateFailure("Idempotency-Key is required for transit settlement."));
+        if (idempotencyKey.Length > 200)
+            return BadRequest(ApiResponse<object>.CreateFailure("Idempotency-Key must be 200 characters or fewer."));
+
+        var scope = CreateMutationScope(
+            order.CompanyId, order.FromLocationId, order.ToLocationId, CompanyCapability.Post);
+        TransferTransitSettlementView? result = null;
+        await idempotencyKeyStore.ExecuteAsync(
+            $"{tenantContext.TenantId}:{Request.Method}:{Request.Path}",
+            idempotencyKey,
+            IdempotencyRequestHasher.Compute(resolvedRequest),
+            async () => result = await transferOrders.ResolveTransitAsync(
+                id,
+                lineId,
+                transitEntryId,
+                resolvedRequest,
+                idempotencyKey,
+                settledBy.Trim(),
+                scope,
+                cancellationToken),
+            cancellationToken);
+
+        return result is null
+            ? StatusCode(StatusCodes.Status500InternalServerError,
+                ApiResponse<object>.CreateFailure("The transit settlement result could not be recovered."))
+            : Ok(ApiResponse<TransferTransitSettlementView>.CreateSuccess(result));
+    }
 
     private async Task<IActionResult> RunMutationAsync<T>(
         T request,

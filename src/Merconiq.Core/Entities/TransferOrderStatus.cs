@@ -5,5 +5,8 @@ public enum TransferOrderStatus
 {
     Draft,
     Approved,
+    InTransit,
+    PartiallyReceived,
+    Completed,
     Cancelled
 }

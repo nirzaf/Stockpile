@@ -706,6 +706,137 @@ public class StockService : IStockService
     }
 
     /// <inheritdoc />
+    public async Task<TransferStockDispatchMovement> PostTransferTransitMovementAsync(
+        TransferTransitStockMovementRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        cancellationToken.ThrowIfCancellationRequested();
+        if (request.ItemId <= 0 || request.FromLocationId <= 0 || request.ToLocationId <= 0)
+            throw new ArgumentOutOfRangeException(nameof(request), "Transfer movement references must be positive.");
+        if (request.FromLocationId == request.ToLocationId)
+            throw new ArgumentException("Transfer movement locations must be different.", nameof(request));
+        if (request.Quantity <= 0)
+            throw new ArgumentOutOfRangeException(nameof(request.Quantity), "Quantity must be positive.");
+        if (request.UnitCost < 0)
+            throw new ArgumentOutOfRangeException(nameof(request.UnitCost), "Unit cost must be non-negative.");
+        if (request.TotalValue < 0)
+            throw new ArgumentOutOfRangeException(nameof(request.TotalValue), "Total value must be non-negative.");
+        if (request.TransactionType is not (TransactionType.TransferReceipt or TransactionType.TransferReturn))
+            throw new ArgumentException("Only transfer receipt and return movements are supported.", nameof(request));
+        EnsureSourceLineReference(request.SourceLineReference);
+        EnsureReservationFields(request.BatchNumber, request.Notes);
+        EnsureReservationFields(null, request.QuarantineReason);
+        if (request.TransactionType == TransactionType.TransferReturn && request.QuarantineReason is not null)
+            throw new ArgumentException("Transfer returns cannot be quarantined.", nameof(request));
+        var batchNumber = string.IsNullOrWhiteSpace(request.BatchNumber) ? null : request.BatchNumber.Trim();
+        var expiryDate = StockLotExpiryDate.Normalize(request.ExpiryDate);
+        var sourceLineReference = request.SourceLineReference.Trim();
+        var notes = request.Notes.Trim();
+        var quarantineReason = string.IsNullOrWhiteSpace(request.QuarantineReason)
+            ? null
+            : request.QuarantineReason.Trim();
+        StockTransaction? transaction = null;
+        TransferStockDispatchMovement? movement = null;
+
+        await ExecuteWithRetryAsync(request.ItemId, async () =>
+        {
+            await _unitOfWork.AcquireLocationLocksAsync(
+                [request.FromLocationId, request.ToLocationId], cancellationToken);
+            var source = await EnsureLocationUsableAsync(request.FromLocationId, cancellationToken);
+            var destination = await EnsureLocationUsableAsync(request.ToLocationId, cancellationToken);
+            await EnsureSameCompanyTransferAsync(source, destination);
+            await EnsureAuthorizedCompanyScopeAsync(source, request.MutationScope);
+            await EnsureAuthorizedCompanyScopeAsync(destination, request.MutationScope);
+            if (IsExpiredStockLot(expiryDate))
+                await EnsureExpiredLotExceptionAsync(
+                    expiryDate, request.MutationScope is { ReauthorizeExpiredStockOverride: not null }
+                        ? "Transfer transit lot received after expiry."
+                        : null,
+                    request.MutationScope);
+
+            var stock = await GetByItemAndLocationAsync(
+                request.ItemId, request.ToLocationId, batchNumber, expiryDate);
+            var isNewStock = stock is null;
+            if (stock is null)
+            {
+                stock = new StockInHand
+                {
+                    ItemId = request.ItemId,
+                    LocationId = request.ToLocationId,
+                    Quantity = 0,
+                    BatchNumber = batchNumber,
+                    ExpiryDate = expiryDate
+                };
+                await _stockRepo.AddAsync(stock);
+            }
+
+            stock.Quantity = checked(stock.Quantity + request.Quantity);
+            if (quarantineReason is not null)
+                stock.QuarantinedQuantity = checked(stock.QuarantinedQuantity + request.Quantity);
+            if (!isNewStock)
+                await _stockRepo.UpdateAsync(stock);
+
+            transaction = new StockTransaction
+            {
+                ItemId = request.ItemId,
+                FromLocationId = request.FromLocationId,
+                ToLocationId = request.ToLocationId,
+                Quantity = request.Quantity,
+                TransactionType = request.TransactionType,
+                TransactionDate = DateTime.UtcNow,
+                BatchNumber = batchNumber,
+                ExpiryDate = expiryDate,
+                Notes = notes,
+                SourceLineReference = sourceLineReference,
+                QuarantineReason = quarantineReason,
+                UnitCost = request.UnitCost
+            };
+            await _txRepo.AddAsync(transaction);
+            await ApplyReceiptValuationAsync(
+                request.ItemId,
+                request.ToLocationId,
+                request.Quantity,
+                request.UnitCost,
+                transaction,
+                request.TransactionType == TransactionType.TransferReturn
+                    ? StockValuationEntryType.TransferReturn
+                    : StockValuationEntryType.TransferIn,
+                request.TotalValue);
+
+            var eventType = request.TransactionType == TransactionType.TransferReturn
+                ? "Stock.TransferReturned"
+                : quarantineReason is null ? "Stock.TransferReceived" : "Stock.TransferQuarantined";
+            await _webhookDispatcher.EnqueueAsync(WebhookEventFactory.Create(_tenantContext, eventType,
+                new
+                {
+                    request.ItemId,
+                    request.FromLocationId,
+                    request.ToLocationId,
+                    request.Quantity,
+                    BatchNumber = batchNumber,
+                    ExpiryDate = expiryDate,
+                    UnitCost = request.UnitCost,
+                    TotalValue = request.TotalValue,
+                    SourceLineReference = sourceLineReference,
+                    QuarantineReason = quarantineReason,
+                    Notes = notes
+                }));
+            await _unitOfWork.SaveChangesAsync(cancellationToken);
+            movement = new TransferStockDispatchMovement(
+                transaction.Id,
+                request.Quantity,
+                batchNumber,
+                expiryDate,
+                Round(request.UnitCost),
+                request.TotalValue);
+        }, () => VerifyTransactionCommitAsync(transaction), checkLowStock: false, cancellationToken);
+
+        return movement ?? throw new InvalidOperationException(
+            "The transfer transit movement did not produce a stock transaction.");
+    }
+
+    /// <inheritdoc />
     public async Task ReturnStockAsync(
         CreateStockReturnRequest request,
         StockMutationScope? mutationScope = null)
@@ -1776,11 +1907,15 @@ public class StockService : IStockService
         int locationId,
         int quantity,
         decimal unitCost,
-        StockTransaction source)
+        StockTransaction source,
+        StockValuationEntryType entryType = StockValuationEntryType.Receipt,
+        decimal? totalValueOverride = null)
     {
         var existing = (await _valuationBucketRepo!.FindAsync(bucket =>
             bucket.ItemId == itemId && bucket.LocationId == locationId)).FirstOrDefault();
-        var totalValue = Round(quantity * unitCost);
+        var totalValue = totalValueOverride.HasValue
+            ? Round(totalValueOverride.Value)
+            : Round(quantity * unitCost);
 
         if (existing is null)
         {
@@ -1806,7 +1941,7 @@ public class StockService : IStockService
             StockTransaction = source,
             ItemId = itemId,
             LocationId = locationId,
-            EntryType = StockValuationEntryType.Receipt,
+            EntryType = entryType,
             Quantity = quantity,
             UnitCost = Round(unitCost),
             TotalValue = totalValue

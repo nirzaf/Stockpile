@@ -25,7 +25,8 @@ public sealed class TransferOrderService(
     IStockService stockService,
     ITenantContext tenantContext,
     IWebhookDispatcher webhookDispatcher,
-    ILogger<TransferOrderService> logger) : ITransferOrderService
+    ILogger<TransferOrderService> logger,
+    IRepository<TransferTransitSettlement>? settlementRepository = null) : ITransferOrderService
 {
     private const string DocumentType = "TransferOrder";
     private const string RequestScope = "TransferOrder.Create";
@@ -33,6 +34,8 @@ public sealed class TransferOrderService(
     private const int RecentOrderLimit = 100;
     private static readonly DateTimeOffset ReservationUntilResolution =
         new(9999, 12, 31, 0, 0, 0, TimeSpan.Zero);
+
+    private readonly IRepository<TransferTransitSettlement>? _settlementRepository = settlementRepository;
 
     public async Task<TransferOrderView?> GetByIdAsync(int id, CancellationToken cancellationToken = default)
     {
@@ -66,9 +69,17 @@ public sealed class TransferOrderService(
             line => orderIds.Contains(line.TransferOrderId), cancellationToken);
         var identities = await documentRepository.FindAsync(
             document => documentIds.Contains(document.Id), cancellationToken);
+        var settlements = _settlementRepository is null
+            ? Array.Empty<TransferTransitSettlement>()
+            : (await _settlementRepository.FindAsync(
+                settlement => orderIds.Contains(settlement.TransferOrderId), cancellationToken)).ToArray();
         var linesByOrder = lines.GroupBy(line => line.TransferOrderId)
             .ToDictionary(group => group.Key, group => group.OrderBy(line => line.Id).ToArray());
         var identitiesById = identities.ToDictionary(identity => identity.Id);
+        var settledByLine = settlements
+            .Where(settlement => settlement.SettlementType != TransferTransitSettlementType.Returned)
+            .GroupBy(settlement => settlement.TransferOrderLineId)
+            .ToDictionary(group => group.Key, group => group.Sum(settlement => settlement.Quantity));
 
         return orders.Select(order => ToView(
                 order,
@@ -77,7 +88,8 @@ public sealed class TransferOrderService(
                     : throw new InvalidOperationException("Transfer-order document identity not found."),
                 linesByOrder.TryGetValue(order.Id, out var orderLines)
                     ? orderLines
-                    : Array.Empty<TransferOrderLine>()))
+                    : Array.Empty<TransferOrderLine>(),
+                settledByLine))
             .ToArray();
     }
 
@@ -248,6 +260,9 @@ public sealed class TransferOrderService(
                 throw new InvalidOperationException("Cancelled transfer orders cannot be approved.");
             if (order.Status == TransferOrderStatus.Approved)
                 return;
+            if (order.Status is TransferOrderStatus.InTransit or
+                TransferOrderStatus.PartiallyReceived or TransferOrderStatus.Completed)
+                throw new InvalidOperationException("A transfer order cannot be approved after dispatch or settlement.");
 
             await unitOfWork.AcquireTenantOperationLockAsync("organization-state", cancellationToken);
             await unitOfWork.AcquireLocationLocksAsync([order.FromLocationId, order.ToLocationId], cancellationToken);
@@ -388,8 +403,9 @@ public sealed class TransferOrderService(
             var line = lineRepository.Query().SingleOrDefault(candidate =>
                 candidate.Id == lineId && candidate.TransferOrderId == id)
                 ?? throw new KeyNotFoundException("Transfer-order line not found.");
-            if (order.Status != TransferOrderStatus.Approved)
-                throw new InvalidOperationException("Only an approved transfer order can be dispatched.");
+            if (order.Status is not (TransferOrderStatus.Approved or
+                TransferOrderStatus.InTransit or TransferOrderStatus.PartiallyReceived))
+                throw new InvalidOperationException("Only an open transfer order can be dispatched.");
             if (mutationScope.CompanyId != order.CompanyId)
                 throw new UnauthorizedAccessException("The dispatch scope does not match the transfer-order company.");
             if (mutationScope.Reauthorize is not null && !await mutationScope.Reauthorize())
@@ -442,6 +458,11 @@ public sealed class TransferOrderService(
             await transitRepository.AddAsync(entry);
             line.DispatchedQuantity = checked(line.DispatchedQuantity + quantity);
             await lineRepository.UpdateAsync(line);
+            if (order.Status == TransferOrderStatus.Approved)
+            {
+                order.Status = TransferOrderStatus.InTransit;
+                await orderRepository.UpdateAsync(order);
+            }
             await webhookDispatcher.EnqueueAsync(WebhookEventFactory.Create(tenantContext,
                 "TransferOrder.Dispatched",
                 new
@@ -470,6 +491,207 @@ public sealed class TransferOrderService(
             ?? throw new InvalidOperationException("The committed transfer dispatch could not be read back.");
     }
 
+    public async Task<TransferTransitSettlementView> ResolveTransitAsync(
+        int id,
+        int lineId,
+        int transitEntryId,
+        TransferTransitSettlementRequest request,
+        string idempotencyKey,
+        string settledBy,
+        StockMutationScope mutationScope,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        if (id <= 0 || lineId <= 0 || transitEntryId <= 0)
+            throw new ArgumentOutOfRangeException(nameof(id));
+        if (request.Quantity <= 0)
+            throw new ArgumentOutOfRangeException(nameof(request.Quantity), "Settlement quantity must be positive.");
+        if (!Enum.IsDefined(request.SettlementType))
+            throw new ArgumentException("Settlement type is invalid.", nameof(request));
+        ValidateIdempotencyKey(idempotencyKey);
+        ArgumentException.ThrowIfNullOrWhiteSpace(settledBy);
+        if (settledBy.Length > 256)
+            throw new ArgumentOutOfRangeException(nameof(settledBy), "Settlement identity cannot exceed 256 characters.");
+        if (request.BatchNumber?.Length > 100)
+            throw new ArgumentOutOfRangeException(nameof(request.BatchNumber));
+        if (request.Reason?.Length > 500 || request.Notes?.Length > 500)
+            throw new ArgumentOutOfRangeException(nameof(request), "Reason and notes cannot exceed 500 characters.");
+        if (request.SettlementType == TransferTransitSettlementType.Quarantined &&
+            string.IsNullOrWhiteSpace(request.Reason))
+            throw new ArgumentException("A reason is required for quarantined transit stock.", nameof(request));
+        if (request.SettlementType == TransferTransitSettlementType.Returned &&
+            (request.BatchNumber is not null || request.ExpiryDate.HasValue || request.Reason is not null))
+            throw new ArgumentException("Returns cannot provide destination lot details or a quarantine reason.", nameof(request));
+
+        var normalizedRequest = request with
+        {
+            BatchNumber = NormalizeBatchNumber(request.BatchNumber),
+            ExpiryDate = StockLotExpiryDate.Normalize(request.ExpiryDate),
+            Reason = NormalizeNotes(request.Reason),
+            Notes = NormalizeNotes(request.Notes)
+        };
+        var requestHash = HashTransitSettlementRequest(
+            id, lineId, transitEntryId, normalizedRequest);
+        TransferTransitSettlementView? result = null;
+
+        await unitOfWork.ExecuteInTransactionAsync(async () =>
+        {
+            await unitOfWork.AcquireTenantOperationLockAsync("organization-state", cancellationToken);
+            var initialEntry = (await transitRepository.FindAsync(entry => entry.Id == transitEntryId, cancellationToken))
+                .SingleOrDefault()
+                ?? throw new KeyNotFoundException("Transfer transit entry not found.");
+            await unitOfWork.AcquireLocationLocksAsync(
+                [initialEntry.FromLocationId, initialEntry.ToLocationId], cancellationToken);
+
+            var previous = (await _settlementRepositoryOrThrow().FindAsync(settlement =>
+                    settlement.TransferTransitEntryId == transitEntryId &&
+                    settlement.IdempotencyKey == idempotencyKey, cancellationToken))
+                .SingleOrDefault();
+            if (previous is not null)
+            {
+                if (!string.Equals(previous.RequestHash, requestHash, StringComparison.Ordinal))
+                    throw new InvalidOperationException("The transit idempotency key was already used with a different request.");
+                if (mutationScope.CompanyId != previous.CompanyId ||
+                    mutationScope.Reauthorize is not null && !await mutationScope.Reauthorize())
+                    throw new UnauthorizedAccessException("Company posting access is required to replay this settlement.");
+                result = ToSettlementView(previous);
+                return;
+            }
+
+            var entry = (await transitRepository.FindAsync(candidate => candidate.Id == transitEntryId, cancellationToken))
+                .SingleOrDefault()
+                ?? throw new KeyNotFoundException("Transfer transit entry not found.");
+            if (entry.TransferOrderId != id || entry.TransferOrderLineId != lineId)
+                throw new KeyNotFoundException("Transfer transit entry not found.");
+            if (mutationScope.CompanyId != entry.CompanyId)
+                throw new UnauthorizedAccessException("The settlement scope does not match the transfer company.");
+            if (mutationScope.Reauthorize is not null && !await mutationScope.Reauthorize())
+                throw new UnauthorizedAccessException("Company posting access changed before settlement.");
+
+            var order = (await orderRepository.FindAsync(candidate => candidate.Id == id, cancellationToken))
+                .SingleOrDefault()
+                ?? throw new KeyNotFoundException("Transfer order not found.");
+            var line = (await lineRepository.FindAsync(candidate =>
+                    candidate.Id == lineId && candidate.TransferOrderId == id, cancellationToken))
+                .SingleOrDefault()
+                ?? throw new KeyNotFoundException("Transfer-order line not found.");
+            if (order.Status is TransferOrderStatus.Draft or TransferOrderStatus.Cancelled or TransferOrderStatus.Completed)
+                throw new InvalidOperationException("Only an open dispatched transfer order can be settled.");
+            if (line.ItemId != entry.ItemId || line.DocumentLineId != entry.SourceDocumentLineId)
+                throw new InvalidOperationException("Transfer transit lineage is inconsistent.");
+            if (entry.CompanyId != order.CompanyId || entry.FromLocationId != order.FromLocationId ||
+                entry.ToLocationId != order.ToLocationId)
+                throw new InvalidOperationException("Transfer transit ownership is inconsistent.");
+
+            var existingSettlements = await _settlementRepositoryOrThrow().FindAsync(
+                settlement => settlement.TransferTransitEntryId == transitEntryId, cancellationToken);
+            var settledQuantity = existingSettlements.Sum(settlement => settlement.Quantity);
+            var remaining = entry.Quantity - settledQuantity;
+            if (normalizedRequest.Quantity > remaining)
+                throw new StockAvailabilityConflictException(
+                    $"Settlement quantity exceeds the remaining transit quantity of {Math.Max(0, remaining)}.");
+            if (normalizedRequest.SettlementType is TransferTransitSettlementType.Received or
+                TransferTransitSettlementType.Quarantined)
+            {
+                if (normalizedRequest.BatchNumber != entry.BatchNumber ||
+                    normalizedRequest.ExpiryDate != StockLotExpiryDate.Normalize(entry.ExpiryDate))
+                    throw new InvalidOperationException("Destination lot details must match the dispatched source lot.");
+            }
+
+            var isReturn = normalizedRequest.SettlementType == TransferTransitSettlementType.Returned;
+            var remainingValue = entry.TotalValue - existingSettlements.Sum(settlement => settlement.TotalValue);
+            var settlementValue = normalizedRequest.Quantity == remaining
+                ? remainingValue
+                : Math.Min(
+                    Round(entry.TotalValue * normalizedRequest.Quantity / entry.Quantity),
+                    remainingValue);
+            var settlementUnitCost = Round(settlementValue / normalizedRequest.Quantity);
+            var movement = await stockService.PostTransferTransitMovementAsync(
+                new TransferTransitStockMovementRequest(
+                    entry.ItemId,
+                    isReturn ? entry.ToLocationId : entry.FromLocationId,
+                    isReturn ? entry.FromLocationId : entry.ToLocationId,
+                    normalizedRequest.Quantity,
+                    entry.BatchNumber,
+                    entry.ExpiryDate,
+                    settlementUnitCost,
+                    settlementValue,
+                    CreateTransitMovementReference(entry.Id, idempotencyKey, normalizedRequest.SettlementType),
+                    normalizedRequest.Notes ?? (isReturn ? "Transfer transit returned." : "Transfer transit received."),
+                    isReturn ? TransactionType.TransferReturn : TransactionType.TransferReceipt,
+                    normalizedRequest.SettlementType == TransferTransitSettlementType.Quarantined
+                        ? normalizedRequest.Reason
+                        : null,
+                    mutationScope),
+                cancellationToken);
+
+            var settlement = new TransferTransitSettlement
+            {
+                TransferTransitEntryId = entry.Id,
+                TransferOrderId = entry.TransferOrderId,
+                TransferOrderLineId = entry.TransferOrderLineId,
+                SourceDocumentLineId = entry.SourceDocumentLineId,
+                CompanyId = entry.CompanyId,
+                ItemId = entry.ItemId,
+                FromLocationId = entry.FromLocationId,
+                ToLocationId = entry.ToLocationId,
+                StockTransactionId = movement.StockTransactionId,
+                Quantity = movement.Quantity,
+                SettlementType = normalizedRequest.SettlementType,
+                BatchNumber = movement.BatchNumber,
+                ExpiryDate = movement.ExpiryDate,
+                UnitCost = movement.UnitCost,
+                TotalValue = movement.TotalValue,
+                IdempotencyKey = idempotencyKey,
+                RequestHash = requestHash,
+                SettledBy = settledBy.Trim(),
+                SettledAt = NormalizeDatabaseTimestamp(DateTimeOffset.UtcNow),
+                Reason = normalizedRequest.Reason,
+                TenantId = tenantContext.TenantId
+            };
+            await _settlementRepositoryOrThrow().AddAsync(settlement);
+            var allTransit = await transitRepository.FindAsync(candidate => candidate.TransferOrderId == id, cancellationToken);
+            var allSettlements = await _settlementRepositoryOrThrow().FindAsync(
+                candidate => candidate.TransferOrderId == id, cancellationToken);
+            var allSettled = allSettlements.Sum(candidate => candidate.Quantity) + settlement.Quantity;
+            var physicallyReceived = allSettlements
+                .Where(candidate => candidate.SettlementType != TransferTransitSettlementType.Returned)
+                .Sum(candidate => candidate.Quantity) +
+                (settlement.SettlementType == TransferTransitSettlementType.Returned ? 0 : settlement.Quantity);
+            var totalDispatched = allTransit.Sum(candidate => candidate.Quantity);
+            var totalOrdered = (await lineRepository.FindAsync(candidate => candidate.TransferOrderId == id, cancellationToken))
+                .Sum(candidate => candidate.Quantity);
+            order.Status = allSettled >= totalDispatched && totalDispatched >= totalOrdered
+                ? TransferOrderStatus.Completed
+                : physicallyReceived > 0 ? TransferOrderStatus.PartiallyReceived : TransferOrderStatus.InTransit;
+            await orderRepository.UpdateAsync(order);
+            await webhookDispatcher.EnqueueAsync(WebhookEventFactory.Create(tenantContext,
+                "TransferOrder.TransitSettled",
+                new
+                {
+                    TransferOrderId = order.Id,
+                    order.DocumentId,
+                    TransferTransitEntryId = entry.Id,
+                    settlement.TransferOrderLineId,
+                    settlement.SettlementType,
+                    settlement.Quantity,
+                    settlement.TotalValue,
+                    settlement.Reason
+                }));
+            await unitOfWork.SaveChangesAsync(cancellationToken);
+            result = ToSettlementView(settlement);
+        }, cancellationToken, async () =>
+        {
+            var committed = (await _settlementRepositoryOrThrow().FindAsync(settlement =>
+                    settlement.TransferTransitEntryId == transitEntryId &&
+                    settlement.IdempotencyKey == idempotencyKey, cancellationToken))
+                .SingleOrDefault();
+            return committed is not null && committed.RequestHash == requestHash;
+        });
+
+        return result ?? throw new InvalidOperationException("The committed transit settlement could not be read back.");
+    }
+
     public async Task<TransferDispatchView?> GetDispatchByKeyAsync(
         int id,
         int lineId,
@@ -495,13 +717,22 @@ public sealed class TransferOrderService(
         var lines = (await lineRepository.FindAsync(line => line.TransferOrderId == order.Id))
             .OrderBy(line => line.Id)
             .ToArray();
-        return ToView(order, identity, lines);
+        var settlements = _settlementRepository is null
+            ? Array.Empty<TransferTransitSettlement>()
+            : (await _settlementRepository.FindAsync(
+                settlement => settlement.TransferOrderId == order.Id, cancellationToken)).ToArray();
+        var settledByLine = settlements
+            .Where(settlement => settlement.SettlementType != TransferTransitSettlementType.Returned)
+            .GroupBy(settlement => settlement.TransferOrderLineId)
+            .ToDictionary(group => group.Key, group => group.Sum(settlement => settlement.Quantity));
+        return ToView(order, identity, lines, settledByLine);
     }
 
     private static TransferOrderView ToView(
         TransferOrder order,
         DocumentIdentity identity,
-        IReadOnlyCollection<TransferOrderLine> lines) =>
+        IReadOnlyCollection<TransferOrderLine> lines,
+        IReadOnlyDictionary<int, int>? settledByLine = null) =>
         new(
             order.Id,
             order.DocumentId.Value,
@@ -520,7 +751,37 @@ public sealed class TransferOrderService(
                 line.BatchNumber,
                 line.ExpiryDate,
                 line.ReservationSourceLineReference,
-                line.DispatchedQuantity)).ToArray());
+                line.DispatchedQuantity,
+                settledByLine is not null && settledByLine.TryGetValue(line.Id, out var receivedQuantity)
+                    ? receivedQuantity
+                    : 0)).ToArray());
+
+    private IRepository<TransferTransitSettlement> _settlementRepositoryOrThrow() =>
+        _settlementRepository ?? throw new InvalidOperationException(
+            "Transfer transit settlement persistence is not configured.");
+
+    private static TransferTransitSettlementView ToSettlementView(TransferTransitSettlement settlement) =>
+        new(
+            settlement.Id,
+            settlement.TransferTransitEntryId,
+            settlement.TransferOrderId,
+            settlement.TransferOrderLineId,
+            settlement.SourceDocumentLineId.Value,
+            settlement.CompanyId,
+            settlement.ItemId,
+            settlement.FromLocationId,
+            settlement.ToLocationId,
+            settlement.StockTransactionId,
+            settlement.Quantity,
+            settlement.SettlementType,
+            settlement.BatchNumber,
+            settlement.ExpiryDate,
+            settlement.UnitCost,
+            settlement.TotalValue,
+            settlement.IdempotencyKey,
+            settlement.SettledBy,
+            settlement.SettledAt,
+            settlement.Reason);
 
     private void ValidateHeader(int companyId, int fromLocationId, int toLocationId)
     {
@@ -592,6 +853,11 @@ public sealed class TransferOrderService(
 
     private static string? NormalizeBatchNumber(string? batchNumber) =>
         string.IsNullOrWhiteSpace(batchNumber) ? null : batchNumber.Trim();
+
+    private static DateTimeOffset NormalizeDatabaseTimestamp(DateTimeOffset value) =>
+        value.AddTicks(-(value.Ticks % TimeSpan.TicksPerMicrosecond));
+
+    private static decimal Round(decimal value) => decimal.Round(value, 6, MidpointRounding.AwayFromZero);
 
     private static void ValidateIdempotencyKey(string key)
     {
@@ -679,6 +945,34 @@ public sealed class TransferOrderService(
         entry.IdempotencyKey,
         entry.DispatchedBy,
         entry.DispatchedAt);
+
+    private static string HashTransitSettlementRequest(
+        int orderId,
+        int lineId,
+        int transitEntryId,
+        TransferTransitSettlementRequest request)
+    {
+        var payload = new StringBuilder();
+        AppendField(payload, orderId.ToString(CultureInfo.InvariantCulture));
+        AppendField(payload, lineId.ToString(CultureInfo.InvariantCulture));
+        AppendField(payload, transitEntryId.ToString(CultureInfo.InvariantCulture));
+        AppendField(payload, request.Quantity.ToString(CultureInfo.InvariantCulture));
+        AppendField(payload, request.SettlementType.ToString());
+        AppendField(payload, request.BatchNumber);
+        AppendField(payload, request.ExpiryDate?.ToString("O", CultureInfo.InvariantCulture));
+        AppendField(payload, request.Reason);
+        AppendField(payload, request.Notes);
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(payload.ToString())));
+    }
+
+    private static string CreateTransitMovementReference(
+        int transitEntryId,
+        string idempotencyKey,
+        TransferTransitSettlementType settlementType)
+    {
+        var keyDigest = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(idempotencyKey)))[..24];
+        return $"TransferTransit:{transitEntryId}:{settlementType}:{keyDigest}";
+    }
 
     private static void AppendField(StringBuilder payload, string? value)
     {
