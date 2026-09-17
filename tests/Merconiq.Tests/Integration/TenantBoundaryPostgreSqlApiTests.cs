@@ -7,6 +7,7 @@ using System.Text.Json;
 using FluentAssertions;
 using Merconiq.Core.Entities;
 using Merconiq.Core.Interfaces;
+using Merconiq.Core.Models;
 using Merconiq.Infrastructure.Data;
 using Merconiq.Tests.Infrastructure;
 using Merconiq.Web.Security;
@@ -91,6 +92,19 @@ public sealed class TenantBoundaryPostgreSqlApiTests(PostgreSqlIntegrationFixtur
             $"/api/v1/stock/in-hand/{tenantB.ItemId}/{tenantB.LocationId}");
         tenantBStock.StatusCode.Should().Be(HttpStatusCode.OK);
 
+        var companyUpdateRequest = new UpdateCompanyRequest(
+            LegalName: "Authorized tenant B company update",
+            TradingName: null,
+            RegistrationNumber: null,
+            TaxIdentifier: null,
+            BaseCurrency: "USD",
+            CountryCode: "US",
+            IsActive: true);
+        using var authorizedCompanyUpdate = await tenantBClient.PutAsJsonAsync(
+            $"/api/v1/organization/companies/{tenantB.CompanyId}", companyUpdateRequest);
+        authorizedCompanyUpdate.StatusCode.Should().Be(HttpStatusCode.NoContent,
+            "the same valid company-update request succeeds for a tenant B CompanyAdmin");
+
         using var crossTenantCompanyRead = await tenantAAdminOnTenantBHost.GetAsync(
             $"/api/v1/organization/companies/{tenantB.CompanyId}");
         crossTenantCompanyRead.StatusCode.Should().Be(HttpStatusCode.Unauthorized,
@@ -100,15 +114,7 @@ public sealed class TenantBoundaryPostgreSqlApiTests(PostgreSqlIntegrationFixtur
         crossTenantStockRead.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
 
         using var crossTenantCompanyUpdate = await tenantAAdminOnTenantBHost.PutAsJsonAsync(
-            $"/api/v1/organization/companies/{tenantB.CompanyId}", new
-            {
-                legalName = "Unauthorized cross-tenant update",
-                tradingName = (string?)null,
-                registrationNumber = (string?)null,
-                taxIdentifier = (string?)null,
-                baseCurrency = "USD",
-                countryCode = "US"
-            });
+            $"/api/v1/organization/companies/{tenantB.CompanyId}", companyUpdateRequest);
         crossTenantCompanyUpdate.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
 
         using var crossTenantStockReceive = await tenantAOperatorOnTenantBHost.PostAsJsonAsync(
@@ -134,7 +140,8 @@ public sealed class TenantBoundaryPostgreSqlApiTests(PostgreSqlIntegrationFixtur
         await using (var verifyB = fixture.CreateContext(TenantBId))
         {
             (await verifyB.Companies.SingleAsync(company => company.Id == tenantB.CompanyId)).LegalName
-                .Should().Be(tenantB.LegalName);
+                .Should().Be(companyUpdateRequest.LegalName,
+                    "only the authorized tenant B control update should be persisted");
             (await verifyB.StockInHand.SingleAsync(stock => stock.ItemId == tenantB.ItemId)).Quantity
                 .Should().Be(tenantB.OpeningQuantity);
             (await verifyB.StockTransactions.CountAsync(transaction => transaction.ItemId == tenantB.ItemId))
