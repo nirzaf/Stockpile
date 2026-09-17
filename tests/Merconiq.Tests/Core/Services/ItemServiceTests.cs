@@ -204,6 +204,20 @@ public class ItemServiceTests
     }
 
     [Fact]
+    public async Task CreateAsync_rejects_a_legacy_barcode_with_surrounding_whitespace()
+    {
+        _repoMock.Setup(r => r.FindAsync(It.IsAny<Expression<Func<Item, bool>>>()))
+            .ReturnsAsync(new[] { new Item { Id = 2, Barcode = " 012345 " } });
+        var item = new Item { ItemCode = "SKU-1", Description = "Widget", Rate = 10m, Barcode = "012345" };
+
+        var act = () => _sut.CreateAsync(item);
+
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("An item with this barcode already exists for this tenant.");
+        _repoMock.Verify(r => r.AddAsync(It.IsAny<Item>()), Times.Never);
+    }
+
+    [Fact]
     public async Task CreateAsync_rejects_conversion_unit_without_base_unit()
     {
         var item = new Item

@@ -131,7 +131,7 @@ public class ItemService : IItemService
         if (item.Barcode is not null)
         {
             var duplicateBarcode = await _repo.FindAsync(candidate =>
-                candidate.Id != item.Id && candidate.Barcode == item.Barcode);
+                candidate.Id != item.Id && candidate.Barcode != null && candidate.Barcode.Trim() == item.Barcode);
             if (duplicateBarcode.Any())
                 throw new InvalidOperationException("An item with this barcode already exists for this tenant.");
         }
