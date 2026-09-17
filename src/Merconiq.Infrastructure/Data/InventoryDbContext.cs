@@ -77,6 +77,7 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
     /// <summary>Approved opening-stock replay records.</summary>
     public DbSet<OpeningStockImport> OpeningStockImports { get; set; } = null!;
     public DbSet<OpeningStockImportLine> OpeningStockImportLines { get; set; } = null!;
+    public DbSet<OpeningStockCorrection> OpeningStockCorrections { get; set; } = null!;
 
     /// <summary>Tenant-owned legal and trading companies.</summary>
     public DbSet<Company> Companies { get; set; } = null!;
@@ -751,6 +752,16 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
             entity.Property(e => e.ApprovedBy).HasMaxLength(256).IsRequired();
             entity.HasIndex(e => new { e.TenantId, e.ImportReference }).IsUnique();
             entity.HasIndex(e => new { e.TenantId, e.ApprovalReference }).IsUnique();
+            entity.HasIndex(e => e.TenantId).IsUnique();
+            entity.Property(e => e.Id).Metadata.SetAfterSaveBehavior(PropertySaveBehavior.Throw);
+            entity.Property(e => e.TenantId).Metadata.SetAfterSaveBehavior(PropertySaveBehavior.Throw);
+            entity.Property(e => e.ImportReference).Metadata.SetAfterSaveBehavior(PropertySaveBehavior.Throw);
+            entity.Property(e => e.ApprovalReference).Metadata.SetAfterSaveBehavior(PropertySaveBehavior.Throw);
+            entity.Property(e => e.RequestHash).Metadata.SetAfterSaveBehavior(PropertySaveBehavior.Throw);
+            entity.Property(e => e.ApprovedBy).Metadata.SetAfterSaveBehavior(PropertySaveBehavior.Throw);
+            entity.Property(e => e.ApprovedAt).Metadata.SetAfterSaveBehavior(PropertySaveBehavior.Throw);
+            entity.Property(e => e.CutoverAt).Metadata.SetAfterSaveBehavior(PropertySaveBehavior.Throw);
+            entity.Property(e => e.LineCount).Metadata.SetAfterSaveBehavior(PropertySaveBehavior.Throw);
         });
 
         modelBuilder.Entity<OpeningStockImportLine>(entity =>
@@ -766,6 +777,11 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
                 .HasForeignKey(e => new { e.OpeningStockImportId, e.TenantId })
                 .HasPrincipalKey(e => new { e.Id, e.TenantId })
                 .OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(e => e.StockTransaction)
+                .WithMany()
+                .HasForeignKey(e => new { e.StockTransactionId, e.TenantId })
+                .HasPrincipalKey(e => new { e.Id, e.TenantId })
+                .OnDelete(DeleteBehavior.Restrict);
             entity.HasOne(e => e.Item)
                 .WithMany()
                 .HasForeignKey(e => e.ItemId)
@@ -775,6 +791,45 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
                 .HasForeignKey(e => new { e.LocationId, e.TenantId })
                 .HasPrincipalKey(e => new { e.Id, e.TenantId })
                 .OnDelete(DeleteBehavior.Restrict);
+            entity.Property(e => e.Id).Metadata.SetAfterSaveBehavior(PropertySaveBehavior.Throw);
+            entity.Property(e => e.TenantId).Metadata.SetAfterSaveBehavior(PropertySaveBehavior.Throw);
+            entity.Property(e => e.OpeningStockImportId).Metadata.SetAfterSaveBehavior(PropertySaveBehavior.Throw);
+            entity.Property(e => e.StockTransactionId).Metadata.SetAfterSaveBehavior(PropertySaveBehavior.Throw);
+            entity.Property(e => e.RowNumber).Metadata.SetAfterSaveBehavior(PropertySaveBehavior.Throw);
+            entity.Property(e => e.ExternalReference).Metadata.SetAfterSaveBehavior(PropertySaveBehavior.Throw);
+            entity.Property(e => e.ItemId).Metadata.SetAfterSaveBehavior(PropertySaveBehavior.Throw);
+            entity.Property(e => e.LocationId).Metadata.SetAfterSaveBehavior(PropertySaveBehavior.Throw);
+            entity.Property(e => e.Quantity).Metadata.SetAfterSaveBehavior(PropertySaveBehavior.Throw);
+            entity.Property(e => e.UnitCost).Metadata.SetAfterSaveBehavior(PropertySaveBehavior.Throw);
+        });
+
+        modelBuilder.Entity<OpeningStockCorrection>(entity =>
+        {
+            entity.HasQueryFilter(e => e.TenantId == CurrentTenantId);
+            entity.Property(e => e.TenantId).HasMaxLength(64).IsRequired();
+            entity.Property(e => e.CorrectionReference).HasMaxLength(128).IsRequired();
+            entity.Property(e => e.ApprovalReference).HasMaxLength(128).IsRequired();
+            entity.Property(e => e.RequestHash).HasMaxLength(64).IsRequired();
+            entity.Property(e => e.Reason).HasMaxLength(500).IsRequired();
+            entity.Property(e => e.CorrectedBy).HasMaxLength(256).IsRequired();
+            entity.HasIndex(e => new { e.TenantId, e.CorrectionReference }).IsUnique();
+            entity.HasIndex(e => new { e.TenantId, e.ApprovalReference }).IsUnique();
+            entity.HasIndex(e => new { e.TenantId, e.OpeningStockImportId }).IsUnique();
+            entity.HasOne(e => e.OpeningStockImport)
+                .WithMany()
+                .HasForeignKey(e => new { e.OpeningStockImportId, e.TenantId })
+                .HasPrincipalKey(e => new { e.Id, e.TenantId })
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.Property(e => e.Id).Metadata.SetAfterSaveBehavior(PropertySaveBehavior.Throw);
+            entity.Property(e => e.TenantId).Metadata.SetAfterSaveBehavior(PropertySaveBehavior.Throw);
+            entity.Property(e => e.OpeningStockImportId).Metadata.SetAfterSaveBehavior(PropertySaveBehavior.Throw);
+            entity.Property(e => e.CorrectionReference).Metadata.SetAfterSaveBehavior(PropertySaveBehavior.Throw);
+            entity.Property(e => e.ApprovalReference).Metadata.SetAfterSaveBehavior(PropertySaveBehavior.Throw);
+            entity.Property(e => e.RequestHash).Metadata.SetAfterSaveBehavior(PropertySaveBehavior.Throw);
+            entity.Property(e => e.Reason).Metadata.SetAfterSaveBehavior(PropertySaveBehavior.Throw);
+            entity.Property(e => e.CorrectedBy).Metadata.SetAfterSaveBehavior(PropertySaveBehavior.Throw);
+            entity.Property(e => e.CorrectedAt).Metadata.SetAfterSaveBehavior(PropertySaveBehavior.Throw);
+            entity.Property(e => e.LineCount).Metadata.SetAfterSaveBehavior(PropertySaveBehavior.Throw);
         });
 
         modelBuilder.Entity<DocumentNumberSequence>(entity =>

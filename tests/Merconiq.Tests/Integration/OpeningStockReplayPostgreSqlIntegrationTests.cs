@@ -1,11 +1,17 @@
 using FluentAssertions;
 using Merconiq.Core.Entities;
+using Merconiq.Core.Interfaces;
 using Merconiq.Core.Models;
+using Merconiq.Core.Services;
 using Merconiq.Infrastructure.Data;
+using Merconiq.Infrastructure.Repositories;
 using Merconiq.Infrastructure.Services;
 using Merconiq.Tests.Infrastructure;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging.Abstractions;
+using Moq;
+using Npgsql;
 
 namespace Merconiq.Tests.Integration;
 
@@ -101,6 +107,101 @@ public sealed class OpeningStockReplayPostgreSqlIntegrationTests
         (await context.OpeningStockImports.CountAsync()).Should().Be(0);
     }
 
+    [PostgreSqlFact]
+    public async Task Approved_baseline_can_be_reversed_once_with_forward_stock_effects()
+    {
+        _fixture.EnsureEnabled();
+        var tenantId = $"opening-reversal-{Guid.NewGuid():N}";
+        int itemId;
+        int locationId;
+        await using (var setup = _fixture.CreateContext(tenantId))
+        {
+            var item = new Item { ExternalId = "item-1", ItemCode = "OPEN-1", Description = "Opening item", IsActive = true };
+            var location = new Location { Name = "Opening location" };
+            setup.Items.Add(item);
+            setup.Locations.Add(location);
+            await setup.SaveChangesAsync();
+            itemId = item.Id;
+            locationId = location.Id;
+        }
+
+        await using (var importContext = _fixture.CreateContext(tenantId))
+        {
+            await CreateOpeningService(importContext, tenantId).ReplayAsync(new(
+                $"external_reference,item_external_id,location_id,quantity,unit_cost\nopen-1,item-1,{locationId},10,12.5",
+                "import-1",
+                "approval-1"));
+        }
+
+        await using var context = _fixture.CreateContext(tenantId);
+        var unitOfWork = new UnitOfWork(context);
+        var service = CreateOpeningService(context, tenantId, CreateStockService(context, tenantId, unitOfWork), unitOfWork);
+        var request = new OpeningStockReversalRequest("import-1", "correction-1", "approval-2", "Wrong opening count");
+        (await service.ReverseAsync(request)).AlreadyApplied.Should().BeFalse();
+        (await service.ReverseAsync(request)).AlreadyApplied.Should().BeTrue();
+
+        (await context.StockInHand.SingleAsync(stock => stock.ItemId == itemId && stock.LocationId == locationId)).Quantity.Should().Be(0);
+        var bucket = await context.StockValuationBuckets.SingleAsync();
+        bucket.Quantity.Should().Be(0);
+        bucket.Value.Should().Be(0);
+        (await context.StockTransactions.CountAsync()).Should().Be(2);
+        (await context.StockTransactions.SingleAsync(transaction => transaction.TransactionType == TransactionType.Sell))
+            .Notes.Should().Contain("correction-1");
+        (await context.OpeningStockCorrections.CountAsync()).Should().Be(1);
+    }
+
+    [PostgreSqlFact]
+    public async Task Approved_baseline_and_correction_rows_are_database_append_only()
+    {
+        _fixture.EnsureEnabled();
+        var tenantId = $"opening-lock-{Guid.NewGuid():N}";
+        int importId;
+        await using (var setup = _fixture.CreateContext(tenantId))
+        {
+            setup.Items.Add(new Item { ExternalId = "item-1", ItemCode = "OPEN-1", Description = "Opening item", IsActive = true });
+            setup.Locations.Add(new Location { Name = "Opening location" });
+            await setup.SaveChangesAsync();
+            var item = await setup.Items.SingleAsync();
+            var location = await setup.Locations.SingleAsync();
+            await CreateOpeningService(setup, tenantId).ReplayAsync(new(
+                $"external_reference,item_external_id,location_id,quantity,unit_cost\nopen-1,item-1,{location.Id},10,12.5",
+                "import-1",
+                "approval-1"));
+            importId = await setup.OpeningStockImports.Select(import => import.Id).SingleAsync();
+            item.Id.Should().BeGreaterThan(0);
+        }
+
+        await using var context = _fixture.CreateContext(tenantId);
+        await FluentActions.Invoking(() => context.Database.ExecuteSqlRawAsync(
+                "UPDATE \"OpeningStockImports\" SET \"ApprovalReference\" = 'changed' WHERE \"Id\" = {0}", importId))
+            .Should().ThrowAsync<PostgresException>();
+        await FluentActions.Invoking(() => context.Database.ExecuteSqlRawAsync(
+                "DELETE FROM \"OpeningStockImports\" WHERE \"Id\" = {0}", importId))
+            .Should().ThrowAsync<PostgresException>();
+        await FluentActions.Invoking(() => context.Database.ExecuteSqlRawAsync("TRUNCATE \"OpeningStockImports\""))
+            .Should().ThrowAsync<PostgresException>();
+    }
+
+    private static OpeningStockImportService CreateOpeningService(
+        InventoryDbContext context,
+        string tenantId,
+        IStockService? stockService = null,
+        IUnitOfWork? unitOfWork = null) =>
+        new(context, new TestTenantContext(tenantId), unitOfWork ?? new UnitOfWork(context), new HttpContextAccessor(), stockService);
+
+    private static StockService CreateStockService(InventoryDbContext context, string tenantId, IUnitOfWork unitOfWork) => new(
+        new Repository<StockInHand>(context),
+        new Repository<StockTransaction>(context),
+        new Repository<Item>(context),
+        new Repository<Location>(context),
+        new Repository<Branch>(context),
+        unitOfWork,
+        new Mock<IWebhookDispatcher>().Object,
+        new TestTenantContext(tenantId),
+        NullLogger<StockService>.Instance,
+        new Repository<StockValuationBucket>(context),
+        new Repository<StockValuationEntry>(context));
+
     private static OpeningStockImportService CreateService(InventoryDbContext context, string tenantId) =>
-        new(context, new TestTenantContext(tenantId), new UnitOfWork(context), new HttpContextAccessor());
+        CreateOpeningService(context, tenantId);
 }

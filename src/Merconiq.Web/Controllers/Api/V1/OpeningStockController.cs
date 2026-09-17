@@ -53,4 +53,19 @@ public sealed class OpeningStockController(IOpeningStockImportService imports) :
             ? UnprocessableEntity(result)
             : Ok(ApiResponse<OpeningStockReplayResult>.CreateSuccess(result));
     }
+
+    [HttpPost("reverse")]
+    [Authorize(Policy = CapabilityPolicies.Approve)]
+    [Authorize(Policy = CapabilityPolicies.Reverse)]
+    [Authorize(Policy = CapabilityPolicies.TenantAdministrator)]
+    [ValidateAntiForgeryToken]
+    [IgnoreAntiforgeryToken]
+    [ProducesResponseType(typeof(ApiResponse<OpeningStockReversalResult>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> Reverse(
+        [FromBody] OpeningStockReversalRequest request,
+        CancellationToken cancellationToken)
+    {
+        var result = await imports.ReverseAsync(request, cancellationToken);
+        return Ok(ApiResponse<OpeningStockReversalResult>.CreateSuccess(result));
+    }
 }

@@ -9,6 +9,7 @@ public sealed class OpeningStockImport : AuditableEntity
     public string RequestHash { get; set; } = string.Empty;
     public string ApprovedBy { get; set; } = string.Empty;
     public DateTime ApprovedAt { get; set; }
+    public DateTime CutoverAt { get; set; }
     public int LineCount { get; set; }
 
     public ICollection<OpeningStockImportLine> Lines { get; set; } = new List<OpeningStockImportLine>();

@@ -12,5 +12,8 @@ public enum TransactionType
     Transfer,
 
     /// <summary>Stock sold out of a location.</summary>
-    Sell
+    Sell,
+
+    /// <summary>Approved opening-baseline quantity at a cutover instant.</summary>
+    Opening
 }

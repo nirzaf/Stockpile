@@ -7,6 +7,9 @@ public sealed class OpeningStockImportLine : AuditableEntity
     public int OpeningStockImportId { get; set; }
     public OpeningStockImport OpeningStockImport { get; set; } = null!;
 
+    public int? StockTransactionId { get; set; }
+    public StockTransaction? StockTransaction { get; set; }
+
     public int RowNumber { get; set; }
     public string ExternalReference { get; set; } = string.Empty;
     public int ItemId { get; set; }

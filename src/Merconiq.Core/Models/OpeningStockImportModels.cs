@@ -5,7 +5,14 @@ public sealed record OpeningStockPreviewRequest(string Csv);
 public sealed record OpeningStockReplayRequest(
     string Csv,
     string ImportReference,
-    string ApprovalReference);
+    string ApprovalReference,
+    DateTime? CutoverAt = null);
+
+public sealed record OpeningStockReversalRequest(
+    string ImportReference,
+    string CorrectionReference,
+    string ApprovalReference,
+    string Reason);
 
 public sealed record OpeningStockRowResult(
     int RowNumber,
@@ -16,7 +23,15 @@ public sealed record OpeningStockRowResult(
 public sealed record OpeningStockPreviewResult(
     int Valid,
     int Rejected,
-    IReadOnlyList<OpeningStockRowResult> Rows);
+    IReadOnlyList<OpeningStockRowResult> Rows,
+    IReadOnlyList<OpeningStockDiscrepancy>? Discrepancies = null);
+
+public sealed record OpeningStockDiscrepancy(
+    int ItemId,
+    int LocationId,
+    int CurrentQuantity,
+    int ApprovedQuantity,
+    int Difference);
 
 public sealed record OpeningStockReplayResult(
     string ImportReference,
@@ -25,3 +40,8 @@ public sealed record OpeningStockReplayResult(
     int Valid,
     int Rejected,
     IReadOnlyList<OpeningStockRowResult> Rows);
+
+public sealed record OpeningStockReversalResult(
+    string CorrectionReference,
+    int ReversedRows,
+    bool AlreadyApplied);
