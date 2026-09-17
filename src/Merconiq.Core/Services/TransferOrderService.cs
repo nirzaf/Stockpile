@@ -465,7 +465,8 @@ public sealed class TransferOrderService(
             return committed is not null && committed.RequestHash == requestHash;
         });
 
-        return result ?? await GetDispatchByKeyAsync(id, lineId, idempotencyKey, cancellationToken)
+        return await GetDispatchByKeyAsync(id, lineId, idempotencyKey, cancellationToken)
+            ?? result
             ?? throw new InvalidOperationException("The committed transfer dispatch could not be read back.");
     }
 
