@@ -180,6 +180,11 @@ public sealed class OrganizationService(
             if (!branch.IsActive)
                 throw new InvalidOperationException("An inactive branch cannot own a location.");
             _ = await GetActiveCompanyAsync(branch.CompanyId);
+            if (location.BranchId.HasValue && location.BranchId != branch.Id &&
+                await context.StockTransactions.AnyAsync(transaction =>
+                    transaction.FromLocationId == locationId || transaction.ToLocationId == locationId))
+                throw new InvalidOperationException(
+                    "A location's branch ownership cannot change after posted stock activity.");
             location.BranchId = branch.Id;
             await locations.UpdateAsync(location);
         });

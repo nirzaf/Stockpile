@@ -31,6 +31,12 @@ The API surface is under `/api/v1/organization`: company and branch list,
 search, create, update/deactivate, plus controlled location-to-branch
 assignment. Mutations require the existing Admin or Manager role.
 
+An owner-approved mapping may assign a branch to an existing unmapped location
+without moving or rewriting its stock history. Once a location already has a
+branch and posted stock activity, its branch ownership cannot be changed;
+historical movements remain tied to the company context under which they were
+posted.
+
 Stock receive, sell, and transfer operations resolve every location through
 the current tenant scope. Transfers between two branch-owned locations are
 limited to one company; intentionally unmapped legacy locations remain usable
