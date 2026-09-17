@@ -23,13 +23,15 @@ public class UnitOfWorkContractTests
         contractMethods.Should().Contain(
             nameof(IUnitOfWork.BeginTransactionAsync),
             nameof(IUnitOfWork.CommitTransactionAsync),
-            nameof(IUnitOfWork.RollbackTransactionAsync));
+            nameof(IUnitOfWork.RollbackTransactionAsync),
+            nameof(IUnitOfWork.ExecuteInReadSnapshotAsync));
 
         foreach (var methodName in new[]
         {
             nameof(IUnitOfWork.BeginTransactionAsync),
             nameof(IUnitOfWork.CommitTransactionAsync),
-            nameof(IUnitOfWork.RollbackTransactionAsync)
+            nameof(IUnitOfWork.RollbackTransactionAsync),
+            nameof(IUnitOfWork.ExecuteInReadSnapshotAsync)
         })
         {
             typeof(UnitOfWork).GetMethod(methodName).Should().NotBeNull();

@@ -1,3 +1,4 @@
+using System.Data;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
@@ -168,6 +169,38 @@ public class UnitOfWork : IUnitOfWork
                 _context.ChangeTracker.Clear();
                 await Task.Delay(100, cancellationToken);
             }
+        }
+    }
+
+    public async Task ExecuteInReadSnapshotAsync(
+        Func<Task> operation,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(operation);
+
+        if (HasActiveTransaction || _context.Database.ProviderName == "Microsoft.EntityFrameworkCore.InMemory")
+        {
+            await operation();
+            return;
+        }
+
+        var transaction = await _context.Database.BeginTransactionAsync(
+            IsolationLevel.RepeatableRead, cancellationToken);
+        _currentTransaction = transaction;
+        try
+        {
+            await operation();
+            await transaction.CommitAsync(cancellationToken);
+        }
+        catch
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            throw;
+        }
+        finally
+        {
+            await transaction.DisposeAsync();
+            _currentTransaction = null;
         }
     }
 

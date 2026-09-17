@@ -35,6 +35,11 @@ public interface IUnitOfWork
         CancellationToken cancellationToken = default,
         Func<Task<bool>>? verifySucceeded = null);
 
+    /// <summary>Executes read operations against one repeatable database snapshot.</summary>
+    Task ExecuteInReadSnapshotAsync(
+        Func<Task> operation,
+        CancellationToken cancellationToken = default);
+
     /// <summary>Clears the EF Core change tracker. Use after a failed <c>SaveChangesAsync</c> to retry.</summary>
     void ClearTracker();
 }
