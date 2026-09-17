@@ -3,8 +3,16 @@
 The production Docker image targets both `linux/amd64` and `linux/arm64`. Its
 default forecasting implementation is `managed-moving-average`, a deterministic
 and platform-independent model that does not load ML.NET native libraries. The
-implementation is explicit in `Forecasting:Implementation`, is validated at
-startup, and is returned as `ForecastingImplementation` in each forecast result.
+feature is enabled by default through `Forecasting:Enabled`. Set
+`Forecasting:Enabled=false` (or `Forecasting__Enabled=false` as an environment
+variable) to disable it. When disabled, both forecast API routes return HTTP 503
+with an unavailable message, and the background service exits without enumerating
+tenants or starting forecast work. Authorization and rate limits on the API routes
+remain in force.
+
+When enabled, the implementation is explicit in `Forecasting:Implementation`, is
+validated at startup, and is returned as `ForecastingImplementation` in each
+forecast result.
 Responses also include `ForecastingImplementationVersion`, the actual observed
 `DataWindowStartDate`/`DataWindowEndDate`, configured limits, and `KnownLimitations`.
 The managed algorithm reports version `1.0.0`; SSA reports the loaded
@@ -14,6 +22,7 @@ Forecast requests are bounded by these settings:
 
 | Setting | Default | Supported range | Behavior |
 |---|---:|---:|---|
+| `Forecasting:Enabled` | `true` | `true` or `false` | When `false`, forecast API requests return HTTP 503 and scheduled tenant forecast work is skipped. |
 | `Forecasting:MaxForecastHorizonDays` | 90 days | 1–365 days | Requests outside the configured limit return an API validation error; they are not silently clamped. |
 | `Forecasting:MaxHistoricalDays` | 365 days | 5–3,650 days | Only sell movements from the inclusive UTC calendar window ending today are queried and used. |
 | `Forecasting:MaxHistoricalTransactionsPerForecast` | 50,000 rows | 1–250,000 rows | A database-side ordered query reads at most the configured limit plus one matching sell row. If the extra row exists, the request fails with HTTP 400; no partial forecast is returned. |
@@ -41,7 +50,11 @@ The historical-day limit bounds the calendar window and the horizon limit bounds
 returned values. The new row and item limits separately cap input records and
 all-item catalog size. All-item processing remains sequential within those limits.
 No fixed latency or memory budget is claimed. No external AI provider is called
-and forecasts do not create orders or journals.
+and forecasts do not create orders or journals. Historical transactions remain in
+the configured application database and are processed by the selected in-process
+implementation; the forecasting feature does not transmit them to a cloud AI
+provider. Disabling forecasting prevents forecast data queries and model work; it
+does not substitute an empty/zero forecast or silently switch implementations.
 
 ML.NET SSA is still available for deployments that install and verify its native
 runtime dependencies. Select it explicitly with:
@@ -52,4 +65,6 @@ Forecasting__Implementation=ssa
 
 SSA failures are logged and returned as failures; the service does not silently
 change models. This keeps the model name in the API response truthful and avoids
-architecture-dependent behavior in the published image.
+architecture-dependent behavior in the published image. Disabling forecasting
+also does not trigger a fallback model: callers receive an explicit unavailable
+response instead.
