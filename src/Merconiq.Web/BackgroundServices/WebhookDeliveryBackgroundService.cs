@@ -36,6 +36,7 @@ public sealed class WebhookDeliveryBackgroundService(
     {
         long deliveryId;
         string tenantId;
+        Guid leaseToken;
         string url;
         string secret;
         string eventType;
@@ -45,17 +46,21 @@ public sealed class WebhookDeliveryBackgroundService(
         {
             var db = scope.ServiceProvider.GetRequiredService<InventoryDbContext>();
             var now = DateTimeOffset.UtcNow;
-            var delivery = await db.WebhookDeliveries
-                .IgnoreQueryFilters()
-                .Where(item =>
-                    (item.Status == WebhookDeliveryStatus.Pending && item.NextAttemptAt <= now) ||
-                    (item.Status == WebhookDeliveryStatus.InProgress && item.LeaseUntil <= now))
-                .OrderBy(item => item.NextAttemptAt)
-                .FirstOrDefaultAsync(cancellationToken);
+            var delivery = await WebhookDeliveryLeaseStore.ClaimNextAsync(
+                db,
+                now,
+                TimeSpan.FromMinutes(2),
+                cancellationToken);
 
             if (delivery is null)
             {
                 return false;
+            }
+
+            if (delivery.LeaseToken is not Guid claimedLeaseToken ||
+                !WebhookDeliveryLeaseStore.IsOwnedBy(delivery, claimedLeaseToken))
+            {
+                throw new InvalidOperationException("The claimed webhook delivery did not receive a valid lease token.");
             }
 
             var subscription = await db.WebhookSubscriptions
@@ -68,18 +73,15 @@ public sealed class WebhookDeliveryBackgroundService(
                 delivery.Status = WebhookDeliveryStatus.DeadLetter;
                 delivery.LastError = "Subscription no longer exists or is inactive.";
                 delivery.LastAttemptAt = now;
-                await db.SaveChangesAsync(cancellationToken);
+                delivery.LeaseUntil = null;
+                delivery.LeaseToken = null;
+                await TrySaveLeaseOwnerAsync(db, delivery, claimedLeaseToken, cancellationToken);
                 return true;
             }
 
-            delivery.Status = WebhookDeliveryStatus.InProgress;
-            delivery.AttemptCount++;
-            delivery.LastAttemptAt = now;
-            delivery.LeaseUntil = now.AddMinutes(2);
-            await db.SaveChangesAsync(cancellationToken);
-
             deliveryId = delivery.Id;
             tenantId = delivery.TenantId;
+            leaseToken = claimedLeaseToken;
             url = subscription.Url;
             secret = subscription.Secret ?? string.Empty;
             eventType = delivery.EventType;
@@ -91,7 +93,7 @@ public sealed class WebhookDeliveryBackgroundService(
             var validationError = await WebhookUrlValidator.ValidateAsync(url, cancellationToken);
             if (validationError != null)
             {
-                await CompleteAsync(deliveryId, tenantId, null, null, validationError, cancellationToken);
+                await CompleteAsync(deliveryId, tenantId, leaseToken, null, null, validationError, cancellationToken);
                 return true;
             }
 
@@ -119,15 +121,15 @@ public sealed class WebhookDeliveryBackgroundService(
                 HttpCompletionOption.ResponseHeadersRead,
                 requestTimeout.Token);
             var responseBody = await ReadDiagnosticResponseAsync(response.Content, secret, url, requestTimeout.Token);
-            await CompleteAsync(deliveryId, tenantId, response.StatusCode, responseBody, null, cancellationToken);
+            await CompleteAsync(deliveryId, tenantId, leaseToken, response.StatusCode, responseBody, null, cancellationToken);
         }
         catch (HttpRequestException)
         {
-            await CompleteAsync(deliveryId, tenantId, null, null, "Webhook transport failed.", cancellationToken);
+            await CompleteAsync(deliveryId, tenantId, leaseToken, null, null, "Webhook transport failed.", cancellationToken);
         }
         catch (TaskCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
-            await CompleteAsync(deliveryId, tenantId, null, null, "Webhook request timed out.", cancellationToken);
+            await CompleteAsync(deliveryId, tenantId, leaseToken, null, null, "Webhook request timed out.", cancellationToken);
         }
 
         return true;
@@ -227,23 +229,38 @@ public sealed class WebhookDeliveryBackgroundService(
         return string.Empty;
     }
 
-    private async Task CompleteAsync(long id, string tenantId, HttpStatusCode? statusCode, string? responseBody, string? error, CancellationToken cancellationToken)
+    private async Task CompleteAsync(
+        long id,
+        string tenantId,
+        Guid leaseToken,
+        HttpStatusCode? statusCode,
+        string? responseBody,
+        string? error,
+        CancellationToken cancellationToken)
     {
         using var scope = scopeFactory.CreateScope();
         var tenant = scope.ServiceProvider.GetRequiredService<TenantContext>();
         tenant.SetTenant(tenantId);
         var db = scope.ServiceProvider.GetRequiredService<InventoryDbContext>();
-        var delivery = await db.WebhookDeliveries.IgnoreQueryFilters().SingleAsync(item => item.Id == id, cancellationToken);
+        var delivery = await WebhookDeliveryLeaseStore.FindOwnedAsync(db, id, tenantId, leaseToken, cancellationToken);
+        if (delivery is null)
+        {
+            logger.LogDebug("Ignoring completion from an expired webhook delivery lease for delivery {DeliveryId}.", id);
+            return;
+        }
+
         var successful = error is null && statusCode is >= HttpStatusCode.OK and < HttpStatusCode.MultipleChoices;
+        var completedAt = DateTimeOffset.UtcNow;
         delivery.LastStatusCode = statusCode is null ? null : (int)statusCode;
         delivery.LastResponse = responseBody;
         delivery.LastError = error;
         delivery.LeaseUntil = null;
+        delivery.LeaseToken = null;
 
         if (successful)
         {
             delivery.Status = WebhookDeliveryStatus.Delivered;
-            delivery.DeliveredAt = DateTimeOffset.UtcNow;
+            delivery.DeliveredAt = completedAt;
         }
         else if (delivery.AttemptCount >= MaxAttempts || (statusCode is >= HttpStatusCode.BadRequest and < HttpStatusCode.InternalServerError && statusCode != HttpStatusCode.RequestTimeout && statusCode != HttpStatusCode.TooManyRequests))
         {
@@ -252,14 +269,42 @@ public sealed class WebhookDeliveryBackgroundService(
         else
         {
             delivery.Status = WebhookDeliveryStatus.Pending;
-            delivery.NextAttemptAt = DateTimeOffset.UtcNow.AddSeconds(Math.Min(300, 15 * Math.Pow(2, delivery.AttemptCount - 1)));
+            delivery.NextAttemptAt = completedAt.AddSeconds(Math.Min(300, 15 * Math.Pow(2, delivery.AttemptCount - 1)));
         }
 
-        await db.SaveChangesAsync(cancellationToken);
+        if (!await TrySaveLeaseOwnerAsync(db, delivery, leaseToken, cancellationToken))
+        {
+            return;
+        }
+
         if (delivery.Status == WebhookDeliveryStatus.DeadLetter)
         {
             InventoryTelemetry.WebhookFailures.Add(1);
             logger.LogError("Webhook delivery {DeliveryId} moved to dead letter for tenant {TenantId}: {Error}", id, tenantId, error ?? $"HTTP {(int?)statusCode}");
+        }
+    }
+
+    private async Task<bool> TrySaveLeaseOwnerAsync(
+        InventoryDbContext db,
+        WebhookDelivery delivery,
+        Guid leaseToken,
+        CancellationToken cancellationToken)
+    {
+        var originalLeaseToken = db.Entry(delivery).Property(item => item.LeaseToken).OriginalValue;
+        if (originalLeaseToken != leaseToken)
+        {
+            return false;
+        }
+
+        try
+        {
+            await db.SaveChangesAsync(cancellationToken);
+            return true;
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            logger.LogDebug("Ignoring completion from a webhook delivery lease superseded for delivery {DeliveryId}.", delivery.Id);
+            return false;
         }
     }
 }
