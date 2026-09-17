@@ -132,13 +132,13 @@ public sealed class StockReservationPostgreSqlApiAcceptanceTests(PostgreSqlInteg
 
         var raceReservation = await ReadReservationAsync(operatorA, winner);
         raceReservation.Allocations.Should().Equal(
-            new ReservationAllocation("LOT-EARLY", seed.EarlyDate, 3, null),
-            new ReservationAllocation("LOT-MIDDLE", seed.MiddleDate, 2, null));
+            new ReservationAllocation("LOT-EARLY", seed.EarlyDate, 4, null),
+            new ReservationAllocation("LOT-MIDDLE", seed.MiddleDate, 1, null));
         await AssertAvailabilityAsync(operatorA, seed.ItemId, companyALocations,
         [
             Lot(seed.CompanyAId, seed.LocationAId, "LOT-EXPIRED", seed.ExpiredDate, 2, 0, 0),
-            Lot(seed.CompanyAId, seed.LocationAId, "LOT-EARLY", seed.EarlyDate, 4, 3, 0),
-            Lot(seed.CompanyAId, seed.LocationAId, "LOT-MIDDLE", seed.MiddleDate, 4, 2, 0),
+            Lot(seed.CompanyAId, seed.LocationAId, "LOT-EARLY", seed.EarlyDate, 4, 4, 0),
+            Lot(seed.CompanyAId, seed.LocationAId, "LOT-MIDDLE", seed.MiddleDate, 4, 1, 0),
             Lot(seed.CompanyAId, seed.LocationAId, "LOT-QUARANTINED", seed.LateDate, 2, 0, 1)
         ]);
 
@@ -179,13 +179,15 @@ public sealed class StockReservationPostgreSqlApiAcceptanceTests(PostgreSqlInteg
         // Cancel a second, FEFO-split reservation and prove that only reserved counters
         // are released; on-hand quantities remain unchanged.
         var cancelledLine = $"issue-278-cancelled-{suffix}";
-        var createCancelled = await CreateReservationAsync(operatorA, seed, cancelledLine, 2);
+        // The winning reservation leaves three units in LOT-MIDDLE and one available
+        // unit in the partially quarantined later lot; four exercises a second FEFO split.
+        var createCancelled = await CreateReservationAsync(operatorA, seed, cancelledLine, 4);
         createCancelled.Response.StatusCode.Should().Be(HttpStatusCode.NoContent);
         createCancelled.Response.Dispose();
         var cancelledAllocation = await ReadReservationAsync(operatorA, cancelledLine);
         cancelledAllocation.Allocations.Should().Equal(
-            new ReservationAllocation("LOT-EARLY", seed.EarlyDate, 1, null),
-            new ReservationAllocation("LOT-MIDDLE", seed.MiddleDate, 1, null));
+            new ReservationAllocation("LOT-MIDDLE", seed.MiddleDate, 3, null),
+            new ReservationAllocation("LOT-QUARANTINED", seed.LateDate, 1, null));
         var beforeCancel = await ReadSnapshotAsync(seed);
         var cancel = await operatorA.PostAsJsonAsync("/api/v1/stock/reservations/cancel", new
         {
@@ -212,8 +214,8 @@ public sealed class StockReservationPostgreSqlApiAcceptanceTests(PostgreSqlInteg
         await AssertAvailabilityAsync(operatorA, seed.ItemId, companyALocations,
         [
             Lot(seed.CompanyAId, seed.LocationAId, "LOT-EXPIRED", seed.ExpiredDate, 2, 0, 0),
-            Lot(seed.CompanyAId, seed.LocationAId, "LOT-EARLY", seed.EarlyDate, 4, 3, 0),
-            Lot(seed.CompanyAId, seed.LocationAId, "LOT-MIDDLE", seed.MiddleDate, 4, 2, 0),
+            Lot(seed.CompanyAId, seed.LocationAId, "LOT-EARLY", seed.EarlyDate, 4, 4, 0),
+            Lot(seed.CompanyAId, seed.LocationAId, "LOT-MIDDLE", seed.MiddleDate, 4, 1, 0),
             Lot(seed.CompanyAId, seed.LocationAId, "LOT-QUARANTINED", seed.LateDate, 2, 0, 1)
         ]);
 
@@ -239,8 +241,8 @@ public sealed class StockReservationPostgreSqlApiAcceptanceTests(PostgreSqlInteg
         await AssertAvailabilityAsync(operatorA, seed.ItemId, companyALocations,
         [
             Lot(seed.CompanyAId, seed.LocationAId, "LOT-EXPIRED", seed.ExpiredDate, 2, 0, 0),
-            Lot(seed.CompanyAId, seed.LocationAId, "LOT-EARLY", seed.EarlyDate, 1, 0, 0),
-            Lot(seed.CompanyAId, seed.LocationAId, "LOT-MIDDLE", seed.MiddleDate, 2, 0, 0),
+            Lot(seed.CompanyAId, seed.LocationAId, "LOT-EARLY", seed.EarlyDate, 0, 0, 0),
+            Lot(seed.CompanyAId, seed.LocationAId, "LOT-MIDDLE", seed.MiddleDate, 3, 0, 0),
             Lot(seed.CompanyAId, seed.LocationAId, "LOT-QUARANTINED", seed.LateDate, 2, 0, 1)
         ]);
 
@@ -287,13 +289,12 @@ public sealed class StockReservationPostgreSqlApiAcceptanceTests(PostgreSqlInteg
         var exceptionReservation = await ReadReservationAsync(accountantA, exceptionLine);
         exceptionReservation.Allocations.Should().Equal(
             new ReservationAllocation("LOT-EXPIRED", seed.ExpiredDate, 2, expiredExceptionReason),
-            new ReservationAllocation("LOT-EARLY", seed.EarlyDate, 1, null),
-            new ReservationAllocation("LOT-MIDDLE", seed.MiddleDate, 2, null));
+            new ReservationAllocation("LOT-MIDDLE", seed.MiddleDate, 3, null));
         await AssertAvailabilityAsync(accountantA, seed.ItemId, companyALocations,
         [
             Lot(seed.CompanyAId, seed.LocationAId, "LOT-EXPIRED", seed.ExpiredDate, 2, 2, 0),
-            Lot(seed.CompanyAId, seed.LocationAId, "LOT-EARLY", seed.EarlyDate, 1, 1, 0),
-            Lot(seed.CompanyAId, seed.LocationAId, "LOT-MIDDLE", seed.MiddleDate, 2, 2, 0),
+            Lot(seed.CompanyAId, seed.LocationAId, "LOT-EARLY", seed.EarlyDate, 0, 0, 0),
+            Lot(seed.CompanyAId, seed.LocationAId, "LOT-MIDDLE", seed.MiddleDate, 3, 3, 0),
             Lot(seed.CompanyAId, seed.LocationAId, "LOT-QUARANTINED", seed.LateDate, 2, 0, 1)
         ]);
 
@@ -337,7 +338,7 @@ public sealed class StockReservationPostgreSqlApiAcceptanceTests(PostgreSqlInteg
                               row.SourceLineReference.StartsWith(exceptionLine))
                 .OrderBy(row => row.BatchNumber)
                 .ToListAsync();
-            exceptionMovements.Should().HaveCount(3);
+            exceptionMovements.Should().HaveCount(2);
             exceptionMovements.Sum(row => row.Quantity).Should().Be(5,
                 "the split movements must equal the requested quantity, not a second deduction");
             exceptionMovements.Should().ContainSingle(row => row.BatchNumber == "LOT-EXPIRED" &&
