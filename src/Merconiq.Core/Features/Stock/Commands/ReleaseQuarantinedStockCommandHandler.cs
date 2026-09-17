@@ -22,6 +22,7 @@ public sealed class ReleaseQuarantinedStockCommandHandler(
                 request.BatchNumber,
                 request.ExpiryDate,
                 request.Reason),
-            request.MutationScope);
+            request.MutationScope,
+            cancellationToken);
     }
 }

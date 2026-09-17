@@ -26,9 +26,12 @@ public class Repository<T> : IRepository<T> where T : class
     public virtual IQueryable<T> Query() => _dbSet.AsNoTracking();
 
     /// <inheritdoc />
-    public virtual async Task<T?> GetByIdAsync(int id)
+    public virtual Task<T?> GetByIdAsync(int id) => GetByIdAsync(id, CancellationToken.None);
+
+    /// <inheritdoc />
+    public virtual async Task<T?> GetByIdAsync(int id, CancellationToken cancellationToken)
     {
-        return await _dbSet.FindAsync(id);
+        return await _dbSet.FindAsync([id], cancellationToken);
     }
 
     /// <inheritdoc />
@@ -45,17 +48,32 @@ public class Repository<T> : IRepository<T> where T : class
     /// <inheritdoc />
     public virtual Task<IEnumerable<T>> FindAsync(Expression<Func<T, bool>> predicate)
     {
-        return FindAsync(predicate, null);
+        return FindAsync(predicate, null, CancellationToken.None);
+    }
+
+    /// <inheritdoc />
+    public virtual Task<IEnumerable<T>> FindAsync(
+        Expression<Func<T, bool>> predicate,
+        CancellationToken cancellationToken)
+    {
+        return FindAsync(predicate, null, cancellationToken);
     }
 
     /// <inheritdoc />
     public virtual async Task<IEnumerable<T>> FindAsync(
         Expression<Func<T, bool>> predicate,
-        Func<IQueryable<T>, IOrderedQueryable<T>>? orderBy)
+        Func<IQueryable<T>, IOrderedQueryable<T>>? orderBy = null)
+        => await FindAsync(predicate, orderBy, CancellationToken.None);
+
+    /// <inheritdoc />
+    public virtual async Task<IEnumerable<T>> FindAsync(
+        Expression<Func<T, bool>> predicate,
+        Func<IQueryable<T>, IOrderedQueryable<T>>? orderBy,
+        CancellationToken cancellationToken)
     {
         var query = _dbSet.AsNoTracking().Where(predicate);
         if (orderBy != null) query = orderBy(query);
-        return await query.ToListAsync();
+        return await query.ToListAsync(cancellationToken);
     }
 
     /// <inheritdoc />

@@ -177,6 +177,26 @@ public sealed class StockQuarantineServiceTests
         harness.Webhooks.Should().BeEmpty();
     }
 
+    [Fact]
+    public async Task Quarantine_honors_cancellation_before_acquiring_a_location_lock()
+    {
+        var harness = CreateHarness(quantity: 5, reserved: 0, quarantined: 0);
+        using var cancellation = new CancellationTokenSource();
+        await cancellation.CancelAsync();
+        var request = new ChangeStockQuarantineRequest(
+            7, 11, 1, "quarantine-line-1", "LOT-7", new DateTime(2030, 6, 30), "Quality review");
+
+        var quarantine = () => harness.Service.QuarantineStockAsync(
+            request,
+            cancellationToken: cancellation.Token);
+        await quarantine.Should().ThrowAsync<OperationCanceledException>();
+
+        harness.Stock.Quantity.Should().Be(5);
+        harness.Stock.QuarantinedQuantity.Should().Be(0);
+        harness.Transactions.Should().BeEmpty();
+        harness.Webhooks.Should().BeEmpty();
+    }
+
     private static Harness CreateHarness(int quantity, int reserved, int quarantined)
     {
         var tenant = "quarantine-unit-test";
