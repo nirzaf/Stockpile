@@ -1,4 +1,6 @@
 using System.Globalization;
+using System.Text.Json;
+using Microsoft.AspNetCore.Http;
 using Merconiq.Core.Entities;
 using Merconiq.Core.Interfaces;
 using Merconiq.Core.Models;
@@ -17,13 +19,14 @@ public sealed class MasterDataImportService(
     IRepository<Location> locations,
     IRepository<Supplier> suppliers,
     InventoryDbContext context,
-    IUnitOfWork unitOfWork) : IMasterDataImportService
+    IUnitOfWork unitOfWork,
+    IHttpContextAccessor? httpContextAccessor = null) : IMasterDataImportService
 {
     public async Task<ImportUnitsResult> ImportUnitsAsync(
         ImportUnitsRequest request, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        return await RunAsync(request.DryRun, async () =>
+        return await RunAsync(typeof(UnitOfMeasure), request.DryRun, async () =>
         {
             await EnsureCompanyScopeAsync(request.CompanyId, cancellationToken);
             var rows = Parse(request.Csv);
@@ -89,14 +92,14 @@ public sealed class MasterDataImportService(
                 foreach (var unit in pending)
                     await units.AddAsync(unit);
             return SummarizeUnits(request.DryRun, results);
-        }, cancellationToken);
+        }, result => new(result.Created, result.Unchanged, result.Rejected), cancellationToken);
     }
 
     public async Task<ImportItemsResult> ImportItemsAsync(
         ImportItemsRequest request, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        return await RunAsync(request.DryRun, async () =>
+        return await RunAsync(typeof(Item), request.DryRun, async () =>
         {
             await EnsureCompanyScopeAsync(request.CompanyId, cancellationToken);
             var rows = ParseItems(request.Csv);
@@ -236,14 +239,14 @@ public sealed class MasterDataImportService(
                 foreach (var item in pending)
                     await items.AddAsync(item);
             return SummarizeItems(request.DryRun, results);
-        }, cancellationToken);
+        }, result => new(result.Created, result.Unchanged, result.Rejected), cancellationToken);
     }
 
     public async Task<ImportCompaniesResult> ImportCompaniesAsync(
         ImportCompaniesRequest request, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        return await RunAsync(request.DryRun, async () =>
+        return await RunAsync(typeof(Company), request.DryRun, async () =>
         {
             var rows = ParseCompanies(request.Csv);
             var results = new List<ImportRowResult>(rows.Count);
@@ -306,14 +309,14 @@ public sealed class MasterDataImportService(
                 foreach (var company in pending)
                     await companies.AddAsync(company);
             return SummarizeCompanies(request.DryRun, results);
-        }, cancellationToken);
+        }, result => new(result.Created, result.Unchanged, result.Rejected), cancellationToken);
     }
 
     public async Task<ImportBranchesResult> ImportBranchesAsync(
         ImportBranchesRequest request, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        return await RunAsync(request.DryRun, async () =>
+        return await RunAsync(typeof(Branch), request.DryRun, async () =>
         {
             var companyId = RequireCompanyScope(request.CompanyId);
             if (!request.DryRun)
@@ -376,14 +379,14 @@ public sealed class MasterDataImportService(
                 foreach (var branch in pending)
                     await branches.AddAsync(branch);
             return SummarizeBranches(request.DryRun, results);
-        }, cancellationToken);
+        }, result => new(result.Created, result.Unchanged, result.Rejected), cancellationToken);
     }
 
     public async Task<ImportLocationsResult> ImportLocationsAsync(
         ImportLocationsRequest request, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        return await RunAsync(request.DryRun, async () =>
+        return await RunAsync(typeof(Location), request.DryRun, async () =>
         {
             var companyId = RequireCompanyScope(request.CompanyId);
             if (!request.DryRun)
@@ -466,14 +469,14 @@ public sealed class MasterDataImportService(
                 foreach (var location in pending)
                     await locations.AddAsync(location);
             return SummarizeLocations(request.DryRun, results);
-        }, cancellationToken);
+        }, result => new(result.Created, result.Unchanged, result.Rejected), cancellationToken);
     }
 
     public async Task<ImportSuppliersResult> ImportSuppliersAsync(
         ImportSuppliersRequest request, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        return await RunAsync(request.DryRun, async () =>
+        return await RunAsync(typeof(Supplier), request.DryRun, async () =>
         {
             await EnsureCompanyScopeAsync(request.CompanyId, cancellationToken);
             var rows = ParseSuppliers(request.Csv);
@@ -537,23 +540,88 @@ public sealed class MasterDataImportService(
                 foreach (var supplier in pending)
                     await suppliers.AddAsync(supplier);
             return SummarizeSuppliers(request.DryRun, results);
-        }, cancellationToken);
+        }, result => new(result.Created, result.Unchanged, result.Rejected), cancellationToken);
     }
 
-    private async Task<T> RunAsync<T>(bool dryRun, Func<Task<T>> operation, CancellationToken cancellationToken)
+    private async Task<T> RunAsync<T>(
+        Type importEntityType,
+        bool dryRun,
+        Func<Task<T>> operation,
+        Func<T, ImportBatchCounts> getCounts,
+        CancellationToken cancellationToken)
     {
         if (dryRun)
             return await operation();
 
+        // Keep one identity for this invocation if the unit of work retries its transaction.
+        var batchId = Guid.NewGuid();
+        var tenantId = context.CurrentTenantId;
+        var username = httpContextAccessor?.HttpContext?.User?.Identity?.Name ?? "System";
+        var importType = importEntityType.Name;
+        var batchKeyValues = JsonSerializer.Serialize(new { BatchId = batchId, ImportType = importType });
+        var batchTimestamp = DateTime.UtcNow;
         T result = default!;
         await unitOfWork.ExecuteInTransactionAsync(async () =>
         {
             // ponytail: one tenant-wide import lock; split by master only if onboarding throughput requires it.
             await unitOfWork.AcquireTenantOperationLockAsync("master-data-import", cancellationToken);
+            var previouslyTrackedEntities = context.ChangeTracker.Entries()
+                .Select(entry => entry.Entity)
+                .ToHashSet(ReferenceEqualityComparer.Instance);
             result = await operation();
+
+            var counts = getCounts(result);
+            // Result.Created can include candidates in an atomic batch that is rejected as a whole.
+            // Count only newly tracked entities so the audit reflects rows this transaction will persist.
+            var rowsCreated = context.ChangeTracker.Entries()
+                .Count(entry => importEntityType.IsInstanceOfType(entry.Entity) &&
+                    entry.State == EntityState.Added &&
+                    !previouslyTrackedEntities.Contains(entry.Entity));
+            var changesApplied = rowsCreated > 0;
+            var outcome = (changesApplied, counts.Rejected > 0) switch
+            {
+                (true, true) => "PartiallyRejected",
+                (true, false) => "Created",
+                (false, true) => "Rejected",
+                _ => "Unchanged"
+            };
+            var batchAuditExists = context.ChangeTracker.Entries<AuditLog>().Any(entry =>
+                entry.Entity.TenantId == tenantId &&
+                entry.Entity.EntityName == "MasterDataImportBatch" &&
+                entry.Entity.KeyValues == batchKeyValues &&
+                entry.State is not EntityState.Deleted and not EntityState.Detached) ||
+                await context.AuditLogs.AsNoTracking().AnyAsync(audit =>
+                    audit.TenantId == tenantId &&
+                    audit.EntityName == "MasterDataImportBatch" &&
+                    audit.KeyValues == batchKeyValues,
+                    cancellationToken);
+
+            if (!batchAuditExists)
+            {
+                context.AuditLogs.Add(new AuditLog
+                {
+                    TenantId = tenantId,
+                    EntityName = "MasterDataImportBatch",
+                    Action = "ImportBatchCompleted",
+                    Username = username,
+                    Timestamp = batchTimestamp,
+                    KeyValues = batchKeyValues,
+                    NewValues = JsonSerializer.Serialize(new
+                    {
+                        Outcome = outcome,
+                        RowsCreated = rowsCreated,
+                        RowsEligibleForCreation = counts.Created,
+                        RowsUnchanged = counts.Unchanged,
+                        RowsRejected = counts.Rejected,
+                        ChangesApplied = changesApplied
+                    })
+                });
+            }
         }, cancellationToken);
         return result;
     }
+
+    private sealed record ImportBatchCounts(int Created, int Unchanged, int Rejected);
 
     private async Task EnsureCompanyScopeAsync(int? companyId, CancellationToken cancellationToken)
     {
