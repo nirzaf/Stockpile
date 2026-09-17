@@ -186,7 +186,7 @@ public sealed class DocumentIdentityPostgreSqlIntegrationTests(PostgreSqlIntegra
     }
 
     [PostgreSqlFact]
-    public async Task Line_links_require_company_mapping_and_reject_cross_company_sources()
+    public async Task Line_links_are_retry_safe_atomic_and_require_company_mapping()
     {
         fixture.EnsureEnabled();
         var tenantId = $"document-line-links-{Guid.NewGuid():N}";
@@ -248,10 +248,11 @@ public sealed class DocumentIdentityPostgreSqlIntegrationTests(PostgreSqlIntegra
                 companyOneLineA,
                 companyOneLineB,
                 DocumentLineRelationshipType.Source);
-            throw new InvalidOperationException("Injected failure after adding document-line lineage.");
+            await unitOfWork.SaveChangesAsync();
+            throw new InvalidOperationException("Injected failure after persisting document-line lineage in the outer transaction.");
         });
         await rollback.Should().ThrowAsync<InvalidOperationException>()
-            .WithMessage("Injected failure after adding document-line lineage.");
+            .WithMessage("Injected failure after persisting document-line lineage in the outer transaction.");
 
         context.ChangeTracker.Clear();
         var persistedLink = await context.DocumentLineLinks.SingleAsync();
