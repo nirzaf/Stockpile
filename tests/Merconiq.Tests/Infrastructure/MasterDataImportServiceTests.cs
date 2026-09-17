@@ -155,6 +155,18 @@ public sealed class MasterDataImportServiceTests
     }
 
     [Fact]
+    public async Task ImportUnits_rejects_a_header_only_csv()
+    {
+        await using var context = CreateContext(Guid.NewGuid().ToString(), "tenant-a");
+
+        var action = () => CreateService(context).ImportUnitsAsync(new ImportUnitsRequest(
+            "external_id,code,name,decimal_places,whole_unit_only", false));
+
+        await action.Should().ThrowAsync<ArgumentException>()
+            .WithMessage("CSV must include at least one data row.*");
+    }
+
+    [Fact]
     public async Task ImportUnits_rejects_fractional_precision_for_whole_only_units()
     {
         await using var context = CreateContext(Guid.NewGuid().ToString(), "tenant-a");

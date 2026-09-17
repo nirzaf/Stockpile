@@ -316,6 +316,7 @@ public sealed class MasterDataImportService(
         return await RunAsync(request.DryRun, async () =>
         {
             var companyId = RequireCompanyScope(request.CompanyId);
+            await unitOfWork.AcquireTenantOperationLockAsync("organization-state", cancellationToken);
             await EnsureCompanyScopeAsync(companyId, cancellationToken);
             var rows = ParseBranches(request.Csv);
             var results = new List<ImportRowResult>(rows.Count);
@@ -384,6 +385,7 @@ public sealed class MasterDataImportService(
         return await RunAsync(request.DryRun, async () =>
         {
             var companyId = RequireCompanyScope(request.CompanyId);
+            await unitOfWork.AcquireTenantOperationLockAsync("organization-state", cancellationToken);
             await EnsureCompanyScopeAsync(companyId, cancellationToken);
             var rows = ParseLocations(request.Csv);
             var results = new List<ImportRowResult>(rows.Count);
@@ -730,7 +732,10 @@ public sealed class MasterDataImportService(
     {
         if (string.IsNullOrWhiteSpace(csv))
             throw new ArgumentException("CSV content is required.", nameof(csv));
-        return csv.Split(new[] { "\r\n", "\n" }, StringSplitOptions.RemoveEmptyEntries).ToList();
+        var lines = csv.Split(new[] { "\r\n", "\n" }, StringSplitOptions.RemoveEmptyEntries).ToList();
+        if (lines.Count < 2)
+            throw new ArgumentException("CSV must include at least one data row.", nameof(csv));
+        return lines;
     }
 
     private static List<Row> ParseUnits(string? csv)
