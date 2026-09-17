@@ -184,24 +184,33 @@ public class UnitOfWork : IUnitOfWork
             return;
         }
 
-        var transaction = await _context.Database.BeginTransactionAsync(
-            IsolationLevel.RepeatableRead, cancellationToken);
-        _currentTransaction = transaction;
-        try
-        {
-            await operation();
-            await transaction.CommitAsync(cancellationToken);
-        }
-        catch
-        {
-            await transaction.RollbackAsync(cancellationToken);
-            throw;
-        }
-        finally
-        {
-            await transaction.DisposeAsync();
-            _currentTransaction = null;
-        }
+        var strategy = _context.Database.CreateExecutionStrategy();
+        await strategy.ExecuteAsync(
+            state: 0,
+            operation: async (_, _, transactionCancellationToken) =>
+            {
+                await using var transaction = await _context.Database.BeginTransactionAsync(
+                    IsolationLevel.RepeatableRead, transactionCancellationToken);
+                _currentTransaction = transaction;
+                try
+                {
+                    await operation();
+                    await transaction.CommitAsync(transactionCancellationToken);
+                }
+                catch
+                {
+                    await transaction.RollbackAsync(CancellationToken.None);
+                    throw;
+                }
+                finally
+                {
+                    _currentTransaction = null;
+                }
+
+                return true;
+            },
+            verifySucceeded: null,
+            cancellationToken: cancellationToken);
     }
 
     public void ClearTracker()
