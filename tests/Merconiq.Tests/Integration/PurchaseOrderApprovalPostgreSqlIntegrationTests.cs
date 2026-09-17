@@ -237,6 +237,135 @@ public sealed class PurchaseOrderApprovalPostgreSqlIntegrationTests(PostgreSqlIn
     }
 
     [PostgreSqlFact]
+    public async Task Approval_retry_after_ambiguous_commit_reloads_purchase_order_state()
+    {
+        fixture.EnsureEnabled();
+        var tenantId = $"po-approval-retry-{Guid.NewGuid():N}";
+        var commitInterceptor = new ThrowOnceAfterCommitInterceptor();
+        var options = new DbContextOptionsBuilder<InventoryDbContext>()
+            .UseNpgsql(fixture.ConnectionString, postgres => postgres.EnableRetryOnFailure(3))
+            .ConfigureWarnings(warnings => warnings.Ignore(RelationalEventId.PendingModelChangesWarning))
+            .AddInterceptors(commitInterceptor)
+            .Options;
+        await using var context = new InventoryDbContext(options, new TestTenantContext(tenantId));
+
+        var unit = new UnitOfMeasure { Code = "EA", Name = "Each", DecimalPlaces = 0, IsWholeUnitOnly = true };
+        var supplier = new Supplier { Name = "Retry supplier" };
+        context.UnitsOfMeasure.Add(unit);
+        context.Suppliers.Add(supplier);
+        await context.SaveChangesAsync();
+
+        var item = new Item
+        {
+            ItemCode = $"RETRY-{Guid.NewGuid():N}"[..20], Description = "Approval retry item", Rate = 1m,
+            BaseUnitId = unit.Id, PurchaseUnitId = unit.Id, PurchaseToBaseFactor = 1m,
+            QuantityPrecision = 0, WholeUnitOnly = true
+        };
+        context.Items.Add(item);
+        await context.SaveChangesAsync();
+
+        var service = CreateService(context, tenantId);
+        var order = await service.CreateAsync(
+            new PurchaseOrder
+            {
+                PONumber = $"PO-RETRY-{Guid.NewGuid():N}"[..32],
+                SupplierId = supplier.Id,
+                CurrencyScale = 2
+            },
+            [new OrderDetail { ItemId = item.Id, Quantity = 2, UnitPrice = 4m }],
+            Guid.NewGuid().ToString("N"));
+
+        commitInterceptor.Arm();
+        await service.UpdateStatusAsync(order.Id, nameof(PurchaseOrderStatus.Approved));
+
+        commitInterceptor.CommitCallbacksAfterArm.Should().Be(2,
+            "the first successful database commit reports a transient client-side error and must be retried");
+        order.Status.Should().Be(PurchaseOrderStatus.Approved);
+        order.ApprovedCommercialVersion.Should().Be(order.CommercialVersion);
+        order.ApprovedCommercialSnapshotJson.Should().NotBeNullOrWhiteSpace();
+        await using var verification = fixture.CreateContext(tenantId);
+        var persistedOrder = await verification.PurchaseOrders.AsNoTracking().SingleAsync(po => po.Id == order.Id);
+        persistedOrder.Status.Should().Be(PurchaseOrderStatus.Approved);
+        persistedOrder.ApprovedCommercialVersion.Should().Be(persistedOrder.CommercialVersion);
+        persistedOrder.ApprovedCommercialSnapshotJson.Should().NotBeNullOrWhiteSpace();
+    }
+
+    [PostgreSqlFact]
+    public async Task Approval_retry_does_not_approve_a_newer_amended_commercial_version()
+    {
+        fixture.EnsureEnabled();
+        var tenantId = $"po-approval-amend-retry-{Guid.NewGuid():N}";
+        var commitInterceptor = new ThrowOnceAfterCommitInterceptor();
+        var options = new DbContextOptionsBuilder<InventoryDbContext>()
+            .UseNpgsql(fixture.ConnectionString, postgres => postgres.EnableRetryOnFailure(3))
+            .ConfigureWarnings(warnings => warnings.Ignore(RelationalEventId.PendingModelChangesWarning))
+            .AddInterceptors(commitInterceptor)
+            .Options;
+        await using var context = new InventoryDbContext(options, new TestTenantContext(tenantId));
+
+        var unit = new UnitOfMeasure { Code = "EA", Name = "Each", DecimalPlaces = 0, IsWholeUnitOnly = true };
+        var supplier = new Supplier { Name = "Retry amendment supplier" };
+        context.UnitsOfMeasure.Add(unit);
+        context.Suppliers.Add(supplier);
+        await context.SaveChangesAsync();
+
+        var item = new Item
+        {
+            ItemCode = $"RETRY-AMEND-{Guid.NewGuid():N}"[..20], Description = "Approval amendment retry item", Rate = 1m,
+            BaseUnitId = unit.Id, PurchaseUnitId = unit.Id, PurchaseToBaseFactor = 1m,
+            QuantityPrecision = 0, WholeUnitOnly = true
+        };
+        context.Items.Add(item);
+        await context.SaveChangesAsync();
+
+        var service = CreateService(context, tenantId);
+        var order = await service.CreateAsync(
+            new PurchaseOrder
+            {
+                PONumber = $"PO-RETRY-AMEND-{Guid.NewGuid():N}"[..32],
+                SupplierId = supplier.Id,
+                CurrencyScale = 2
+            },
+            [new OrderDetail { ItemId = item.Id, Quantity = 2, UnitPrice = 4m }],
+            Guid.NewGuid().ToString("N"));
+        var requestedCommercialVersion = order.CommercialVersion;
+
+        commitInterceptor.Arm(async () =>
+        {
+            await using var amendmentContext = fixture.CreateContext(tenantId);
+            var amendmentService = CreateService(amendmentContext, tenantId);
+            var form = await amendmentService.GetForAmendmentAsync(order.Id);
+            form.Should().NotBeNull();
+            var line = form!.OrderDetails.Single();
+            await amendmentService.AmendApprovedAsync(order.Id, new PurchaseOrderAmendment(
+                form.CommercialVersion,
+                supplier.Id,
+                "Changed after the first approval committed",
+                form.Notes,
+                form.CurrencyScale,
+                [new PurchaseOrderAmendmentLine(
+                    line.Id, line.ItemId, line.Quantity, line.UnitPrice, line.DiscountPercent,
+                    line.TaxRuleId, line.TaxRatePercent, line.TaxCategory, line.TaxMode, line.Direction)]));
+        });
+
+        var approval = () => service.UpdateStatusAsync(order.Id, nameof(PurchaseOrderStatus.Approved));
+        var failure = await FluentActions.Awaiting(approval)
+            .Should().ThrowAsync<InvalidOperationException>();
+        failure.Which.Message.Should().Contain("changed after approval started");
+        commitInterceptor.CommitCallbacksAfterArm.Should().Be(1,
+            "the retry must reject the newer version before it can commit another approval");
+        order.Status.Should().Be(PurchaseOrderStatus.Pending);
+        order.CommercialVersion.Should().Be(requestedCommercialVersion + 1);
+        order.ApprovedCommercialVersion.Should().Be(requestedCommercialVersion);
+
+        await using var verification = fixture.CreateContext(tenantId);
+        var persistedOrder = await verification.PurchaseOrders.AsNoTracking().SingleAsync(po => po.Id == order.Id);
+        persistedOrder.Status.Should().Be(PurchaseOrderStatus.Pending);
+        persistedOrder.CommercialVersion.Should().Be(requestedCommercialVersion + 1);
+        persistedOrder.ApprovedCommercialVersion.Should().Be(requestedCommercialVersion);
+    }
+
+    [PostgreSqlFact]
     public async Task Approved_purchase_order_amendment_round_trips_four_decimal_unit_price()
     {
         fixture.EnsureEnabled();
@@ -772,6 +901,46 @@ public sealed class PurchaseOrderApprovalPostgreSqlIntegrationTests(PostgreSqlIn
 
             _paused.TrySetResult(true);
             await _release.Task.WaitAsync(cancellationToken);
+        }
+    }
+
+    private sealed class ThrowOnceAfterCommitInterceptor : DbTransactionInterceptor
+    {
+        private int _armed;
+        private int _failureInjected;
+        private int _commitCallbacksAfterArm;
+        private Func<Task>? _afterCommitBeforeFailure;
+
+        public int CommitCallbacksAfterArm => Volatile.Read(ref _commitCallbacksAfterArm);
+
+        public void Arm(Func<Task>? afterCommitBeforeFailure = null)
+        {
+            _afterCommitBeforeFailure = afterCommitBeforeFailure;
+            Volatile.Write(ref _armed, 1);
+        }
+
+        public override async Task TransactionCommittedAsync(
+            DbTransaction transaction,
+            TransactionEndEventData eventData,
+            CancellationToken cancellationToken = default)
+        {
+            if (Volatile.Read(ref _armed) == 0)
+            {
+                return;
+            }
+
+            Interlocked.Increment(ref _commitCallbacksAfterArm);
+            if (Interlocked.Exchange(ref _failureInjected, 1) == 0)
+            {
+                if (_afterCommitBeforeFailure is not null)
+                {
+                    await _afterCommitBeforeFailure();
+                }
+
+                throw new NpgsqlException(
+                    "Simulated transient connection loss after PostgreSQL committed the transaction.",
+                    new IOException("Simulated lost commit acknowledgement."));
+            }
         }
     }
 }

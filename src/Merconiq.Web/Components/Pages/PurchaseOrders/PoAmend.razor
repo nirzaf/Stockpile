@@ -63,14 +63,14 @@ else
                             </MudSelect>
                         </MudItem>
                         <MudItem xs="6" md="2"><MudNumericField T="int" @bind-Value="line.Quantity" Label="Quantity" Min="1" Required="true" /></MudItem>
-                        <MudItem xs="6" md="2"><MudNumericField T="decimal" @bind-Value="line.UnitPrice" Label="Unit price" Min="0" Format="@UnitPriceFormat" Required="true" /></MudItem>
+                        <MudItem xs="6" md="2"><MudNumericField T="decimal" @bind-Value="line.UnitPrice" Label="Unit price" Min="0" Format="@PurchaseOrderAmendmentPresentation.UnitPriceFormat" Required="true" /></MudItem>
                         <MudItem xs="6" md="2"><MudNumericField T="decimal" @bind-Value="line.DiscountPercent" Label="Discount %" Min="0" Max="100" Format="N2" /></MudItem>
                         <MudItem xs="6" md="2">
                             <MudSelect T="int?" @bind-Value="line.TaxRuleId" Label="Tax rule">
                                 <MudSelectItem T="int?" Value="@((int?)null)">No tax rule</MudSelectItem>
-                                @foreach (var rule in _taxRules)
+                                @foreach (var rule in GetTaxRuleOptions(line))
                                 {
-                                    <MudSelectItem T="int?" Value="@((int?)rule.Id)">@rule.Code (@rule.RatePercent%)</MudSelectItem>
+                                    <MudSelectItem T="int?" Value="@((int?)rule.Id)" Disabled="@rule.IsHistorical">@rule.Label</MudSelectItem>
                                 }
                             </MudSelect>
                         </MudItem>
@@ -110,9 +110,9 @@ else
     private int _expectedVersion;
     private int _supplierId;
     private int _currencyScale;
-    private string UnitPriceFormat => $"N{_currencyScale}";
     private string? _deliveryTerms;
     private string? _notes;
+    private DateTime _nowUtc;
     private List<Supplier> _suppliers = [];
     private List<Item> _items = [];
     private List<TaxRule> _taxRules = [];
@@ -140,9 +140,16 @@ else
         _currencyScale = _order.CurrencyScale;
         _deliveryTerms = _order.DeliveryTerms;
         _notes = _order.Notes;
+        _nowUtc = DateTime.UtcNow;
         _suppliers = (await SupplierService.GetAllAsync()).ToList();
         _items = (await ItemService.GetAllAsync()).ToList();
-        _taxRules = (await TaxRuleRepository.FindAsync(rule => rule.IsActive)).ToList();
+        var selectedTaxRuleIds = _order.OrderDetails
+            .Where(line => line.TaxRuleId.HasValue)
+            .Select(line => line.TaxRuleId!.Value)
+            .Distinct()
+            .ToArray();
+        _taxRules = (await TaxRuleRepository.FindAsync(
+            rule => rule.IsActive || selectedTaxRuleIds.Contains(rule.Id))).ToList();
         _lines = _order.OrderDetails.OrderBy(line => line.Id).Select(line => new LineEdit
         {
             Id = line.Id,
@@ -157,6 +164,9 @@ else
             Direction = line.Direction
         }).ToList();
     }
+
+    private IReadOnlyList<PurchaseOrderAmendmentPresentation.TaxRuleOption> GetTaxRuleOptions(LineEdit line) =>
+        PurchaseOrderAmendmentPresentation.GetTaxRuleOptions(_taxRules, line.TaxRuleId, _nowUtc);
 
     private async Task SaveAmendment()
     {
