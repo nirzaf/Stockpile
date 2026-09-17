@@ -9,7 +9,7 @@ public sealed class Company : AuditableEntity
     public string? TradingName { get; set; }
     public string? RegistrationNumber { get; set; }
     public string? TaxIdentifier { get; set; }
-    public string BaseCurrency { get; set; } = "QAR";
+    public string BaseCurrency { get; set; } = string.Empty;
     public string? CountryCode { get; set; }
     public bool IsActive { get; set; } = true;
     public ICollection<Branch> Branches { get; set; } = new List<Branch>();

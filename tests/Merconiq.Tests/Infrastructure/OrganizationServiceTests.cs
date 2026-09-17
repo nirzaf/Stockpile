@@ -11,6 +11,12 @@ namespace Merconiq.Tests.Infrastructure;
 public sealed class OrganizationServiceTests
 {
     [Fact]
+    public void Company_does_not_assume_a_jurisdiction_specific_base_currency()
+    {
+        new Company().BaseCurrency.Should().BeEmpty();
+    }
+
+    [Fact]
     public async Task GetCompanyAsync_does_not_return_a_tracked_company_from_another_tenant()
     {
         await using var context = CreateContext(Guid.NewGuid().ToString(), "tenant-a");
