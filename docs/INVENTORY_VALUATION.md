@@ -45,3 +45,9 @@ is date-only and compared with the current UTC calendar date; a lot remains
 eligible through its recorded expiry date. Rejection does not change on-hand
 quantity, reservations, or stock movements. Expired stock is not automatically
 quarantined, and audited exceptions or overrides are not supported.
+
+The current PostgreSQL schema stores expiry in `timestamp with time zone`
+columns. At service lookup and EF persistence boundaries, Merconiq preserves the
+supplied year/month/day and normalizes the value to UTC midnight. An unspecified
+`DateTime` or a value with a time component therefore cannot shift the expiry
+calendar date or create a second identity for the same lot.

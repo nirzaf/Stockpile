@@ -77,6 +77,7 @@ public class StockService : IStockService
         string? batchNumber = null,
         DateTime? expiryDate = null)
     {
+        expiryDate = StockLotExpiryDate.Normalize(expiryDate);
         var results = await _stockRepo.FindAsync(s =>
             s.ItemId == itemId &&
             s.LocationId == locationId &&
@@ -195,6 +196,7 @@ public class StockService : IStockService
     {
         if (quantity <= 0) throw new ArgumentException("Quantity must be positive");
         if (unitCost is < 0) throw new ArgumentException("Unit cost must be non-negative");
+        expiryDate = StockLotExpiryDate.Normalize(expiryDate);
         if (unitCost.HasValue && (batchNumber is not null || expiryDate.HasValue))
             throw new InvalidOperationException("Valuation is scoped to unbatched stock.");
 
@@ -252,6 +254,7 @@ public class StockService : IStockService
     {
         if (quantity <= 0) throw new ArgumentException("Quantity must be positive");
         if (fromLocationId == toLocationId) throw new ArgumentException("Source and destination must be different");
+        expiryDate = StockLotExpiryDate.Normalize(expiryDate);
         EnsureLotNotExpired(expiryDate);
 
         StockTransaction? transaction = null;
@@ -321,6 +324,7 @@ public class StockService : IStockService
         string? reservationSourceLineReference = null)
     {
         if (quantity <= 0) throw new ArgumentException("Quantity must be positive");
+        expiryDate = StockLotExpiryDate.Normalize(expiryDate);
         EnsureLotNotExpired(expiryDate);
 
         StockTransaction? transaction = null;
@@ -402,6 +406,7 @@ public class StockService : IStockService
     public async Task CreateReservationAsync(CreateStockReservationRequest request)
     {
         ArgumentNullException.ThrowIfNull(request);
+        request = request with { ExpiryDate = StockLotExpiryDate.Normalize(request.ExpiryDate) };
         EnsureReservationRequest(request.Quantity, request.SourceLineReference);
         EnsureReservationFields(request.BatchNumber, null);
         EnsureLotNotExpired(request.ExpiryDate);

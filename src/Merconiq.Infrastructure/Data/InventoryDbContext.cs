@@ -94,6 +94,7 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
     public override int SaveChanges(bool acceptAllChangesOnSuccess)
     {
         EnsureValuationEntriesAreAppendOnly();
+        NormalizeStockLotExpiryDates();
         return base.SaveChanges(acceptAllChangesOnSuccess);
     }
 
@@ -102,6 +103,7 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
         CancellationToken cancellationToken = default)
     {
         EnsureValuationEntriesAreAppendOnly();
+        NormalizeStockLotExpiryDates();
         return base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
     }
 
@@ -122,6 +124,7 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
     public override async Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
     {
         EnsureValuationEntriesAreAppendOnly();
+        NormalizeStockLotExpiryDates();
         var currentUser = _httpContextAccessor?.HttpContext?.User?.Identity?.Name ?? "System";
         var utcNow = DateTime.UtcNow;
 
@@ -174,6 +177,21 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
         {
             throw new InvalidOperationException("Stock valuation entries are append-only and cannot be updated or deleted.");
         }
+    }
+
+    private void NormalizeStockLotExpiryDates()
+    {
+        foreach (var entry in ChangeTracker.Entries<StockInHand>()
+                     .Where(entry => entry.State is EntityState.Added or EntityState.Modified))
+            entry.Entity.ExpiryDate = StockLotExpiryDate.Normalize(entry.Entity.ExpiryDate);
+
+        foreach (var entry in ChangeTracker.Entries<StockReservation>()
+                     .Where(entry => entry.State is EntityState.Added or EntityState.Modified))
+            entry.Entity.ExpiryDate = StockLotExpiryDate.Normalize(entry.Entity.ExpiryDate);
+
+        foreach (var entry in ChangeTracker.Entries<StockTransaction>()
+                     .Where(entry => entry.State is EntityState.Added or EntityState.Modified))
+            entry.Entity.ExpiryDate = StockLotExpiryDate.Normalize(entry.Entity.ExpiryDate);
     }
 
     private List<AuditEntry> OnBeforeSaveChanges(string username)

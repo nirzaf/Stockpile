@@ -278,7 +278,8 @@ public sealed class StockReservationIntegrationTests
         context.Items.Add(item);
         await context.SaveChangesAsync();
 
-        var expiryDate = DateTime.UtcNow.Date.AddDays(-1);
+        var expiryDate = DateTime.SpecifyKind(
+            DateTime.UtcNow.Date.AddDays(-1), DateTimeKind.Unspecified);
         context.StockInHand.Add(new StockInHand
         {
             ItemId = item.Id,
@@ -318,12 +319,16 @@ public sealed class StockReservationIntegrationTests
         stock.ReservedQuantity.Should().Be(2);
         stock.BatchNumber.Should().Be("LOT-EXPIRED");
         stock.ExpiryDate.Should().Be(state.ExpiryDate);
+        stock.ExpiryDate!.Value.Kind.Should().Be(DateTimeKind.Utc);
+        stock.ExpiryDate.Value.TimeOfDay.Should().Be(TimeSpan.Zero);
 
         var reservation = await verify.StockReservations.SingleAsync();
         reservation.SourceLineReference.Should().Be(state.ReservationReference);
         reservation.Status.Should().Be(StockReservationStatus.Active);
         reservation.Quantity.Should().Be(2);
         reservation.ConsumedQuantity.Should().Be(0);
+        reservation.ExpiryDate!.Value.Kind.Should().Be(DateTimeKind.Utc);
+        reservation.ExpiryDate.Value.TimeOfDay.Should().Be(TimeSpan.Zero);
         reservation.ExpiresAt.Should().BeBefore(DateTimeOffset.UtcNow);
         reservation.ClosedAt.Should().BeNull();
         reservation.ResolutionReason.Should().BeNull();
@@ -374,6 +379,102 @@ public sealed class StockReservationIntegrationTests
 [Trait("Category", "PostgreSQL")]
 public sealed class StockReservationPostgreSqlIntegrationTests(PostgreSqlIntegrationFixture fixture)
 {
+    [PostgreSqlFact]
+    public async Task Unspecified_expiry_dates_are_stored_as_utc_calendar_days_and_still_block_expired_sales()
+    {
+        fixture.EnsureEnabled();
+        var tenant = $"expiry-date-only-{Guid.NewGuid():N}";
+        var calendarDate = DateTime.UtcNow.Date.AddDays(-1);
+        var unspecifiedInput = DateTime.SpecifyKind(calendarDate.AddHours(16).AddMinutes(45), DateTimeKind.Unspecified);
+        const string batchNumber = "LOT-DATE-ONLY";
+        int itemId;
+        int locationId;
+
+        await using (var setup = fixture.CreateContext(tenant))
+        {
+            var item = new Item { ItemCode = $"DATE-{Guid.NewGuid():N}", Description = "Date-only expiry", ReorderLevel = 0 };
+            var location = new Location { Name = $"Date-only expiry {Guid.NewGuid():N}" };
+            setup.Items.Add(item);
+            setup.Locations.Add(location);
+            await setup.SaveChangesAsync();
+
+            setup.StockInHand.Add(new StockInHand
+            {
+                ItemId = item.Id,
+                LocationId = location.Id,
+                Quantity = 5,
+                ReservedQuantity = 1,
+                BatchNumber = batchNumber,
+                ExpiryDate = unspecifiedInput
+            });
+            setup.StockReservations.Add(new StockReservation
+            {
+                ItemId = item.Id,
+                LocationId = location.Id,
+                SourceLineReference = "date-only-expired-reservation",
+                BatchNumber = batchNumber,
+                ExpiryDate = unspecifiedInput,
+                Quantity = 1,
+                ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(-1),
+                Status = StockReservationStatus.Active
+            });
+            setup.StockTransactions.Add(new StockTransaction
+            {
+                ItemId = item.Id,
+                FromLocationId = location.Id,
+                Quantity = 5,
+                TransactionType = TransactionType.Receive,
+                TransactionDate = DateTime.UtcNow,
+                BatchNumber = batchNumber,
+                ExpiryDate = unspecifiedInput
+            });
+            await setup.SaveChangesAsync();
+            itemId = item.Id;
+            locationId = location.Id;
+        }
+
+        await using (var verify = fixture.CreateContext(tenant))
+        {
+            AssertUtcCalendarDate((await verify.StockInHand.SingleAsync()).ExpiryDate, calendarDate);
+            AssertUtcCalendarDate((await verify.StockReservations.SingleAsync()).ExpiryDate, calendarDate);
+            AssertUtcCalendarDate((await verify.StockTransactions.SingleAsync()).ExpiryDate, calendarDate);
+        }
+
+        // A date-only service input still matches the persisted lot identity instead of
+        // creating a second timestamptz value with a non-UTC or non-midnight component.
+        await using (var context = fixture.CreateContext(tenant))
+        {
+            await CreateService(context, tenant).ReceiveStockAsync(
+                itemId, locationId, 1, "same date-only lot", batchNumber, unspecifiedInput);
+        }
+
+        await using (var context = fixture.CreateContext(tenant))
+        {
+            var action = () => CreateService(context, tenant).SellStockAsync(
+                itemId, locationId, 1, "expired date-only lot", batchNumber, unspecifiedInput);
+            await action.Should().ThrowAsync<StockAvailabilityConflictException>()
+                .WithMessage("The selected stock lot has expired and cannot be reserved, sold, or transferred.");
+        }
+
+        await using var final = fixture.CreateContext(tenant);
+        var stock = await final.StockInHand.SingleAsync();
+        stock.Quantity.Should().Be(6);
+        stock.ReservedQuantity.Should().Be(1);
+        AssertUtcCalendarDate(stock.ExpiryDate, calendarDate);
+
+        var reservation = await final.StockReservations.SingleAsync();
+        reservation.Status.Should().Be(StockReservationStatus.Active);
+        AssertUtcCalendarDate(reservation.ExpiryDate, calendarDate);
+
+        var movements = await final.StockTransactions.OrderBy(row => row.Id).ToListAsync();
+        movements.Should().HaveCount(2);
+        movements.Should().OnlyContain(row => row.TransactionType == TransactionType.Receive);
+        movements.Should().OnlyContain(row => row.ExpiryDate.HasValue &&
+            row.ExpiryDate.Value.Kind == DateTimeKind.Utc &&
+            row.ExpiryDate.Value.TimeOfDay == TimeSpan.Zero &&
+            DateOnly.FromDateTime(row.ExpiryDate.Value) == DateOnly.FromDateTime(calendarDate));
+    }
+
     [PostgreSqlFact]
     public async Task Concurrent_reservations_allow_only_available_quantity()
     {
@@ -478,6 +579,14 @@ public sealed class StockReservationPostgreSqlIntegrationTests(PostgreSqlIntegra
         new Repository<StockValuationBucket>(context),
         new Repository<StockValuationEntry>(context),
         new Repository<StockReservation>(context));
+
+    private static void AssertUtcCalendarDate(DateTime? actual, DateTime expected)
+    {
+        actual.Should().NotBeNull();
+        actual!.Value.Kind.Should().Be(DateTimeKind.Utc);
+        actual.Value.TimeOfDay.Should().Be(TimeSpan.Zero);
+        DateOnly.FromDateTime(actual.Value).Should().Be(DateOnly.FromDateTime(expected));
+    }
 }
 
 public sealed class StockReservationApiTests(CustomWebApplicationFactory factory)
