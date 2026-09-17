@@ -132,6 +132,89 @@ public sealed class CompanyCapabilityAuthorizationTests : IClassFixture<CustomWe
     }
 
     [Fact]
+    public async Task Admin_expired_stock_override_requires_an_owned_company_grant_and_rejects_unassigned_locations()
+    {
+        var company = await CreateCompanyAsync();
+        var (location, _, item) = await CreateStockFixtureAsync(company.Id, company.Id);
+        var expiryDate = DateTime.UtcNow.Date.AddDays(-1);
+        Location unassignedLocation;
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<InventoryDbContext>();
+            var stock = await db.StockInHand.SingleAsync(row => row.LocationId == location.Id);
+            stock.BatchNumber = "LOT-ADMIN-EXPIRED";
+            stock.ExpiryDate = expiryDate;
+            unassignedLocation = new Location { Name = $"Unassigned {Guid.NewGuid():N}" };
+            db.Locations.Add(unassignedLocation);
+            await db.SaveChangesAsync();
+            db.StockInHand.Add(new StockInHand
+            {
+                ItemId = item.Id,
+                LocationId = unassignedLocation.Id,
+                Quantity = 5,
+                BatchNumber = "LOT-ADMIN-UNASSIGNED",
+                ExpiryDate = expiryDate
+            });
+            await db.SaveChangesAsync();
+        }
+
+        using var adminClient = _factory.CreateAuthenticatedClient("Admin");
+        var admin = await GetTestUserAsync("Admin");
+        await ClearMembershipsAsync(admin.Id);
+
+        try
+        {
+            const string reason = "Approved company-scoped expiry exception";
+            var assignedRequest = new
+            {
+                itemId = item.Id,
+                locationId = location.Id,
+                quantity = 1,
+                batchNumber = "LOT-ADMIN-EXPIRED",
+                expiryDate,
+                expiryExceptionReason = reason
+            };
+
+            var deniedWithoutGrant = await adminClient.PostAsJsonAsync("/api/v1/stock/sell", assignedRequest);
+            deniedWithoutGrant.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+
+            using (var scope = _factory.Services.CreateScope())
+            {
+                var db = scope.ServiceProvider.GetRequiredService<InventoryDbContext>();
+                (await db.StockInHand.SingleAsync(row => row.LocationId == location.Id)).Quantity.Should().Be(3);
+                (await db.StockTransactions.CountAsync(row => row.ItemId == item.Id)).Should().Be(0);
+            }
+
+            await AddMembershipAsync(company.Id, admin.Id, CompanyCapability.OverrideExpiredStock);
+            var allowedWithGrant = await adminClient.PostAsJsonAsync("/api/v1/stock/sell", assignedRequest);
+            allowedWithGrant.StatusCode.Should().Be(HttpStatusCode.NoContent);
+
+            var unassignedRequest = new
+            {
+                itemId = item.Id,
+                locationId = unassignedLocation.Id,
+                quantity = 1,
+                batchNumber = "LOT-ADMIN-UNASSIGNED",
+                expiryDate,
+                expiryExceptionReason = reason
+            };
+            var deniedUnassigned = await adminClient.PostAsJsonAsync("/api/v1/stock/sell", unassignedRequest);
+            deniedUnassigned.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+
+            using var verify = _factory.Services.CreateScope();
+            var verifyDb = verify.ServiceProvider.GetRequiredService<InventoryDbContext>();
+            (await verifyDb.StockInHand.SingleAsync(row => row.LocationId == unassignedLocation.Id)).Quantity.Should().Be(5);
+            (await verifyDb.StockTransactions.CountAsync(row => row.FromLocationId == unassignedLocation.Id)).Should().Be(0);
+            var movement = await verifyDb.StockTransactions.SingleAsync(row => row.FromLocationId == location.Id);
+            movement.ExpiryExceptionReason.Should().Be(reason);
+        }
+        finally
+        {
+            await ClearMembershipsAsync(admin.Id);
+        }
+    }
+
+    [Fact]
     public async Task Company_reads_and_stock_lists_are_filtered_to_current_memberships()
     {
         using var client = _factory.CreateAuthenticatedClient("Operator");

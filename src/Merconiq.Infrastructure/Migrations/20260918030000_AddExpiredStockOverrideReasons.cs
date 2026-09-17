@@ -28,6 +28,26 @@ namespace Merconiq.Infrastructure.Migrations
         /// <inheritdoc />
         protected override void Down(MigrationBuilder migrationBuilder)
         {
+            migrationBuilder.Sql(
+                """
+                LOCK TABLE "StockTransactions", "StockReservations" IN ACCESS EXCLUSIVE MODE;
+                DO $migration$
+                BEGIN
+                    IF EXISTS (
+                        SELECT 1
+                        FROM "StockTransactions"
+                        WHERE "ExpiryExceptionReason" IS NOT NULL
+                    ) OR EXISTS (
+                        SELECT 1
+                        FROM "StockReservations"
+                        WHERE "ExpiryExceptionReason" IS NOT NULL
+                    ) THEN
+                        RAISE EXCEPTION 'Cannot downgrade expired-stock override reasons while audit reasons are still persisted.';
+                    END IF;
+                END
+                $migration$;
+                """);
+
             migrationBuilder.DropColumn(
                 name: "ExpiryExceptionReason",
                 table: "StockTransactions");

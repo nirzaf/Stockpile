@@ -10,9 +10,13 @@ using Merconiq.Infrastructure.Data;
 using Merconiq.Infrastructure.Repositories;
 using Merconiq.Tests.Infrastructure;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
+using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
+using Npgsql;
 
 namespace Merconiq.Tests.Integration;
 
@@ -702,6 +706,328 @@ public sealed class StockReservationPostgreSqlIntegrationTests(PostgreSqlIntegra
     }
 
     [PostgreSqlFact]
+    public async Task Automatic_reservation_cannot_use_expired_lot_revealed_by_expired_reservation_cleanup()
+    {
+        fixture.EnsureEnabled();
+        var tenant = $"auto-expired-reservation-{Guid.NewGuid():N}";
+        const string staleReservationReference = "expired-fully-reserved-line";
+        const string newReservationReference = "auto-selected-expired-line";
+        var state = await SeedExpiredPostgresLotAsync(
+            fixture,
+            tenant,
+            staleReservationReference,
+            stockQuantity: 5,
+            reservedQuantity: 5,
+            reservationQuantity: 5);
+        var request = new CreateStockReservationRequest(
+            state.ItemId, state.LocationId, 1, newReservationReference);
+
+        await using (var context = fixture.CreateContext(tenant))
+        {
+            var action = () => CreateService(context, tenant).CreateReservationAsync(
+                request,
+                new StockMutationScope(state.CompanyId, () => Task.FromResult(true)));
+            await action.Should().ThrowAsync<StockAvailabilityConflictException>()
+                .WithMessage("An explicit company-scoped expired-stock override capability is required.");
+        }
+        await AssertAutoExpiredLotUnchangedAsync(
+            fixture, tenant, state, staleReservationReference, newReservationReference);
+
+        await using (var context = fixture.CreateContext(tenant))
+        {
+            var action = () => CreateService(context, tenant).CreateReservationAsync(
+                request, CreateOverrideScope(state.CompanyId, authorized: true));
+            await action.Should().ThrowAsync<StockAvailabilityConflictException>()
+                .WithMessage("An audit reason is required to use an expired stock lot.");
+        }
+        await AssertAutoExpiredLotUnchangedAsync(
+            fixture, tenant, state, staleReservationReference, newReservationReference);
+
+        const string reason = "Approved after expired-lot safety review";
+        await using (var context = fixture.CreateContext(tenant))
+        {
+            await CreateService(context, tenant).CreateReservationAsync(
+                request with { ExpiryExceptionReason = reason },
+                CreateOverrideScope(state.CompanyId, authorized: true));
+        }
+
+        await using var verify = fixture.CreateContext(tenant);
+        var stock = await verify.StockInHand.SingleAsync(row => row.ItemId == state.ItemId);
+        stock.Quantity.Should().Be(5);
+        stock.ReservedQuantity.Should().Be(1);
+        var reservations = await verify.StockReservations
+            .OrderBy(row => row.SourceLineReference)
+            .ToListAsync();
+        reservations.Should().HaveCount(2);
+        reservations.Single(row => row.SourceLineReference == staleReservationReference)
+            .Status.Should().Be(StockReservationStatus.Expired);
+        var created = reservations.Single(row => row.SourceLineReference == newReservationReference);
+        created.Status.Should().Be(StockReservationStatus.Active);
+        created.BatchNumber.Should().Be("LOT-EXPIRED");
+        created.ExpiryDate.Should().Be(state.ExpiryDate);
+        created.ExpiryExceptionReason.Should().Be(reason);
+        var auditEntries = await verify.AuditLogs
+            .Where(row => row.EntityName == nameof(StockReservation) && row.NewValues != null)
+            .ToListAsync();
+        auditEntries.Should().Contain(entry =>
+            AuditValue(entry.NewValues!, nameof(StockReservation.ExpiryExceptionReason)) == reason);
+    }
+
+    [PostgreSqlFact]
+    public async Task Automatic_reservation_validates_reason_against_the_final_lot_after_cleanup()
+    {
+        fixture.EnsureEnabled();
+        var tenant = $"mixed-expiry-selection-{Guid.NewGuid():N}";
+        const string staleReservationReference = "mixed-expiry-stale-line";
+        const string newReservationReference = "mixed-expiry-new-line";
+        const string reason = "Approved for the expired FEFO lot revealed by cleanup";
+        var state = await SeedExpiredPostgresLotAsync(
+            fixture,
+            tenant,
+            staleReservationReference,
+            stockQuantity: 5,
+            reservedQuantity: 5,
+            reservationQuantity: 5);
+        var freshExpiry = DateTime.SpecifyKind(DateTime.UtcNow.Date.AddDays(3), DateTimeKind.Utc);
+        await using (var context = fixture.CreateContext(tenant))
+        {
+            context.StockInHand.Add(new StockInHand
+            {
+                ItemId = state.ItemId,
+                LocationId = state.LocationId,
+                Quantity = 5,
+                BatchNumber = "LOT-FRESH",
+                ExpiryDate = freshExpiry
+            });
+            await context.SaveChangesAsync();
+        }
+
+        var request = new CreateStockReservationRequest(
+            state.ItemId, state.LocationId, 1, newReservationReference) with
+        {
+            ExpiryExceptionReason = reason
+        };
+        await using (var context = fixture.CreateContext(tenant))
+        {
+            var action = () => CreateService(context, tenant).CreateReservationAsync(
+                request, CreateOverrideScope(state.CompanyId, authorized: false));
+            await action.Should().ThrowAsync<StockAvailabilityConflictException>()
+                .WithMessage("An explicit company-scoped expired-stock override capability is required.");
+        }
+        await AssertMixedExpiredReservationSelectionUnchangedAsync(
+            fixture, tenant, state, staleReservationReference, newReservationReference);
+
+        await using (var context = fixture.CreateContext(tenant))
+        {
+            await CreateService(context, tenant).CreateReservationAsync(
+                request, CreateOverrideScope(state.CompanyId, authorized: true));
+        }
+
+        await using var verify = fixture.CreateContext(tenant);
+        var stockRows = await verify.StockInHand.OrderBy(row => row.BatchNumber).ToListAsync();
+        var expiredStock = stockRows.Single(row => row.BatchNumber == "LOT-EXPIRED");
+        expiredStock.Quantity.Should().Be(5);
+        expiredStock.ReservedQuantity.Should().Be(1);
+        var freshStock = stockRows.Single(row => row.BatchNumber == "LOT-FRESH");
+        freshStock.Quantity.Should().Be(5);
+        freshStock.ReservedQuantity.Should().Be(0);
+        var staleReservation = await verify.StockReservations.SingleAsync(
+            row => row.SourceLineReference == staleReservationReference);
+        staleReservation.Status.Should().Be(StockReservationStatus.Expired);
+        var createdReservation = await verify.StockReservations.SingleAsync(
+            row => row.SourceLineReference == newReservationReference);
+        createdReservation.BatchNumber.Should().Be("LOT-EXPIRED");
+        createdReservation.ExpiryDate.Should().Be(state.ExpiryDate);
+        createdReservation.ExpiryExceptionReason.Should().Be(reason);
+    }
+
+    [PostgreSqlFact]
+    public async Task Batch_only_expired_lot_requests_validate_persisted_expiry_and_audit_overrides()
+    {
+        fixture.EnsureEnabled();
+        const string reason = "Approved batch-only expiry exception";
+
+        var saleTenant = $"batch-only-expired-sale-{Guid.NewGuid():N}";
+        var sale = await SeedExpiredPostgresLotAsync(
+            fixture, saleTenant, "stale-sale-reservation", stockQuantity: 5,
+            reservedQuantity: 5, reservationQuantity: 5);
+        await using (var context = fixture.CreateContext(saleTenant))
+        {
+            var action = () => CreateService(context, saleTenant).SellStockAsync(
+                sale.ItemId, sale.LocationId, 1, "sale without lot identity");
+            await action.Should().ThrowAsync<InvalidOperationException>()
+                .WithMessage("Insufficient stock for sale");
+        }
+        await AssertFullyReservedExpiredLotUnchangedAsync(fixture, saleTenant, sale);
+        await using (var context = fixture.CreateContext(saleTenant))
+        {
+            var action = () => CreateService(context, saleTenant).SellStockAsync(
+                sale.ItemId, sale.LocationId, 1, "batch-only sale", "LOT-EXPIRED",
+                mutationScope: new StockMutationScope(sale.CompanyId, () => Task.FromResult(true)),
+                expiryExceptionReason: reason);
+            await action.Should().ThrowAsync<StockAvailabilityConflictException>()
+                .WithMessage("An explicit company-scoped expired-stock override capability is required.");
+        }
+        await AssertFullyReservedExpiredLotUnchangedAsync(fixture, saleTenant, sale);
+        var saleWebhooks = new RecordingWebhookDispatcher();
+        await using (var context = fixture.CreateContext(saleTenant))
+        {
+            await CreateService(context, saleTenant, saleWebhooks).SellStockAsync(
+                sale.ItemId, sale.LocationId, 1, "approved batch-only sale", "LOT-EXPIRED",
+                mutationScope: CreateOverrideScope(sale.CompanyId, authorized: true),
+                expiryExceptionReason: reason);
+        }
+        await AssertPostgresMovementHasReasonAsync(
+            fixture, saleTenant, TransactionType.Sell, reason, "LOT-EXPIRED", sale.ExpiryDate);
+        AssertRecordedWebhookLotIdentity(saleWebhooks, "Stock.Sold", "LOT-EXPIRED", sale.ExpiryDate);
+
+        var transferTenant = $"batch-only-expired-transfer-{Guid.NewGuid():N}";
+        var transfer = await SeedExpiredPostgresLotAsync(
+            fixture, transferTenant, "stale-transfer-reservation", stockQuantity: 5,
+            reservedQuantity: 5, reservationQuantity: 5);
+        await using (var context = fixture.CreateContext(transferTenant))
+        {
+            var action = () => CreateService(context, transferTenant).TransferStockAsync(
+                transfer.ItemId, transfer.LocationId, transfer.DestinationLocationId, 1,
+                "transfer without lot identity");
+            await action.Should().ThrowAsync<InvalidOperationException>()
+                .WithMessage("Insufficient stock at source location");
+        }
+        await AssertFullyReservedExpiredLotUnchangedAsync(fixture, transferTenant, transfer);
+        await using (var context = fixture.CreateContext(transferTenant))
+        {
+            var action = () => CreateService(context, transferTenant).TransferStockAsync(
+                transfer.ItemId, transfer.LocationId, transfer.DestinationLocationId, 1,
+                "batch-only transfer", "LOT-EXPIRED",
+                mutationScope: new StockMutationScope(transfer.CompanyId, () => Task.FromResult(true)),
+                expiryExceptionReason: reason);
+            await action.Should().ThrowAsync<StockAvailabilityConflictException>()
+                .WithMessage("An explicit company-scoped expired-stock override capability is required.");
+        }
+        await AssertFullyReservedExpiredLotUnchangedAsync(fixture, transferTenant, transfer);
+        var transferWebhooks = new RecordingWebhookDispatcher();
+        await using (var context = fixture.CreateContext(transferTenant))
+        {
+            await CreateService(context, transferTenant, transferWebhooks).TransferStockAsync(
+                transfer.ItemId, transfer.LocationId, transfer.DestinationLocationId, 1,
+                "approved batch-only transfer", "LOT-EXPIRED",
+                expiryDate: null,
+                mutationScope: CreateOverrideScope(transfer.CompanyId, authorized: true),
+                expiryExceptionReason: reason);
+        }
+        await AssertPostgresMovementHasReasonAsync(
+            fixture, transferTenant, TransactionType.Transfer, reason, "LOT-EXPIRED", transfer.ExpiryDate);
+        AssertRecordedWebhookLotIdentity(
+            transferWebhooks, "Stock.Transferred", "LOT-EXPIRED", transfer.ExpiryDate);
+        await using (var verify = fixture.CreateContext(transferTenant))
+        {
+            var movedLot = await verify.StockInHand.SingleAsync(row =>
+                row.LocationId == transfer.DestinationLocationId && row.BatchNumber == "LOT-EXPIRED");
+            movedLot.ExpiryDate.Should().Be(transfer.ExpiryDate);
+            movedLot.Quantity.Should().Be(1);
+        }
+
+        var reservationTenant = $"batch-only-expired-reserve-{Guid.NewGuid():N}";
+        var reservationState = await SeedExpiredPostgresLotAsync(
+            fixture, reservationTenant, "stale-batch-reservation", stockQuantity: 5,
+            reservedQuantity: 5, reservationQuantity: 5);
+        const string newLine = "approved-batch-only-expired-reservation";
+        var request = new CreateStockReservationRequest(
+            reservationState.ItemId, reservationState.LocationId, 1, newLine, "LOT-EXPIRED");
+        await using (var context = fixture.CreateContext(reservationTenant))
+        {
+            var action = () => CreateService(context, reservationTenant).CreateReservationAsync(
+                request,
+                new StockMutationScope(reservationState.CompanyId, () => Task.FromResult(true)));
+            await action.Should().ThrowAsync<StockAvailabilityConflictException>()
+                .WithMessage("An explicit company-scoped expired-stock override capability is required.");
+        }
+        await AssertFullyReservedExpiredLotUnchangedAsync(fixture, reservationTenant, reservationState);
+        await using (var context = fixture.CreateContext(reservationTenant))
+        {
+            await CreateService(context, reservationTenant).CreateReservationAsync(
+                request with { ExpiryExceptionReason = reason },
+                CreateOverrideScope(reservationState.CompanyId, authorized: true));
+        }
+        await AssertPostgresReservationHasReasonAsync(fixture, reservationTenant, newLine, reason);
+    }
+
+    [PostgreSqlFact]
+    public async Task Expiry_override_reason_migration_refuses_downgrade_while_audit_reasons_exist()
+    {
+        fixture.EnsureEnabled();
+        var schema = $"expiry_reason_down_{Guid.NewGuid():N}";
+        var tenant = $"expiry-reason-down-{Guid.NewGuid():N}";
+        var connectionString = new NpgsqlConnectionStringBuilder(fixture.ConnectionString)
+        {
+            SearchPath = schema
+        }.ConnectionString;
+
+        await using (var createSchema = new NpgsqlConnection(fixture.ConnectionString))
+        {
+            await createSchema.OpenAsync();
+            await using var command = new NpgsqlCommand($"CREATE SCHEMA \"{schema}\"", createSchema);
+            await command.ExecuteNonQueryAsync();
+        }
+
+        try
+        {
+            var options = new DbContextOptionsBuilder<InventoryDbContext>()
+                .UseNpgsql(connectionString)
+                .ConfigureWarnings(warnings => warnings.Ignore(RelationalEventId.PendingModelChangesWarning))
+                .Options;
+            await using var context = new InventoryDbContext(options, new TestTenantContext(tenant));
+            var migrator = context.GetService<IMigrator>();
+            await migrator.MigrateAsync();
+
+            var item = new Item { ItemCode = $"DOWN-{Guid.NewGuid():N}", Description = "Downgrade guard test" };
+            var location = new Location { Name = "Downgrade guard location" };
+            context.AddRange(item, location);
+            await context.SaveChangesAsync();
+
+            const string reason = "Retain this audit reason during downgrade";
+            context.StockTransactions.Add(new StockTransaction
+            {
+                ItemId = item.Id,
+                FromLocationId = location.Id,
+                Quantity = 1,
+                TransactionType = TransactionType.Receive,
+                TransactionDate = DateTime.UtcNow,
+                ExpiryExceptionReason = reason
+            });
+            context.StockReservations.Add(new StockReservation
+            {
+                ItemId = item.Id,
+                LocationId = location.Id,
+                SourceLineReference = $"down-guard-{Guid.NewGuid():N}",
+                Quantity = 1,
+                ExpiresAt = DateTimeOffset.UtcNow.AddHours(1),
+                ExpiryExceptionReason = reason
+            });
+            await context.SaveChangesAsync();
+
+            const string previousMigration = "20260918020000_AddQuarantinedStockQuantity";
+            var failure = await FluentActions.Awaiting(() => migrator.MigrateAsync(previousMigration))
+                .Should().ThrowAsync<PostgresException>();
+            failure.Which.MessageText.Should().Contain(
+                "Cannot downgrade expired-stock override reasons while audit reasons are still persisted.");
+
+            context.ChangeTracker.Clear();
+            (await context.StockTransactions.SingleAsync()).ExpiryExceptionReason.Should().Be(reason);
+            (await context.StockReservations.SingleAsync()).ExpiryExceptionReason.Should().Be(reason);
+            (await context.Database.GetAppliedMigrationsAsync())
+                .Should().Contain("20260918030000_AddExpiredStockOverrideReasons");
+        }
+        finally
+        {
+            await using var dropSchema = new NpgsqlConnection(fixture.ConnectionString);
+            await dropSchema.OpenAsync();
+            await using var command = new NpgsqlCommand($"DROP SCHEMA IF EXISTS \"{schema}\" CASCADE", dropSchema);
+            await command.ExecuteNonQueryAsync();
+        }
+    }
+
+    [PostgreSqlFact]
     public async Task Concurrent_reservations_allow_only_available_quantity()
     {
         fixture.EnsureEnabled();
@@ -844,7 +1170,10 @@ public sealed class StockReservationPostgreSqlIntegrationTests(PostgreSqlIntegra
         PostgreSqlIntegrationFixture fixture,
         string tenant,
         string reservationReference,
-        DateTimeOffset? reservationExpires = null)
+        DateTimeOffset? reservationExpires = null,
+        int stockQuantity = 10,
+        int reservedQuantity = 2,
+        int reservationQuantity = 2)
     {
         await using var context = fixture.CreateContext(tenant);
         var company = new Company
@@ -881,8 +1210,8 @@ public sealed class StockReservationPostgreSqlIntegrationTests(PostgreSqlIntegra
         {
             ItemId = item.Id,
             LocationId = source.Id,
-            Quantity = 10,
-            ReservedQuantity = 2,
+            Quantity = stockQuantity,
+            ReservedQuantity = reservedQuantity,
             BatchNumber = "LOT-EXPIRED",
             ExpiryDate = expiryDate
         });
@@ -893,7 +1222,7 @@ public sealed class StockReservationPostgreSqlIntegrationTests(PostgreSqlIntegra
             SourceLineReference = reservationReference,
             BatchNumber = "LOT-EXPIRED",
             ExpiryDate = expiryDate,
-            Quantity = 2,
+            Quantity = reservationQuantity,
             ExpiresAt = reservationExpires ?? DateTimeOffset.UtcNow.AddMinutes(-1),
             Status = StockReservationStatus.Active
         });
@@ -901,6 +1230,67 @@ public sealed class StockReservationPostgreSqlIntegrationTests(PostgreSqlIntegra
 
         return new PostgresExpiredLotSeed(
             company.Id, item.Id, source.Id, destination.Id, expiryDate, reservationReference);
+    }
+
+    private static async Task AssertAutoExpiredLotUnchangedAsync(
+        PostgreSqlIntegrationFixture fixture,
+        string tenant,
+        PostgresExpiredLotSeed state,
+        string staleReservationReference,
+        string newReservationReference)
+    {
+        await using var verify = fixture.CreateContext(tenant);
+        var stock = await verify.StockInHand.SingleAsync(row => row.ItemId == state.ItemId);
+        stock.Quantity.Should().Be(5);
+        stock.ReservedQuantity.Should().Be(5);
+        var staleReservation = await verify.StockReservations.SingleAsync(
+            row => row.SourceLineReference == staleReservationReference);
+        staleReservation.Status.Should().Be(StockReservationStatus.Active);
+        staleReservation.ConsumedQuantity.Should().Be(0);
+        (await verify.StockReservations.CountAsync(row => row.SourceLineReference == newReservationReference))
+            .Should().Be(0);
+        (await verify.StockTransactions.CountAsync(row => row.ItemId == state.ItemId)).Should().Be(0);
+        (await verify.AuditLogs.CountAsync(row => row.EntityName == nameof(StockReservation))).Should().Be(1);
+    }
+
+    private static async Task AssertMixedExpiredReservationSelectionUnchangedAsync(
+        PostgreSqlIntegrationFixture fixture,
+        string tenant,
+        PostgresExpiredLotSeed state,
+        string staleReservationReference,
+        string newReservationReference)
+    {
+        await using var verify = fixture.CreateContext(tenant);
+        var expiredStock = await verify.StockInHand.SingleAsync(row => row.BatchNumber == "LOT-EXPIRED");
+        expiredStock.Quantity.Should().Be(5);
+        expiredStock.ReservedQuantity.Should().Be(5);
+        var freshStock = await verify.StockInHand.SingleAsync(row => row.BatchNumber == "LOT-FRESH");
+        freshStock.Quantity.Should().Be(5);
+        freshStock.ReservedQuantity.Should().Be(0);
+        (await verify.StockReservations.SingleAsync(row =>
+            row.SourceLineReference == staleReservationReference)).Status.Should().Be(StockReservationStatus.Active);
+        (await verify.StockReservations.CountAsync(row =>
+            row.SourceLineReference == newReservationReference)).Should().Be(0);
+        (await verify.StockTransactions.CountAsync(row => row.ItemId == state.ItemId)).Should().Be(0);
+    }
+
+    private static async Task AssertFullyReservedExpiredLotUnchangedAsync(
+        PostgreSqlIntegrationFixture fixture,
+        string tenant,
+        PostgresExpiredLotSeed state)
+    {
+        await using var verify = fixture.CreateContext(tenant);
+        var stock = await verify.StockInHand.SingleAsync(row => row.ItemId == state.ItemId);
+        stock.Quantity.Should().Be(5);
+        stock.ReservedQuantity.Should().Be(5);
+        var reservation = await verify.StockReservations.SingleAsync(
+            row => row.SourceLineReference == state.ReservationReference);
+        reservation.Status.Should().Be(StockReservationStatus.Active);
+        reservation.Quantity.Should().Be(5);
+        reservation.ConsumedQuantity.Should().Be(0);
+        (await verify.StockTransactions.CountAsync(row => row.ItemId == state.ItemId)).Should().Be(0);
+        (await verify.AuditLogs.CountAsync(row => row.EntityName == nameof(StockTransaction))).Should().Be(0);
+        (await verify.AuditLogs.CountAsync(row => row.EntityName == nameof(StockReservation))).Should().Be(1);
     }
 
     private static StockMutationScope CreateOverrideScope(int companyId, bool authorized) => new(
@@ -929,11 +1319,17 @@ public sealed class StockReservationPostgreSqlIntegrationTests(PostgreSqlIntegra
         PostgreSqlIntegrationFixture fixture,
         string tenant,
         TransactionType transactionType,
-        string reason)
+        string reason,
+        string? expectedBatchNumber = null,
+        DateTime? expectedExpiryDate = null)
     {
         await using var verify = fixture.CreateContext(tenant);
         var transaction = await verify.StockTransactions.SingleAsync(row => row.TransactionType == transactionType);
         transaction.ExpiryExceptionReason.Should().Be(reason);
+        if (expectedBatchNumber is not null)
+            transaction.BatchNumber.Should().Be(expectedBatchNumber);
+        if (expectedExpiryDate.HasValue)
+            transaction.ExpiryDate.Should().Be(expectedExpiryDate.Value);
         var entries = await verify.AuditLogs
             .Where(row => row.EntityName == nameof(StockTransaction) && row.NewValues != null)
             .ToListAsync();
@@ -955,6 +1351,18 @@ public sealed class StockReservationPostgreSqlIntegrationTests(PostgreSqlIntegra
         entries.Should().Contain(entry => AuditValue(entry.NewValues!, nameof(StockReservation.ExpiryExceptionReason)) == reason);
     }
 
+    private static void AssertRecordedWebhookLotIdentity(
+        RecordingWebhookDispatcher dispatcher,
+        string eventType,
+        string expectedBatchNumber,
+        DateTime expectedExpiryDate)
+    {
+        var payload = System.Text.Json.JsonSerializer.SerializeToElement(
+            dispatcher.Events.Single(item => item.EventType == eventType).Payload);
+        payload.GetProperty("BatchNumber").GetString().Should().Be(expectedBatchNumber);
+        payload.GetProperty("ExpiryDate").GetDateTime().Should().Be(expectedExpiryDate);
+    }
+
     private static string? AuditValue(string newValues, string propertyName)
     {
         using var document = System.Text.Json.JsonDocument.Parse(newValues);
@@ -969,6 +1377,19 @@ public sealed class StockReservationPostgreSqlIntegrationTests(PostgreSqlIntegra
         DateTime ExpiryDate,
         string ReservationReference);
 
+    private sealed class RecordingWebhookDispatcher : IWebhookDispatcher
+    {
+        public List<(string EventType, object Payload)> Events { get; } = [];
+
+        public Task EnqueueAsync<T>(WebhookEvent<T> webhookEvent)
+        {
+            Events.Add((webhookEvent.EventType, webhookEvent.Payload!));
+            return Task.CompletedTask;
+        }
+
+        public Task DispatchAsync<T>(WebhookEvent<T> webhookEvent) => Task.CompletedTask;
+    }
+
     private static async Task<Exception?> CaptureAsync(Func<Task> action)
     {
         try
@@ -982,14 +1403,17 @@ public sealed class StockReservationPostgreSqlIntegrationTests(PostgreSqlIntegra
         }
     }
 
-    private static StockService CreateService(InventoryDbContext context, string tenant) => new(
+    private static StockService CreateService(
+        InventoryDbContext context,
+        string tenant,
+        IWebhookDispatcher? webhookDispatcher = null) => new(
         new Repository<StockInHand>(context),
         new Repository<StockTransaction>(context),
         new Repository<Item>(context),
         new Repository<Location>(context),
         new Repository<Branch>(context),
         new UnitOfWork(context),
-        new Mock<IWebhookDispatcher>().Object,
+        webhookDispatcher ?? new Mock<IWebhookDispatcher>().Object,
         new TestTenantContext(tenant),
         NullLogger<StockService>.Instance,
         new Repository<StockValuationBucket>(context),

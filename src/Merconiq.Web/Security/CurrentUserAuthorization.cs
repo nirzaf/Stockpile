@@ -44,7 +44,8 @@ public sealed class CurrentUserAuthorization(
                 return false;
             }
 
-            if (roles.Contains("Admin", StringComparer.Ordinal))
+            if (capability != CompanyCapability.OverrideExpiredStock &&
+                roles.Contains("Admin", StringComparer.Ordinal))
             {
                 return true;
             }
@@ -115,6 +116,20 @@ public sealed class CurrentUserAuthorization(
             }
 
             return await CanAccessCompanyAsync(db, user, roles, companyId.Value, capability);
+        });
+
+    public Task<bool> CanOverrideExpiredStockAtLocationAsync(
+        ClaimsPrincipal principal,
+        int locationId) =>
+        WithCurrentUserAsync(principal, false, async (db, user, roles) =>
+        {
+            var companyId = await db.Locations
+                .Where(location => location.Id == locationId)
+                .Select(location => (int?)location.Branch!.CompanyId)
+                .SingleOrDefaultAsync();
+            return companyId.HasValue && await CanAccessCompanyAsync(
+                db, user, roles, companyId.Value, CompanyCapability.OverrideExpiredStock,
+                requireExplicitGrant: true);
         });
 
     public Task<int?> GetLocationCompanyIdAsync(ClaimsPrincipal principal, int locationId) =>
@@ -279,7 +294,8 @@ public sealed class CurrentUserAuthorization(
         ApplicationUser user,
         IReadOnlyCollection<string> roles,
         int companyId,
-        CompanyCapability capability)
+        CompanyCapability capability,
+        bool requireExplicitGrant = false)
     {
         if (companyId <= 0 || !IsCapabilityValid(capability) || !RoleCanPerform(roles, capability) ||
             !await db.Companies.AnyAsync(company => company.Id == companyId))
@@ -287,7 +303,7 @@ public sealed class CurrentUserAuthorization(
             return false;
         }
 
-        if (roles.Contains("Admin", StringComparer.Ordinal))
+        if (!requireExplicitGrant && roles.Contains("Admin", StringComparer.Ordinal))
         {
             return true;
         }

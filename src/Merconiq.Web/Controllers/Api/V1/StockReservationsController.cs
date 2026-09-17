@@ -62,12 +62,11 @@ public sealed class StockReservationsController(
         var mutationScope = new StockMutationScope(
             await authorization.GetLocationCompanyIdAsync(User, request.LocationId),
             () => authorization.CanAccessLocationAsync(User, request.LocationId, CompanyCapability.Post),
-            () => authorization.CanAccessLocationAsync(User, request.LocationId, CompanyCapability.OverrideExpiredStock));
+            () => authorization.CanOverrideExpiredStockAtLocationAsync(User, request.LocationId));
         if (!await authorization.CanAccessLocationAsync(User, request.LocationId, CompanyCapability.Post))
             return Forbid();
         if (!string.IsNullOrWhiteSpace(request.ExpiryExceptionReason) &&
-            !await authorization.CanAccessLocationAsync(
-                User, request.LocationId, CompanyCapability.OverrideExpiredStock))
+            !await authorization.CanOverrideExpiredStockAtLocationAsync(User, request.LocationId))
             return Forbid();
         return await RunMutationAsync(request, idempotencyKeyStore, tenantContext,
             () => stock.CreateReservationAsync(request, mutationScope));
@@ -130,12 +129,11 @@ public sealed class StockReservationsController(
         var mutationScope = new StockMutationScope(
             await authorization.GetLocationCompanyIdAsync(User, reservation.LocationId),
             () => authorization.CanAccessLocationAsync(User, reservation.LocationId, CompanyCapability.Post),
-            () => authorization.CanAccessLocationAsync(User, reservation.LocationId, CompanyCapability.OverrideExpiredStock));
+            () => authorization.CanOverrideExpiredStockAtLocationAsync(User, reservation.LocationId));
         if (!await authorization.CanAccessLocationAsync(User, reservation.LocationId, CompanyCapability.Post))
             return Forbid();
         if (!string.IsNullOrWhiteSpace(request.ExpiryExceptionReason) &&
-            !await authorization.CanAccessLocationAsync(
-                User, reservation.LocationId, CompanyCapability.OverrideExpiredStock))
+            !await authorization.CanOverrideExpiredStockAtLocationAsync(User, reservation.LocationId))
             return Forbid();
         return await RunMutationAsync(request, idempotencyKeyStore, tenantContext,
             () => stock.ConsumeReservationAsync(request, mutationScope));

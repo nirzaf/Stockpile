@@ -106,6 +106,25 @@ public class StockService : IStockService
         return matchingRows.FirstOrDefault();
     }
 
+    private async Task<StockInHand?> GetStockForRequestedLotAsync(
+        int itemId,
+        int locationId,
+        string? batchNumber,
+        DateTime? expiryDate)
+    {
+        if (batchNumber is null || expiryDate.HasValue)
+            return await GetByItemAndLocationAsync(itemId, locationId, batchNumber, expiryDate);
+
+        var matches = (await _stockRepo.FindAsync(stock =>
+            stock.ItemId == itemId && stock.LocationId == locationId && stock.BatchNumber == batchNumber))
+            .Take(2)
+            .ToArray();
+        if (matches.Length > 1)
+            throw new StockAvailabilityConflictException(
+                "Multiple stock rows match the same batch number; provide an expiry date to select one lot.");
+        return matches.FirstOrDefault();
+    }
+
     /// <inheritdoc />
     public async Task<IEnumerable<StockTransaction>> GetTransactionsAsync(DateTime? from, DateTime? to)
     {
@@ -302,19 +321,28 @@ public class StockService : IStockService
             await EnsureAuthorizedCompanyScopeAsync(sourceLocation, mutationScope);
             await EnsureAuthorizedCompanyScopeAsync(destinationLocation, mutationScope);
             await EnsureSameCompanyTransferAsync(sourceLocation, destinationLocation);
-            var normalizedExpiryExceptionReason = await EnsureExpiredLotExceptionAsync(
-                expiryDate, expiryExceptionReason, mutationScope);
+            var initiallySelectedSource = await GetStockForRequestedLotAsync(
+                itemId, fromLocationId, batchNumber, expiryDate);
+            if (initiallySelectedSource is null)
+                throw new InvalidOperationException("Insufficient stock at source location");
+            await EnsureExpiredLotExceptionAsync(
+                initiallySelectedSource.ExpiryDate, expiryExceptionReason, mutationScope);
             await ReleaseExpiredReservationsAsync(itemId, fromLocationId);
             await ReleaseExpiredReservationsAsync(itemId, toLocationId);
-            var source = await GetByItemAndLocationAsync(itemId, fromLocationId, batchNumber, expiryDate);
-            if (source == null || source.Quantity < quantity)
+            var source = await GetStockForRequestedLotAsync(itemId, fromLocationId, batchNumber, expiryDate);
+            if (source == null)
+                throw new InvalidOperationException("Insufficient stock at source location");
+            var normalizedExpiryExceptionReason = await EnsureExpiredLotExceptionAsync(
+                source.ExpiryDate, expiryExceptionReason, mutationScope);
+            if (source.Quantity < quantity)
                 throw new InvalidOperationException("Insufficient stock at source location");
             EnsureAvailable(source, quantity, "transfer");
 
             source.Quantity -= quantity;
             await _stockRepo.UpdateAsync(source);
 
-            var dest = await GetByItemAndLocationAsync(itemId, toLocationId, batchNumber, expiryDate);
+            var dest = await GetByItemAndLocationAsync(
+                itemId, toLocationId, source.BatchNumber, source.ExpiryDate);
             if (dest != null)
             {
                 dest.Quantity += quantity;
@@ -327,8 +355,8 @@ public class StockService : IStockService
                     ItemId = itemId,
                     LocationId = toLocationId,
                     Quantity = quantity,
-                    BatchNumber = batchNumber,
-                    ExpiryDate = expiryDate
+                    BatchNumber = source.BatchNumber,
+                    ExpiryDate = source.ExpiryDate
                 });
             }
 
@@ -340,15 +368,15 @@ public class StockService : IStockService
                 Quantity = quantity,
                 TransactionType = TransactionType.Transfer,
                 TransactionDate = DateTime.UtcNow,
-                BatchNumber = batchNumber,
-                ExpiryDate = expiryDate,
+                BatchNumber = source.BatchNumber,
+                ExpiryDate = source.ExpiryDate,
                 Notes = notes,
                 ExpiryExceptionReason = normalizedExpiryExceptionReason
             };
             await _txRepo.AddAsync(transaction);
 
             await _webhookDispatcher.EnqueueAsync(WebhookEventFactory.Create(_tenantContext, "Stock.Transferred",
-                new { ItemId = itemId, FromLocationId = fromLocationId, ToLocationId = toLocationId, Quantity = quantity, Notes = notes, BatchNumber = batchNumber, ExpiryDate = expiryDate, ExpiryExceptionReason = normalizedExpiryExceptionReason }));
+                new { ItemId = itemId, FromLocationId = fromLocationId, ToLocationId = toLocationId, Quantity = quantity, Notes = notes, BatchNumber = source.BatchNumber, ExpiryDate = source.ExpiryDate, ExpiryExceptionReason = normalizedExpiryExceptionReason }));
             await _unitOfWork.SaveChangesAsync();
         }, () => VerifyTransactionCommitAsync(transaction));
 
@@ -377,11 +405,19 @@ public class StockService : IStockService
             await _unitOfWork.AcquireLocationLocksAsync([locationId]);
             var location = await EnsureLocationUsableAsync(locationId);
             await EnsureAuthorizedCompanyScopeAsync(location, mutationScope);
+            var initiallySelectedStock = await GetStockForRequestedLotAsync(
+                itemId, locationId, batchNumber, expiryDate);
+            if (initiallySelectedStock is null)
+                throw new InvalidOperationException("Insufficient stock for sale");
             var normalizedExpiryExceptionReason = await EnsureExpiredLotExceptionAsync(
-                expiryDate, expiryExceptionReason, mutationScope);
+                initiallySelectedStock.ExpiryDate, expiryExceptionReason, mutationScope);
             await ReleaseExpiredReservationsAsync(itemId, locationId);
-            var stock = await GetByItemAndLocationAsync(itemId, locationId, batchNumber, expiryDate);
-            if (stock == null || stock.Quantity < quantity)
+            var stock = await GetStockForRequestedLotAsync(itemId, locationId, batchNumber, expiryDate);
+            if (stock is null)
+                throw new InvalidOperationException("Insufficient stock for sale");
+            normalizedExpiryExceptionReason = await EnsureExpiredLotExceptionAsync(
+                stock.ExpiryDate, expiryExceptionReason, mutationScope);
+            if (stock.Quantity < quantity)
                 throw new InvalidOperationException("Insufficient stock for sale");
 
             StockReservation? reservation = null;
@@ -395,7 +431,7 @@ public class StockService : IStockService
                 if (reservation.ExpiresAt <= DateTimeOffset.UtcNow)
                     throw new StockAvailabilityConflictException("Reservation has expired.");
                 if (reservation.ItemId != itemId || reservation.LocationId != locationId ||
-                    reservation.BatchNumber != batchNumber || reservation.ExpiryDate != expiryDate)
+                    reservation.BatchNumber != stock.BatchNumber || reservation.ExpiryDate != stock.ExpiryDate)
                     throw new StockAvailabilityConflictException("Reservation does not match the requested stock lot.");
 
                 reservationRemaining = Remaining(reservation);
@@ -431,20 +467,20 @@ public class StockService : IStockService
                 Quantity = quantity,
                 TransactionType = TransactionType.Sell,
                 TransactionDate = DateTime.UtcNow,
-                BatchNumber = batchNumber,
-                ExpiryDate = expiryDate,
+                BatchNumber = stock.BatchNumber,
+                ExpiryDate = stock.ExpiryDate,
                 Notes = notes,
                 ExpiryExceptionReason = normalizedExpiryExceptionReason
             };
             await _txRepo.AddAsync(transaction);
 
-            if (batchNumber is null && expiryDate is null)
+            if (stock.BatchNumber is null && stock.ExpiryDate is null)
             {
                 await ApplySaleValuationAsync(itemId, locationId, quantity, transaction);
             }
 
             await _webhookDispatcher.EnqueueAsync(WebhookEventFactory.Create(_tenantContext, "Stock.Sold",
-                new { ItemId = itemId, LocationId = locationId, Quantity = quantity, Notes = notes, BatchNumber = batchNumber, ExpiryDate = expiryDate, ExpiryExceptionReason = normalizedExpiryExceptionReason }));
+                new { ItemId = itemId, LocationId = locationId, Quantity = quantity, Notes = notes, BatchNumber = stock.BatchNumber, ExpiryDate = stock.ExpiryDate, ExpiryExceptionReason = normalizedExpiryExceptionReason }));
             await _unitOfWork.SaveChangesAsync();
         }, () => VerifyTransactionCommitAsync(transaction));
 
@@ -473,10 +509,6 @@ public class StockService : IStockService
             await _unitOfWork.AcquireLocationLocksAsync([request.LocationId]);
             var location = await EnsureLocationUsableAsync(request.LocationId);
             await EnsureAuthorizedCompanyScopeAsync(location, mutationScope);
-            var normalizedExpiryExceptionReason = request.BatchNumber is not null || request.ExpiryDate.HasValue
-                ? await EnsureExpiredLotExceptionAsync(
-                    request.ExpiryDate, request.ExpiryExceptionReason, mutationScope)
-                : null;
             var existing = await FindReservationAsync(sourceLineReference);
             if (existing is not null)
             {
@@ -495,19 +527,22 @@ public class StockService : IStockService
                 throw new InvalidOperationException("The source line already has a different or closed reservation.");
             }
 
-            if (request.BatchNumber is null && !request.ExpiryDate.HasValue)
+            var initiallySelectedStock = await SelectStockForReservationAsync(
+                request.ItemId, request.LocationId, request.BatchNumber, request.ExpiryDate);
+            string? normalizedExpiryExceptionReason = null;
+            if (initiallySelectedStock is not null && IsExpiredStockLot(initiallySelectedStock.ExpiryDate))
             {
-                var selectedLot = await SelectStockForReservationAsync(
-                    request.ItemId, request.LocationId, request.BatchNumber, request.ExpiryDate);
                 normalizedExpiryExceptionReason = await EnsureExpiredLotExceptionAsync(
-                    selectedLot?.ExpiryDate, request.ExpiryExceptionReason, mutationScope);
+                    initiallySelectedStock.ExpiryDate, request.ExpiryExceptionReason, mutationScope);
             }
             await ReleaseExpiredReservationsAsync(request.ItemId, request.LocationId);
 
-            var stock = await SelectStockForReservationAsync(request.ItemId, request.LocationId,
-                request.BatchNumber, request.ExpiryDate);
+            var stock = await SelectStockForReservationAsync(
+                request.ItemId, request.LocationId, request.BatchNumber, request.ExpiryDate);
             if (stock is null)
                 throw new StockAvailabilityConflictException("No stock is available for the requested lot.");
+            normalizedExpiryExceptionReason = await EnsureExpiredLotExceptionAsync(
+                stock.ExpiryDate, request.ExpiryExceptionReason, mutationScope);
             EnsureAvailable(stock, request.Quantity, "reservation");
 
             var reservation = new StockReservation
@@ -799,7 +834,7 @@ public class StockService : IStockService
         DateTime? expiryDate)
     {
         if (batchNumber is not null || expiryDate.HasValue)
-            return await GetByItemAndLocationAsync(itemId, locationId, batchNumber, expiryDate);
+            return await GetStockForRequestedLotAsync(itemId, locationId, batchNumber, expiryDate);
 
         // FEFO is deterministic for the bounded single-lot reservation contract. A null
         // expiry is last because it cannot win an expiry-first allocation.
@@ -852,8 +887,7 @@ public class StockService : IStockService
         StockMutationScope? mutationScope)
     {
         var normalizedReason = string.IsNullOrWhiteSpace(reason) ? null : reason.Trim();
-        var isExpired = expiryDate.HasValue &&
-            DateOnly.FromDateTime(expiryDate.Value) < DateOnly.FromDateTime(DateTime.UtcNow);
+        var isExpired = IsExpiredStockLot(expiryDate);
 
         if (!isExpired)
         {
@@ -875,6 +909,10 @@ public class StockService : IStockService
 
         return normalizedReason;
     }
+
+    private static bool IsExpiredStockLot(DateTime? expiryDate) =>
+        expiryDate.HasValue &&
+        DateOnly.FromDateTime(expiryDate.Value) < DateOnly.FromDateTime(DateTime.UtcNow);
 
     private static void EnsureExpiryExceptionReasonLength(string? reason)
     {

@@ -349,16 +349,21 @@ public class StockServiceTests
         source.LocationId = 10;
         source.Quantity = 100;
         source.ReservedQuantity = 0;
+        source.BatchNumber = null;
+        source.ExpiryDate = null;
 
         var dest = _fixture.Create<StockInHand>();
         dest.ItemId = 1;
         dest.LocationId = 20;
         dest.Quantity = 50;
         dest.ReservedQuantity = 0;
+        dest.BatchNumber = null;
+        dest.ExpiryDate = null;
 
-        // Setup sequential calls: first call returns source, second returns dest
+        // The source is resolved and revalidated around reservation cleanup before the destination is resolved.
         _stockRepoMock.SetupSequence(r => r.FindAsync(
                 It.IsAny<Expression<Func<StockInHand, bool>>>()))
+            .ReturnsAsync(new List<StockInHand> { source })
             .ReturnsAsync(new List<StockInHand> { source })
             .ReturnsAsync(new List<StockInHand> { dest });
 
@@ -384,6 +389,8 @@ public class StockServiceTests
         source.ItemId = 1;
         source.LocationId = 10;
         source.Quantity = 5;
+        source.BatchNumber = null;
+        source.ExpiryDate = null;
         SetupStockFindAsync(new List<StockInHand> { source });
 
         var act = () => _sut.TransferStockAsync(1, 10, 20, 50, null);
@@ -493,6 +500,8 @@ public class StockServiceTests
         stock.LocationId = 2;
         stock.Quantity = 100;
         stock.ReservedQuantity = 0;
+        stock.BatchNumber = null;
+        stock.ExpiryDate = null;
         SetupStockFindAsync(new List<StockInHand> { stock });
 
         await _sut.SellStockAsync(1, 2, 30, "Sold to customer");
@@ -511,6 +520,8 @@ public class StockServiceTests
         stock.ItemId = 1;
         stock.LocationId = 2;
         stock.Quantity = 5;
+        stock.BatchNumber = null;
+        stock.ExpiryDate = null;
         SetupStockFindAsync(new List<StockInHand> { stock });
 
         var act = () => _sut.SellStockAsync(1, 2, 50, null);
@@ -534,10 +545,13 @@ public class StockServiceTests
             .With(s => s.Quantity, 15)
             .With(s => s.ReservedQuantity, 0)
             .With(s => s.QuarantinedQuantity, 0)
+            .With(s => s.BatchNumber, (string?)null)
+            .With(s => s.ExpiryDate, (DateTime?)null)
             .Create();
         _itemRepoMock.Setup(r => r.GetByIdAsync(1)).ReturnsAsync(item);
         _stockRepoMock.SetupSequence(r => r.FindAsync(
                 It.IsAny<Expression<Func<StockInHand, bool>>>()))
+            .ReturnsAsync(new List<StockInHand> { stock })
             .ReturnsAsync(new List<StockInHand> { stock })
             .ReturnsAsync(new List<StockInHand> { stock });
 

@@ -177,16 +177,15 @@ public class StockController : ControllerBase
             return Forbid();
         }
         if (!string.IsNullOrWhiteSpace(command.ExpiryExceptionReason) &&
-            !await _authorization.CanAccessLocationAsync(
-                User, command.FromLocationId, CompanyCapability.OverrideExpiredStock))
+            !await _authorization.CanOverrideExpiredStockAtLocationAsync(User, command.FromLocationId))
         {
             return Forbid();
         }
 
         mutationScope = mutationScope with
         {
-            ReauthorizeExpiredStockOverride = () => _authorization.CanAccessLocationAsync(
-                User, command.FromLocationId, CompanyCapability.OverrideExpiredStock)
+            ReauthorizeExpiredStockOverride = () => _authorization.CanOverrideExpiredStockAtLocationAsync(
+                User, command.FromLocationId)
         };
 
         var idempotencyKey = Request.Headers["Idempotency-Key"].ToString();
@@ -234,15 +233,14 @@ public class StockController : ControllerBase
             return Forbid();
         }
         if (!string.IsNullOrWhiteSpace(command.ExpiryExceptionReason) &&
-            !await _authorization.CanAccessLocationAsync(
-                User, command.LocationId, CompanyCapability.OverrideExpiredStock))
+            !await _authorization.CanOverrideExpiredStockAtLocationAsync(User, command.LocationId))
         {
             return Forbid();
         }
         mutationScope = mutationScope with
         {
-            ReauthorizeExpiredStockOverride = () => _authorization.CanAccessLocationAsync(
-                User, command.LocationId, CompanyCapability.OverrideExpiredStock)
+            ReauthorizeExpiredStockOverride = () => _authorization.CanOverrideExpiredStockAtLocationAsync(
+                User, command.LocationId)
         };
 
         var idempotencyKey = Request.Headers["Idempotency-Key"].ToString();
