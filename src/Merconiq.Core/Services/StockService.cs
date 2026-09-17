@@ -212,7 +212,8 @@ public class StockService : IStockService
         string? notes,
         string? batchNumber = null,
         DateTime? expiryDate = null,
-        decimal? unitCost = null)
+        decimal? unitCost = null,
+        StockMutationScope? mutationScope = null)
     {
         if (quantity <= 0) throw new ArgumentException("Quantity must be positive");
         if (unitCost is < 0) throw new ArgumentException("Unit cost must be non-negative");
@@ -223,7 +224,9 @@ public class StockService : IStockService
         StockTransaction? transaction = null;
         await ExecuteWithRetryAsync(itemId, async () =>
         {
-            await EnsureLocationUsableAsync(locationId);
+            await _unitOfWork.AcquireLocationLocksAsync([locationId]);
+            var location = await EnsureLocationUsableAsync(locationId);
+            await EnsureAuthorizedCompanyScopeAsync(location, mutationScope);
             var existing = await GetByItemAndLocationAsync(itemId, locationId, batchNumber, expiryDate);
             if (existing != null)
             {
@@ -270,7 +273,15 @@ public class StockService : IStockService
     }
 
     /// <inheritdoc />
-    public async Task TransferStockAsync(int itemId, int fromLocationId, int toLocationId, int quantity, string? notes, string? batchNumber = null, DateTime? expiryDate = null)
+    public async Task TransferStockAsync(
+        int itemId,
+        int fromLocationId,
+        int toLocationId,
+        int quantity,
+        string? notes,
+        string? batchNumber = null,
+        DateTime? expiryDate = null,
+        StockMutationScope? mutationScope = null)
     {
         if (quantity <= 0) throw new ArgumentException("Quantity must be positive");
         if (fromLocationId == toLocationId) throw new ArgumentException("Source and destination must be different");
@@ -280,8 +291,11 @@ public class StockService : IStockService
         StockTransaction? transaction = null;
         await ExecuteWithRetryAsync(itemId, async () =>
         {
+            await _unitOfWork.AcquireLocationLocksAsync([fromLocationId, toLocationId]);
             var sourceLocation = await EnsureLocationUsableAsync(fromLocationId);
             var destinationLocation = await EnsureLocationUsableAsync(toLocationId);
+            await EnsureAuthorizedCompanyScopeAsync(sourceLocation, mutationScope);
+            await EnsureAuthorizedCompanyScopeAsync(destinationLocation, mutationScope);
             await EnsureSameCompanyTransferAsync(sourceLocation, destinationLocation);
             await ReleaseExpiredReservationsAsync(itemId, fromLocationId);
             await ReleaseExpiredReservationsAsync(itemId, toLocationId);
@@ -341,7 +355,8 @@ public class StockService : IStockService
         string? notes,
         string? batchNumber = null,
         DateTime? expiryDate = null,
-        string? reservationSourceLineReference = null)
+        string? reservationSourceLineReference = null,
+        StockMutationScope? mutationScope = null)
     {
         if (quantity <= 0) throw new ArgumentException("Quantity must be positive");
         expiryDate = StockLotExpiryDate.Normalize(expiryDate);
@@ -350,7 +365,9 @@ public class StockService : IStockService
         StockTransaction? transaction = null;
         await ExecuteWithRetryAsync(itemId, async () =>
         {
-            await EnsureLocationUsableAsync(locationId);
+            await _unitOfWork.AcquireLocationLocksAsync([locationId]);
+            var location = await EnsureLocationUsableAsync(locationId);
+            await EnsureAuthorizedCompanyScopeAsync(location, mutationScope);
             await ReleaseExpiredReservationsAsync(itemId, locationId);
             var stock = await GetByItemAndLocationAsync(itemId, locationId, batchNumber, expiryDate);
             if (stock == null || stock.Quantity < quantity)
@@ -423,7 +440,9 @@ public class StockService : IStockService
     }
 
     /// <inheritdoc />
-    public async Task CreateReservationAsync(CreateStockReservationRequest request)
+    public async Task CreateReservationAsync(
+        CreateStockReservationRequest request,
+        StockMutationScope? mutationScope = null)
     {
         ArgumentNullException.ThrowIfNull(request);
         request = request with { ExpiryDate = StockLotExpiryDate.Normalize(request.ExpiryDate) };
@@ -439,7 +458,9 @@ public class StockService : IStockService
 
         await ExecuteWithRetryAsync(request.ItemId, async () =>
         {
-            await EnsureLocationUsableAsync(request.LocationId);
+            await _unitOfWork.AcquireLocationLocksAsync([request.LocationId]);
+            var location = await EnsureLocationUsableAsync(request.LocationId);
+            await EnsureAuthorizedCompanyScopeAsync(location, mutationScope);
             var existing = await FindReservationAsync(sourceLineReference);
             if (existing is not null)
             {
@@ -495,15 +516,23 @@ public class StockService : IStockService
     }
 
     /// <inheritdoc />
-    public Task ReleaseReservationAsync(string sourceLineReference, string? reason = null) =>
-        ChangeReservationStateAsync(sourceLineReference, StockReservationStatus.Released, reason);
+    public Task ReleaseReservationAsync(
+        string sourceLineReference,
+        string? reason = null,
+        StockMutationScope? mutationScope = null) =>
+        ChangeReservationStateAsync(sourceLineReference, StockReservationStatus.Released, reason, mutationScope);
 
     /// <inheritdoc />
-    public Task CancelReservationAsync(string sourceLineReference, string? reason = null) =>
-        ChangeReservationStateAsync(sourceLineReference, StockReservationStatus.Cancelled, reason);
+    public Task CancelReservationAsync(
+        string sourceLineReference,
+        string? reason = null,
+        StockMutationScope? mutationScope = null) =>
+        ChangeReservationStateAsync(sourceLineReference, StockReservationStatus.Cancelled, reason, mutationScope);
 
     /// <inheritdoc />
-    public async Task ConsumeReservationAsync(ConsumeStockReservationRequest request)
+    public async Task ConsumeReservationAsync(
+        ConsumeStockReservationRequest request,
+        StockMutationScope? mutationScope = null)
     {
         ArgumentNullException.ThrowIfNull(request);
         EnsureReservationRequest(request.Quantity, request.SourceLineReference);
@@ -517,7 +546,7 @@ public class StockService : IStockService
         EnsureLotNotExpired(reservation.ExpiryDate);
         if (reservation.ExpiresAt <= DateTimeOffset.UtcNow)
         {
-            await ReleaseReservationAsync(sourceLineReference, "Expired");
+            await ReleaseReservationAsync(sourceLineReference, "Expired", mutationScope);
             throw new StockAvailabilityConflictException("Reservation has expired.");
         }
         if (reservation.RemainingQuantity < request.Quantity)
@@ -530,7 +559,8 @@ public class StockService : IStockService
             request.Notes,
             reservation.BatchNumber,
             reservation.ExpiryDate,
-            sourceLineReference);
+            sourceLineReference,
+            mutationScope);
     }
 
     /// <inheritdoc />
@@ -640,7 +670,8 @@ public class StockService : IStockService
     private async Task ChangeReservationStateAsync(
         string sourceLineReference,
         StockReservationStatus requestedStatus,
-        string? reason)
+        string? reason,
+        StockMutationScope? mutationScope)
     {
         EnsureReservationRepository();
         EnsureSourceLineReference(sourceLineReference);
@@ -649,9 +680,15 @@ public class StockService : IStockService
 
         await _unitOfWork.ExecuteInTransactionAsync(async () =>
         {
-            var reservation = await FindReservationAsync(source);
-            if (reservation is null)
+            var initialReservation = await FindReservationAsync(source);
+            if (initialReservation is null)
                 throw new KeyNotFoundException("Reservation not found.");
+            await _unitOfWork.AcquireLocationLocksAsync([initialReservation.LocationId]);
+            var reservation = await FindReservationAsync(source);
+            if (reservation is null || reservation.LocationId != initialReservation.LocationId)
+                throw new StockAvailabilityConflictException("The reservation location changed during the operation.");
+            var location = await EnsureLocationUsableAsync(reservation.LocationId);
+            await EnsureAuthorizedCompanyScopeAsync(location, mutationScope);
             if (reservation.Status is StockReservationStatus.Released or
                 StockReservationStatus.Cancelled or StockReservationStatus.Expired)
                 return;
@@ -980,6 +1017,27 @@ public class StockService : IStockService
             throw new InvalidOperationException("Cross-company stock transfers are not supported.");
 
         return Task.CompletedTask;
+    }
+
+    private static async Task EnsureAuthorizedCompanyScopeAsync(
+        Location location,
+        StockMutationScope? mutationScope)
+    {
+        if (mutationScope is not StockMutationScope expected)
+            return;
+
+        var currentCompanyId = location.Branch?.CompanyId;
+        if (currentCompanyId != expected.CompanyId)
+        {
+            throw new UnauthorizedAccessException(
+                "Location ownership changed while stock access was being authorized. Refresh access and retry.");
+        }
+
+        if (expected.Reauthorize is not null && !await expected.Reauthorize())
+        {
+            throw new UnauthorizedAccessException(
+                "Company posting access changed before the stock mutation could be committed.");
+        }
     }
 
     private async Task<bool> VerifyTransactionCommitAsync(StockTransaction? transaction)

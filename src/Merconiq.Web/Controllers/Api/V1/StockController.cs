@@ -121,10 +121,14 @@ public class StockController : ControllerBase
     [Authorize(Policy = CapabilityPolicies.Post)]
     public async Task<IActionResult> Receive([FromBody] ReceiveStockCommand command, [FromServices] IIdempotencyKeyStore idempotencyKeyStore, [FromServices] ITenantContext tenantContext)
     {
+        var mutationScope = new StockMutationScope(
+            await _authorization.GetLocationCompanyIdAsync(User, command.LocationId),
+            () => _authorization.CanAccessLocationAsync(User, command.LocationId, CompanyCapability.Post));
         if (!await _authorization.CanAccessLocationAsync(User, command.LocationId, CompanyCapability.Post))
         {
             return Forbid();
         }
+        var authorizedCommand = command with { MutationScope = mutationScope };
 
         var idempotencyKey = Request.Headers["Idempotency-Key"].ToString();
         if (idempotencyKey.Length > 200)
@@ -134,12 +138,12 @@ public class StockController : ControllerBase
 
         if (string.IsNullOrWhiteSpace(idempotencyKey))
         {
-            await _mediator.Send(command);
+            await _mediator.Send(authorizedCommand, HttpContext.RequestAborted);
         }
         else
         {
             var scope = $"{tenantContext.TenantId}:{Request.Method}:{Request.Path}";
-            await idempotencyKeyStore.ExecuteAsync(scope, idempotencyKey, IdempotencyRequestHasher.Compute(command), () => _mediator.Send(command, HttpContext.RequestAborted), HttpContext.RequestAborted);
+            await idempotencyKeyStore.ExecuteAsync(scope, idempotencyKey, IdempotencyRequestHasher.Compute(command), () => _mediator.Send(authorizedCommand, HttpContext.RequestAborted), HttpContext.RequestAborted);
         }
         return NoContent();
     }
@@ -163,6 +167,10 @@ public class StockController : ControllerBase
             return BadRequest(ApiResponse<object>.CreateFailure("Source and destination must be different."));
         }
 
+        var mutationScope = new StockMutationScope(
+            await _authorization.GetLocationCompanyIdAsync(User, command.FromLocationId),
+            () => _authorization.CanAccessTransferAsync(
+                User, command.FromLocationId, command.ToLocationId, CompanyCapability.Post));
         if (!await _authorization.CanAccessTransferAsync(
                 User, command.FromLocationId, command.ToLocationId, CompanyCapability.Post))
         {
@@ -177,7 +185,7 @@ public class StockController : ControllerBase
 
         if (string.IsNullOrWhiteSpace(idempotencyKey))
         {
-            await _mediator.Send(command);
+            await _mediator.Send(command with { MutationScope = mutationScope }, HttpContext.RequestAborted);
         }
         else
         {
@@ -186,7 +194,7 @@ public class StockController : ControllerBase
                 scope,
                 idempotencyKey,
                 IdempotencyRequestHasher.Compute(command),
-                () => _mediator.Send(command, HttpContext.RequestAborted),
+                () => _mediator.Send(command with { MutationScope = mutationScope }, HttpContext.RequestAborted),
                 HttpContext.RequestAborted);
         }
         return NoContent();
@@ -206,6 +214,9 @@ public class StockController : ControllerBase
         [FromServices] IIdempotencyKeyStore idempotencyKeyStore,
         [FromServices] ITenantContext tenantContext)
     {
+        var mutationScope = new StockMutationScope(
+            await _authorization.GetLocationCompanyIdAsync(User, command.LocationId),
+            () => _authorization.CanAccessLocationAsync(User, command.LocationId, CompanyCapability.Post));
         if (!await _authorization.CanAccessLocationAsync(User, command.LocationId, CompanyCapability.Post))
         {
             return Forbid();
@@ -219,7 +230,7 @@ public class StockController : ControllerBase
 
         if (string.IsNullOrWhiteSpace(idempotencyKey))
         {
-            await _mediator.Send(command);
+            await _mediator.Send(command with { MutationScope = mutationScope }, HttpContext.RequestAborted);
         }
         else
         {
@@ -228,7 +239,7 @@ public class StockController : ControllerBase
                 scope,
                 idempotencyKey,
                 IdempotencyRequestHasher.Compute(command),
-                () => _mediator.Send(command, HttpContext.RequestAborted),
+                () => _mediator.Send(command with { MutationScope = mutationScope }, HttpContext.RequestAborted),
                 HttpContext.RequestAborted);
         }
         return NoContent();

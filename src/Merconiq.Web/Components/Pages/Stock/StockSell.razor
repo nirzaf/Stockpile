@@ -75,6 +75,10 @@
             try
             {
                 var authenticationState = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+                var mutationScope = new Merconiq.Core.Models.StockMutationScope(
+                    await CurrentUserAuthorization.GetLocationCompanyIdAsync(authenticationState.User, _locationId),
+                    () => CurrentUserAuthorization.CanAccessLocationAsync(
+                        authenticationState.User, _locationId, CompanyCapability.Post));
                 if (!await CurrentUserAuthorization.CanAccessLocationAsync(
                         authenticationState.User, _locationId, CompanyCapability.Post))
                 {
@@ -82,7 +86,8 @@
                     return;
                 }
 
-                await StockService.SellStockAsync(_itemId, _locationId, _quantity, _notes);
+                await StockService.SellStockAsync(
+                    _itemId, _locationId, _quantity, _notes, mutationScope: mutationScope);
                 Snackbar.Add($"Sold {_quantity} units successfully.", Severity.Success);
                 Nav.NavigateTo("/Stock/Index");
             }

@@ -99,6 +99,10 @@
             try
             {
                 var authenticationState = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+                var mutationScope = new Merconiq.Core.Models.StockMutationScope(
+                    await CurrentUserAuthorization.GetLocationCompanyIdAsync(authenticationState.User, _fromLocationId),
+                    () => CurrentUserAuthorization.CanAccessTransferAsync(
+                        authenticationState.User, _fromLocationId, _toLocationId, CompanyCapability.Post));
                 if (!await CurrentUserAuthorization.CanAccessTransferAsync(
                         authenticationState.User,
                         _fromLocationId,
@@ -109,7 +113,9 @@
                     return;
                 }
 
-                await StockService.TransferStockAsync(_itemId, _fromLocationId, _toLocationId, _quantity, _notes);
+                await StockService.TransferStockAsync(
+                    _itemId, _fromLocationId, _toLocationId, _quantity, _notes,
+                    mutationScope: mutationScope);
                 Snackbar.Add($"Transferred {_quantity} units successfully.", Severity.Success);
                 Nav.NavigateTo("/Stock/Index");
             }

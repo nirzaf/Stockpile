@@ -59,10 +59,13 @@ public sealed class StockReservationsController(
         [FromServices] IIdempotencyKeyStore idempotencyKeyStore,
         [FromServices] ITenantContext tenantContext)
     {
+        var mutationScope = new StockMutationScope(
+            await authorization.GetLocationCompanyIdAsync(User, request.LocationId),
+            () => authorization.CanAccessLocationAsync(User, request.LocationId, CompanyCapability.Post));
         if (!await authorization.CanAccessLocationAsync(User, request.LocationId, CompanyCapability.Post))
             return Forbid();
         return await RunMutationAsync(request, idempotencyKeyStore, tenantContext,
-            () => stock.CreateReservationAsync(request));
+            () => stock.CreateReservationAsync(request, mutationScope));
     }
 
     [HttpPost("reservations/release")]
@@ -77,10 +80,13 @@ public sealed class StockReservationsController(
         var reservation = await stock.GetReservationAsync(request.SourceLineReference);
         if (reservation is null)
             return NotFound(ApiResponse<object>.CreateFailure("Reservation not found."));
+        var mutationScope = new StockMutationScope(
+            await authorization.GetLocationCompanyIdAsync(User, reservation.LocationId),
+            () => authorization.CanAccessLocationAsync(User, reservation.LocationId, CompanyCapability.Post));
         if (!await authorization.CanAccessLocationAsync(User, reservation.LocationId, CompanyCapability.Post))
             return Forbid();
         return await RunMutationAsync(request, idempotencyKeyStore, tenantContext,
-            () => stock.ReleaseReservationAsync(request.SourceLineReference, request.Reason));
+            () => stock.ReleaseReservationAsync(request.SourceLineReference, request.Reason, mutationScope));
     }
 
     [HttpPost("reservations/cancel")]
@@ -95,10 +101,13 @@ public sealed class StockReservationsController(
         var reservation = await stock.GetReservationAsync(request.SourceLineReference);
         if (reservation is null)
             return NotFound(ApiResponse<object>.CreateFailure("Reservation not found."));
+        var mutationScope = new StockMutationScope(
+            await authorization.GetLocationCompanyIdAsync(User, reservation.LocationId),
+            () => authorization.CanAccessLocationAsync(User, reservation.LocationId, CompanyCapability.Post));
         if (!await authorization.CanAccessLocationAsync(User, reservation.LocationId, CompanyCapability.Post))
             return Forbid();
         return await RunMutationAsync(request, idempotencyKeyStore, tenantContext,
-            () => stock.CancelReservationAsync(request.SourceLineReference, request.Reason));
+            () => stock.CancelReservationAsync(request.SourceLineReference, request.Reason, mutationScope));
     }
 
     [HttpPost("reservations/consume")]
@@ -113,10 +122,13 @@ public sealed class StockReservationsController(
         var reservation = await stock.GetReservationAsync(request.SourceLineReference);
         if (reservation is null)
             return NotFound(ApiResponse<object>.CreateFailure("Reservation not found."));
+        var mutationScope = new StockMutationScope(
+            await authorization.GetLocationCompanyIdAsync(User, reservation.LocationId),
+            () => authorization.CanAccessLocationAsync(User, reservation.LocationId, CompanyCapability.Post));
         if (!await authorization.CanAccessLocationAsync(User, reservation.LocationId, CompanyCapability.Post))
             return Forbid();
         return await RunMutationAsync(request, idempotencyKeyStore, tenantContext,
-            () => stock.ConsumeReservationAsync(request));
+            () => stock.ConsumeReservationAsync(request, mutationScope));
     }
 
     private async Task<IActionResult> RunMutationAsync<T>(
