@@ -22,11 +22,16 @@ public class StockController : ControllerBase
 {
     private readonly IMediator _mediator;
     private readonly ICurrentUserAuthorization _authorization;
+    private readonly IStockService? _stock;
 
-    public StockController(IMediator mediator, ICurrentUserAuthorization authorization)
+    public StockController(
+        IMediator mediator,
+        ICurrentUserAuthorization authorization,
+        IStockService? stock = null)
     {
         _mediator = mediator;
         _authorization = authorization;
+        _stock = stock;
     }
 
     /// <summary>Get all stock in hand</summary>
@@ -81,6 +86,32 @@ public class StockController : ControllerBase
         var transactions = await _mediator.Send(new GetStockTransactionsQuery(
             from, to, isTenantAdmin ? null : companyIds.ToArray()));
         return Ok(ApiResponse<IEnumerable<StockTransaction>>.CreateSuccess(transactions));
+    }
+
+    /// <summary>Get moving-average buckets and immutable valued movement evidence.</summary>
+    [HttpGet("valuation")]
+    [Authorize(Policy = CapabilityPolicies.View)]
+    [ProducesResponseType(typeof(IEnumerable<StockValuationView>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetValuation(
+        [FromQuery] int? itemId,
+        [FromQuery] int? locationId)
+    {
+        if (locationId.HasValue && !await _authorization.CanAccessLocationAsync(
+                User, locationId.Value, CompanyCapability.View))
+        {
+            if (await _authorization.IsTenantAdministratorAsync(User))
+                return NotFound(ApiResponse<object>.CreateFailure("Location not found."));
+
+            return Forbid();
+        }
+
+        var stock = _stock ?? throw new InvalidOperationException("Stock service is not configured.");
+        var companyIds = await _authorization.GetAccessibleCompanyIdsAsync(User, CompanyCapability.View);
+        var valuation = await stock.GetValuationAsync(
+            itemId,
+            locationId,
+            await _authorization.IsTenantAdministratorAsync(User) ? null : companyIds);
+        return Ok(ApiResponse<IEnumerable<StockValuationView>>.CreateSuccess(valuation));
     }
 
     /// <summary>Receive stock into a location</summary>

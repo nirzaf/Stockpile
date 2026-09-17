@@ -89,6 +89,7 @@ mutations. Webhook administration is restricted to `Admin` and `Manager`.
 | GET | `/api/v1/stock/in-hand` | Any API JWT | `200` |
 | GET | `/api/v1/stock/in-hand/{itemId}/{locationId}` | Any API JWT | `200` or `404` |
 | GET | `/api/v1/stock/transactions` | Any API JWT | `200` |
+| GET | `/api/v1/stock/valuation` | Any API JWT | `200` |
 | POST | `/api/v1/stock/receive` | `Admin`, `Manager`, or `Staff` | `204` |
 | POST | `/api/v1/stock/transfer` | `Admin`, `Manager`, or `Staff` | `204` |
 | POST | `/api/v1/stock/sell` | `Admin`, `Manager`, or `Staff` | `204` |
@@ -227,6 +228,13 @@ Content-Type: application/json
 the receipt contributes to the tenant/item/location moving-average valuation and
 must be non-negative with at most six decimal places. Costed receipts are
 unbatched in this release; omitted `unitCost` preserves quantity-only behavior.
+
+`GET /api/v1/stock/valuation` returns each current tenant/item/location moving-average
+bucket and its ordered immutable valuation entries from one repeatable-read
+snapshot, so each returned balance reconciles with its ledger at the time of the
+read. Optional `itemId` and
+`locationId` filters are applied within the caller's authorized company scope;
+the endpoint is read-only and never recalculates or mutates posted costs.
 
 The state transitions are:
 
