@@ -26,7 +26,8 @@ public class UpdateItemCommandHandler : IRequestHandler<UpdateItemCommand>
         item.Description = request.Description;
         item.Rate = request.Rate;
         item.SupplierId = request.SupplierId;
-        if (request.Barcode is not null) item.Barcode = request.Barcode;
+        if (request.ClearBarcode) item.Barcode = null;
+        else if (request.Barcode is not null) item.Barcode = request.Barcode;
         if (request.BaseUnitId.HasValue) item.BaseUnitId = request.BaseUnitId;
         if (request.PurchaseUnitId.HasValue) item.PurchaseUnitId = request.PurchaseUnitId;
         if (request.SalesUnitId.HasValue) item.SalesUnitId = request.SalesUnitId;

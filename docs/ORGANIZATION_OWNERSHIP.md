@@ -47,6 +47,8 @@ conversion factors. The server validates those references in the current tenant,
 rejects deleted units, rejects inconsistent factors and precision, and rejects
 fractional quantities for whole-unit-only items. Barcodes are trimmed, limited to
 100 characters and unique within a tenant.
+The item update API preserves an existing barcode when the field is omitted;
+send `clearBarcode: true` to remove it explicitly.
 
 The existing receive, transfer, sale and reservation contracts remain positive
 integer quantities. The tested carton-to-base conversion helper is available for

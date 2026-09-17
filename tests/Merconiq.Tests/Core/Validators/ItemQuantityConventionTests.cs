@@ -59,6 +59,14 @@ public sealed class ItemQuantityConventionTests
     }
 
     [Fact]
+    public void UpdateItem_rejects_combining_barcode_replacement_with_clear_operation()
+    {
+        new UpdateItemCommandValidator().TestValidate(
+            new UpdateItemCommand(1, "Widget", 10m, null, Barcode: "012345", ClearBarcode: true))
+            .ShouldHaveValidationErrorFor(command => command.ClearBarcode);
+    }
+
+    [Fact]
     public void Purchase_quantity_converts_to_base_without_rounding()
     {
         var item = new Item

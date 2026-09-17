@@ -29,6 +29,9 @@ public sealed class UpdateItemCommandValidator : AbstractValidator<UpdateItemCom
         RuleFor(command => command.Id).GreaterThan(0);
         RuleFor(command => command.Description).MaximumLength(500);
         RuleFor(command => command.Barcode).MaximumLength(100);
+        RuleFor(command => command.ClearBarcode).Equal(false)
+            .When(command => command.Barcode is not null)
+            .WithMessage("ClearBarcode cannot be combined with Barcode.");
         RuleFor(command => command.Rate).GreaterThan(0);
         RuleFor(command => command.SupplierId).GreaterThan(0).When(command => command.SupplierId.HasValue);
         RuleFor(command => command.BaseUnitId).GreaterThan(0).When(command => command.BaseUnitId.HasValue);
