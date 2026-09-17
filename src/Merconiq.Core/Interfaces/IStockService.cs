@@ -33,6 +33,9 @@ public interface IStockService
         DateTime? to,
         IReadOnlyCollection<int> companyIds);
 
+    /// <summary>Gets one tenant-scoped stock movement by identifier.</summary>
+    Task<StockTransaction?> GetTransactionAsync(int transactionId);
+
     /// <summary>Receives stock into a location, increasing on-hand quantity.</summary>
     /// <param name="itemId">The item identifier.</param>
     /// <param name="locationId">The destination location identifier.</param>
@@ -98,6 +101,9 @@ public interface IStockService
         string? reservationSourceLineReference = null,
         StockMutationScope? mutationScope = null,
         string? expiryExceptionReason = null);
+
+    /// <summary>Posts an atomic, source-linked return against an original sale.</summary>
+    Task ReturnStockAsync(CreateStockReturnRequest request, StockMutationScope? mutationScope = null);
 
     /// <summary>Creates a lot-specific reservation for one source document line.</summary>
     Task CreateReservationAsync(CreateStockReservationRequest request, StockMutationScope? mutationScope = null);

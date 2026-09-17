@@ -1,5 +1,7 @@
 using FluentAssertions;
+using System.Text.Json;
 using Merconiq.Core.Entities;
+using Merconiq.Core.Interfaces;
 using Merconiq.Core.Models;
 using Merconiq.Infrastructure.Data;
 using Merconiq.Infrastructure.Repositories;
@@ -8,6 +10,7 @@ using Merconiq.Tests.Infrastructure;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
+using Moq;
 using Npgsql;
 
 namespace Merconiq.Tests.Integration;
@@ -16,6 +19,101 @@ namespace Merconiq.Tests.Integration;
 [Trait("Category", "PostgreSQL")]
 public sealed class MasterDataImportPostgreSqlIntegrationTests(PostgreSqlIntegrationFixture fixture)
 {
+    [PostgreSqlFact]
+    public async Task Unit_import_batch_summary_is_redacted_and_deduplicated_when_callback_replays_after_commit()
+    {
+        fixture.EnsureEnabled();
+        var tenantId = $"unit-import-batch-{Guid.NewGuid():N}";
+        await using var context = fixture.CreateContext(tenantId);
+        const string csv = "external_id,code,name,decimal_places,whole_unit_only\nunit-1,EA,Each,0,false";
+        var realUnitOfWork = new UnitOfWork(context);
+        var replayedCallbacks = 0;
+        var unitOfWork = new Mock<IUnitOfWork>();
+        unitOfWork
+            .Setup(work => work.AcquireTenantOperationLockAsync(
+                It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns((string operation, CancellationToken cancellationToken) =>
+                realUnitOfWork.AcquireTenantOperationLockAsync(operation, cancellationToken));
+        unitOfWork
+            .Setup(work => work.ExecuteInTransactionAsync(
+                It.IsAny<Func<Task>>(), It.IsAny<CancellationToken>(), It.IsAny<Func<Task<bool>>?>()))
+            .Returns(async (Func<Task> operation, CancellationToken cancellationToken, Func<Task<bool>>? verifySucceeded) =>
+            {
+                await realUnitOfWork.ExecuteInTransactionAsync(async () =>
+                {
+                    replayedCallbacks++;
+                    await operation();
+                }, cancellationToken, verifySucceeded);
+                context.ChangeTracker.Clear();
+                await realUnitOfWork.ExecuteInTransactionAsync(async () =>
+                {
+                    replayedCallbacks++;
+                    await operation();
+                }, cancellationToken, verifySucceeded);
+            });
+        var service = CreateService(context, unitOfWork.Object);
+
+        var dryRun = await service.ImportUnitsAsync(new ImportUnitsRequest(csv, DryRun: true));
+
+        dryRun.Created.Should().Be(1);
+        (await context.AuditLogs.CountAsync(log => log.EntityName == "MasterDataImportBatch")).Should().Be(0);
+        (await context.UnitsOfMeasure.CountAsync()).Should().Be(0);
+
+        var applied = await service.ImportUnitsAsync(new ImportUnitsRequest(csv, DryRun: false));
+
+        (applied.Created + applied.Unchanged).Should().Be(1);
+        applied.Rejected.Should().Be(0);
+        replayedCallbacks.Should().Be(2,
+            "the same import callback must run again after the first transaction has committed");
+
+        await using var verification = fixture.CreateContext(tenantId);
+        (await verification.UnitsOfMeasure.CountAsync()).Should().Be(1);
+        var batchAudits = await verification.AuditLogs.AsNoTracking()
+            .Where(log => log.EntityName == "MasterDataImportBatch")
+            .ToListAsync();
+        batchAudits.Should().ContainSingle();
+        var audit = batchAudits[0];
+        audit.TenantId.Should().Be(tenantId);
+        audit.Action.Should().Be("ImportBatchCompleted");
+        using var keyValues = JsonDocument.Parse(audit.KeyValues!);
+        keyValues.RootElement.GetProperty("ImportType").GetString().Should().Be(nameof(UnitOfMeasure));
+        keyValues.RootElement.GetProperty("BatchId").GetGuid().Should().NotBeEmpty();
+        using var summary = JsonDocument.Parse(audit.NewValues!);
+        summary.RootElement.GetProperty("Outcome").GetString().Should().Be("Created");
+        summary.RootElement.GetProperty("RowsCreated").GetInt32().Should().Be(1);
+        summary.RootElement.GetProperty("RowsRejected").GetInt32().Should().Be(0);
+        summary.RootElement.GetProperty("ChangesApplied").GetBoolean().Should().BeTrue();
+        audit.KeyValues.Should().NotContain("unit-1");
+        audit.NewValues.Should().NotContain("unit-1").And.NotContain("Each");
+    }
+
+    [PostgreSqlFact]
+    public async Task Mixed_unit_import_audits_only_rows_actually_persisted()
+    {
+        fixture.EnsureEnabled();
+        var tenantId = $"unit-import-mixed-{Guid.NewGuid():N}";
+        await using var context = fixture.CreateContext(tenantId);
+        const string csv = "external_id,code,name,decimal_places,whole_unit_only\n"
+            + "unit-1,EA,Each,0,false\n"
+            + "unit-2,BOX,Box,99,false";
+
+        var result = await CreateService(context).ImportUnitsAsync(new ImportUnitsRequest(csv, DryRun: false));
+
+        result.Created.Should().Be(1);
+        result.Rejected.Should().Be(1);
+        (await context.UnitsOfMeasure.CountAsync()).Should().Be(0);
+        var batchAudit = await context.AuditLogs.AsNoTracking()
+            .SingleAsync(log => log.EntityName == "MasterDataImportBatch");
+        using var summary = JsonDocument.Parse(batchAudit.NewValues!);
+        summary.RootElement.GetProperty("Outcome").GetString().Should().Be("Rejected");
+        summary.RootElement.GetProperty("RowsCreated").GetInt32().Should().Be(0);
+        summary.RootElement.GetProperty("RowsEligibleForCreation").GetInt32().Should().Be(1);
+        summary.RootElement.GetProperty("RowsRejected").GetInt32().Should().Be(1);
+        summary.RootElement.GetProperty("ChangesApplied").GetBoolean().Should().BeFalse();
+        batchAudit.NewValues.Should().NotContain("unit-1").And.NotContain("Each");
+        batchAudit.KeyValues.Should().NotContain("unit-2");
+    }
+
     [PostgreSqlFact]
     public async Task Controlled_onboarding_is_idempotent_and_atomic_across_owned_masters()
     {
@@ -404,7 +502,7 @@ public sealed class MasterDataImportPostgreSqlIntegrationTests(PostgreSqlIntegra
         throw new TimeoutException("The downgrade did not wait for the concurrent unit update lock.");
     }
 
-    private static MasterDataImportService CreateService(InventoryDbContext context) => new(
+    private static MasterDataImportService CreateService(InventoryDbContext context, IUnitOfWork? unitOfWork = null) => new(
         new Repository<Merconiq.Core.Entities.UnitOfMeasure>(context),
         new Repository<Item>(context),
         new Repository<Company>(context),
@@ -412,5 +510,5 @@ public sealed class MasterDataImportPostgreSqlIntegrationTests(PostgreSqlIntegra
         new Repository<Location>(context),
         new Repository<Supplier>(context),
         context,
-        new UnitOfWork(context));
+        unitOfWork ?? new UnitOfWork(context));
 }
