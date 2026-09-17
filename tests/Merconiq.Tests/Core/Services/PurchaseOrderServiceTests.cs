@@ -425,6 +425,40 @@ public class PurchaseOrderServiceTests
     }
 
     [Fact]
+    public async Task UpdateStatusAsync_WhenApprovedOrderIsMarkedReceivedWithoutReceipt_RejectsWithoutChangingOrderOrDocumentLifecycle()
+    {
+        var po = _fixture.Build<PurchaseOrder>()
+            .Without(order => order.DocumentIdentity)
+            .With(order => order.Status, PurchaseOrderStatus.Approved)
+            .With(order => order.PONumber, "PO-RECEIPT-TEST")
+            .Create();
+        var documentIdentity = DocumentIdentity.Create(
+            po.DocumentId,
+            "test-tenant",
+            companyId: null,
+            documentType: "PurchaseOrder",
+            humanNumber: po.PONumber,
+            period: 2026,
+            status: DocumentLifecycleStatus.Active,
+            requestScope: "unit-test");
+        po.DocumentIdentity = documentIdentity;
+        _poRepoMock.Setup(repository => repository.GetByIdAsync(po.Id)).ReturnsAsync(po);
+
+        var act = () => _sut.UpdateStatusAsync(po.Id, nameof(PurchaseOrderStatus.Received));
+
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("Invalid purchase order status transition: Approved -> Received");
+        po.Status.Should().Be(PurchaseOrderStatus.Approved);
+        documentIdentity.Status.Should().Be(DocumentLifecycleStatus.Active);
+        _documentIdentityMock.Verify(service => service.TransitionLifecycleAsync(
+            It.IsAny<DocumentIdentityId>(),
+            It.IsAny<DocumentLifecycleStatus>(),
+            It.IsAny<CancellationToken>()), Times.Never);
+        _uowMock.Verify(unitOfWork => unitOfWork.SaveChangesAsync(default), Times.Never);
+        _webhookDispatcherMock.Invocations.Should().BeEmpty();
+    }
+
+    [Fact]
     public async Task UpdateStatusAsync_WhenCommercialVersionChangesAfterApprovalStarts_RejectsStaleRequest()
     {
         var po = _fixture.Build<PurchaseOrder>()
