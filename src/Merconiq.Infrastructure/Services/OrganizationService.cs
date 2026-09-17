@@ -170,6 +170,7 @@ public sealed class OrganizationService(
         EnsureTenantResolved();
         await ExecuteOrganizationWriteAsync(async () =>
         {
+            await unitOfWork.AcquireLocationLocksAsync([locationId]);
             var location = await locations.GetByIdAsync(locationId)
                 ?? throw new KeyNotFoundException("Location not found.");
             if (location.IsDeleted ||

@@ -1,4 +1,5 @@
 using System.Data;
+using System.Globalization;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
@@ -215,6 +216,35 @@ public class UnitOfWork : IUnitOfWork
             },
             verifySucceeded: null,
             cancellationToken: cancellationToken);
+    }
+
+    public async Task AcquireLocationLocksAsync(
+        IReadOnlyCollection<int> locationIds,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(locationIds);
+        if (locationIds.Count == 0 ||
+            _context.Database.ProviderName != "Npgsql.EntityFrameworkCore.PostgreSQL")
+        {
+            return;
+        }
+
+        if (!HasActiveTransaction)
+            throw new InvalidOperationException("Location locks must be acquired inside the stock operation transaction.");
+        if (string.IsNullOrWhiteSpace(_context.CurrentTenantId))
+            throw new InvalidOperationException("A resolved tenant is required to acquire location locks.");
+
+        foreach (var locationId in locationIds.Distinct().Order())
+        {
+            if (locationId <= 0)
+                throw new ArgumentOutOfRangeException(nameof(locationIds), "Location IDs must be positive.");
+
+            var lockKey = string.Create(CultureInfo.InvariantCulture,
+                $"stock-location:{_context.CurrentTenantId}:{locationId}");
+            await _context.Database.ExecuteSqlInterpolatedAsync(
+                $"SELECT pg_advisory_xact_lock(hashtextextended({lockKey}, 0))",
+                cancellationToken);
+        }
     }
 
     public void ClearTracker()

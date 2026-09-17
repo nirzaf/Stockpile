@@ -83,6 +83,10 @@ public sealed class OpeningStockImportService(
                     return;
                 }
 
+                await unitOfWork.AcquireLocationLocksAsync(
+                    validation.ValidRows.Select(row => row.LocationId).Distinct().Order().ToArray(),
+                    cancellationToken);
+
                 var import = new OpeningStockImport
                 {
                     ImportReference = request.ImportReference,

@@ -223,6 +223,7 @@ public class StockService : IStockService
         StockTransaction? transaction = null;
         await ExecuteWithRetryAsync(itemId, async () =>
         {
+            await _unitOfWork.AcquireLocationLocksAsync([locationId]);
             await EnsureLocationUsableAsync(locationId);
             var existing = await GetByItemAndLocationAsync(itemId, locationId, batchNumber, expiryDate);
             if (existing != null)
@@ -280,6 +281,7 @@ public class StockService : IStockService
         StockTransaction? transaction = null;
         await ExecuteWithRetryAsync(itemId, async () =>
         {
+            await _unitOfWork.AcquireLocationLocksAsync([fromLocationId, toLocationId]);
             var sourceLocation = await EnsureLocationUsableAsync(fromLocationId);
             var destinationLocation = await EnsureLocationUsableAsync(toLocationId);
             await EnsureSameCompanyTransferAsync(sourceLocation, destinationLocation);
@@ -350,6 +352,7 @@ public class StockService : IStockService
         StockTransaction? transaction = null;
         await ExecuteWithRetryAsync(itemId, async () =>
         {
+            await _unitOfWork.AcquireLocationLocksAsync([locationId]);
             await EnsureLocationUsableAsync(locationId);
             await ReleaseExpiredReservationsAsync(itemId, locationId);
             var stock = await GetByItemAndLocationAsync(itemId, locationId, batchNumber, expiryDate);
@@ -439,6 +442,7 @@ public class StockService : IStockService
 
         await ExecuteWithRetryAsync(request.ItemId, async () =>
         {
+            await _unitOfWork.AcquireLocationLocksAsync([request.LocationId]);
             await EnsureLocationUsableAsync(request.LocationId);
             var existing = await FindReservationAsync(sourceLineReference);
             if (existing is not null)

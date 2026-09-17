@@ -24,14 +24,16 @@ public class UnitOfWorkContractTests
             nameof(IUnitOfWork.BeginTransactionAsync),
             nameof(IUnitOfWork.CommitTransactionAsync),
             nameof(IUnitOfWork.RollbackTransactionAsync),
-            nameof(IUnitOfWork.ExecuteInReadSnapshotAsync));
+            nameof(IUnitOfWork.ExecuteInReadSnapshotAsync),
+            nameof(IUnitOfWork.AcquireLocationLocksAsync));
 
         foreach (var methodName in new[]
         {
             nameof(IUnitOfWork.BeginTransactionAsync),
             nameof(IUnitOfWork.CommitTransactionAsync),
             nameof(IUnitOfWork.RollbackTransactionAsync),
-            nameof(IUnitOfWork.ExecuteInReadSnapshotAsync)
+            nameof(IUnitOfWork.ExecuteInReadSnapshotAsync),
+            nameof(IUnitOfWork.AcquireLocationLocksAsync)
         })
         {
             typeof(UnitOfWork).GetMethod(methodName).Should().NotBeNull();

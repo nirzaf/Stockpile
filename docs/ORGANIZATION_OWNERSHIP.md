@@ -35,7 +35,8 @@ An owner-approved mapping may assign a branch to an existing unmapped location
 without moving or rewriting its stock history. Once a location already has a
 branch and posted stock activity, its branch ownership cannot be changed;
 historical movements remain tied to the company context under which they were
-posted.
+posted. Branch assignment and stock posting share tenant-scoped, per-location
+transaction locks, so the history check cannot race a movement commit.
 
 Stock receive, sell, and transfer operations resolve every location through
 the current tenant scope. Transfers between two branch-owned locations are

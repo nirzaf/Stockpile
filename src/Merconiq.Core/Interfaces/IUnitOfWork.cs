@@ -42,6 +42,14 @@ public interface IUnitOfWork
         Func<Task> operation,
         CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// Acquires transaction-scoped locks for the supplied tenant locations in ascending order.
+    /// Calls must be made inside the transaction that reads or writes stock for those locations.
+    /// </summary>
+    Task AcquireLocationLocksAsync(
+        IReadOnlyCollection<int> locationIds,
+        CancellationToken cancellationToken = default);
+
     /// <summary>Clears the EF Core change tracker. Use after a failed <c>SaveChangesAsync</c> to retry.</summary>
     void ClearTracker();
 }
