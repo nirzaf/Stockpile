@@ -2,7 +2,10 @@ using System.Net;
 using System.Text.Json;
 using FluentAssertions;
 using Merconiq.Core.Entities;
+using Merconiq.Core.Options;
 using Merconiq.Infrastructure.Data;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.TestHost;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
@@ -137,6 +140,38 @@ public class AiEndpointTests : IClassFixture<CustomWebApplicationFactory>
         var response = await client.GetAsync("/api/v1/forecast/1");
 
         response.StatusCode.Should().BeOneOf(HttpStatusCode.Unauthorized, HttpStatusCode.Redirect);
+    }
+
+    [Fact]
+    public async Task ForecastEndpoints_WhenDisabled_Return503WithUnavailableMessage()
+    {
+        using var factory = new ForecastingDisabledWebApplicationFactory();
+        var client = factory.CreateAuthenticatedClient();
+
+        foreach (var path in new[] { "/api/v1/forecast/1?horizon=5", "/api/v1/forecast?horizon=5" })
+        {
+            using var response = await client.GetAsync(path);
+
+            response.StatusCode.Should().Be(HttpStatusCode.ServiceUnavailable);
+            using var payload = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            payload.RootElement.GetProperty("success").GetBoolean().Should().BeFalse();
+            payload.RootElement.GetProperty("errorMessage").GetString()
+                .Should().Contain("forecasting").And.Contain("unavailable");
+        }
+
+        using var unauthenticatedClient = factory.CreateUnauthenticatedClient();
+        using var unauthorizedResponse = await unauthenticatedClient.GetAsync("/api/v1/forecast/1");
+        unauthorizedResponse.StatusCode.Should().BeOneOf(HttpStatusCode.Unauthorized, HttpStatusCode.Redirect);
+    }
+}
+
+internal sealed class ForecastingDisabledWebApplicationFactory : CustomWebApplicationFactory
+{
+    protected override void ConfigureWebHost(IWebHostBuilder builder)
+    {
+        base.ConfigureWebHost(builder);
+        builder.ConfigureTestServices(services =>
+            services.PostConfigure<ForecastingOptions>(options => options.Enabled = false));
     }
 }
 

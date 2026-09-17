@@ -35,6 +35,12 @@ public class DemandForecastServiceTests
     }
 
     [Fact]
+    public void ForecastingOptions_DefaultsToEnabled()
+    {
+        new ForecastingOptions().Enabled.Should().BeTrue();
+    }
+
+    [Fact]
     public async Task ForecastDemandAsync_InsufficientData_ReturnsEmptyForecast()
     {
         // Arrange — only 3 daily data points (need 5 minimum)

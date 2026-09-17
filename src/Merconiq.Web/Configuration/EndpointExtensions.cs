@@ -4,6 +4,7 @@ using Merconiq.Core.Features.Items.Queries;
 using Merconiq.Core.Features.Stock.Queries;
 using Merconiq.Core.Models;
 using Merconiq.Core.Interfaces;
+using Merconiq.Core.Options;
 using Merconiq.Infrastructure.Data;
 using Merconiq.Web.Services;
 using Merconiq.Web.Security;
@@ -204,6 +205,7 @@ public static class EndpointExtensions
             IMemoryCache cache,
             ITenantContext tenantContext,
             ICurrentUserAuthorization authorization,
+            IOptions<ForecastingOptions> forecastingOptions,
             HttpContext httpContext) =>
         {
             var tenantAdministrator = await authorization.IsTenantAdministratorAsync(httpContext.User);
@@ -216,6 +218,11 @@ public static class EndpointExtensions
                 {
                     return Results.Forbid();
                 }
+            }
+
+            if (!forecastingOptions.Value.Enabled)
+            {
+                return ForecastingUnavailable();
             }
 
             var horizonDays = horizon ?? 30;
@@ -239,6 +246,7 @@ public static class EndpointExtensions
             IMemoryCache cache,
             ITenantContext tenantContext,
             ICurrentUserAuthorization authorization,
+            IOptions<ForecastingOptions> forecastingOptions,
             HttpContext httpContext) =>
         {
             var tenantAdministrator = await authorization.IsTenantAdministratorAsync(httpContext.User);
@@ -251,6 +259,11 @@ public static class EndpointExtensions
                 {
                     return Results.Forbid();
                 }
+            }
+
+            if (!forecastingOptions.Value.Enabled)
+            {
+                return ForecastingUnavailable();
             }
 
             var horizonDays = horizon ?? 30;
@@ -321,4 +334,9 @@ public static class EndpointExtensions
 
     private static WebhookSubscriptionResponse ToWebhookResponse(WebhookSubscription subscription) =>
         new(subscription.Id, subscription.Url, subscription.EventType, subscription.IsActive);
+
+    private static IResult ForecastingUnavailable() => Results.Json(
+        ApiResponse<object>.CreateFailure(
+            "Demand forecasting is currently unavailable because it is disabled by server configuration."),
+        statusCode: StatusCodes.Status503ServiceUnavailable);
 }

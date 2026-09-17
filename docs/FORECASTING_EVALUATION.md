@@ -6,6 +6,14 @@ quantity across the requested horizon. ML.NET SSA is an explicit `ssa` opt-in an
 must not be described as the default or as validated business-impact evidence.
 See [Forecasting runtime](FORECASTING_RUNTIME.md) for deployment prerequisites.
 
+Forecasting is enabled by default and can be disabled with
+`Forecasting:Enabled=false` (or `Forecasting__Enabled=false` in the environment).
+While disabled, forecast API calls report service unavailability and the
+background scheduler performs no tenant forecast work; it does not return a
+successful empty forecast or fall back to a different model. Forecast inputs are
+processed locally against the configured application database, with no cloud AI
+provider required or called.
+
 ## Reproducible chronological fixture
 
 The test
