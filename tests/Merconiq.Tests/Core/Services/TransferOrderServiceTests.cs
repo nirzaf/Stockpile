@@ -10,6 +10,7 @@ using Merconiq.Tests.Infrastructure;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
+using System.Linq.Expressions;
 
 namespace Merconiq.Tests.Core.Services;
 
@@ -133,5 +134,52 @@ public sealed class TransferOrderServiceTests
         unitOfWork.Verify(uow => uow.ExecuteInTransactionAsync(
             It.IsAny<Func<Task>>(), It.IsAny<CancellationToken>(), It.IsAny<Func<Task<bool>>?>()),
             Times.Never);
+    }
+
+    [Fact]
+    public async Task Amend_acquires_organization_and_location_locks_before_reference_validation()
+    {
+        var unitOfWork = new Mock<IUnitOfWork>();
+        unitOfWork.Setup(uow => uow.ExecuteInTransactionAsync(
+                It.IsAny<Func<Task>>(), It.IsAny<CancellationToken>(), It.IsAny<Func<Task<bool>>?>()))
+            .Returns((Func<Func<Task>, CancellationToken, Func<Task<bool>>?, Task>)
+                ((operation, _, _) => operation()));
+        unitOfWork.Setup(uow => uow.AcquireTenantOperationLockAsync("organization-state", It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        unitOfWork.Setup(uow => uow.AcquireLocationLocksAsync(
+                It.Is<IReadOnlyCollection<int>>(ids => ids.SequenceEqual(new[] { 10, 20 })),
+                It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        var companyRepository = new Mock<IRepository<Company>>();
+        companyRepository.Setup(repository => repository.FindAsync(It.IsAny<Expression<Func<Company, bool>>>()))
+            .ReturnsAsync(Array.Empty<Company>());
+        var service = new TransferOrderService(
+            new Mock<IRepository<TransferOrder>>().Object,
+            new Mock<IRepository<TransferOrderLine>>().Object,
+            new Mock<IRepository<DocumentIdentity>>().Object,
+            new Mock<IRepository<DocumentLineIdentity>>().Object,
+            companyRepository.Object,
+            new Mock<IRepository<Branch>>().Object,
+            new Mock<IRepository<Location>>().Object,
+            new Mock<IRepository<Item>>().Object,
+            unitOfWork.Object,
+            new Mock<IDocumentIdentityService>().Object,
+            new Mock<IStockService>().Object,
+            new TestTenantContext("transfer-order-test"),
+            new Mock<IWebhookDispatcher>().Object,
+            NullLogger<TransferOrderService>.Instance);
+
+        var act = () => service.AmendAsync(
+            1,
+            new CreateTransferOrderRequest(1, 10, 20, [new TransferOrderLineRequest(1, 1, LineId: 1)]),
+            new StockMutationScope(1));
+
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("An active company in the current tenant is required.");
+        unitOfWork.Verify(uow => uow.AcquireTenantOperationLockAsync(
+            "organization-state", It.IsAny<CancellationToken>()), Times.Once);
+        unitOfWork.Verify(uow => uow.AcquireLocationLocksAsync(
+            It.Is<IReadOnlyCollection<int>>(ids => ids.SequenceEqual(new[] { 10, 20 })),
+            It.IsAny<CancellationToken>()), Times.Once);
     }
 }
