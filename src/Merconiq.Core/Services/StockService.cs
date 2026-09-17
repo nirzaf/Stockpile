@@ -170,7 +170,8 @@ public class StockService : IStockService
     private async Task ExecuteWithRetryAsync(
         int itemId,
         Func<Task> action,
-        Func<Task<bool>> verifySucceeded)
+        Func<Task<bool>> verifySucceeded,
+        bool checkLowStock = true)
     {
         // PostgreSQL surfaces an optimistic-concurrency conflict as a DbUpdateConcurrencyException
         // (driven by the StockInHand.xmin token). Three retries matches the default
@@ -192,7 +193,7 @@ public class StockService : IStockService
                     if (item is not null && !item.IsActive)
                         throw new InvalidOperationException("Inactive items cannot be used in stock operations.");
                     await action();
-                    if (item is not null)
+                    if (item is not null && checkLowStock)
                         await CheckLowStockAsync(item);
                 }, CancellationToken.None, verifySucceeded);
                 break;
@@ -623,6 +624,128 @@ public class StockService : IStockService
 
         _logger.LogInformation("Returned {Qty} of item {ItemId} against sale {TransactionId}",
             request.Quantity, initialOriginal.ItemId, initialOriginal.Id);
+    }
+
+    /// <inheritdoc />
+    public Task QuarantineStockAsync(
+        ChangeStockQuarantineRequest request,
+        StockMutationScope? mutationScope = null) =>
+        ChangeStockQuarantineAsync(request, TransactionType.Quarantine, mutationScope);
+
+    /// <inheritdoc />
+    public Task ReleaseQuarantinedStockAsync(
+        ChangeStockQuarantineRequest request,
+        StockMutationScope? mutationScope = null) =>
+        ChangeStockQuarantineAsync(request, TransactionType.QuarantineRelease, mutationScope);
+
+    private async Task ChangeStockQuarantineAsync(
+        ChangeStockQuarantineRequest request,
+        TransactionType transactionType,
+        StockMutationScope? mutationScope)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        if (request.ItemId <= 0)
+            throw new ArgumentOutOfRangeException(nameof(request.ItemId));
+        if (request.LocationId <= 0)
+            throw new ArgumentOutOfRangeException(nameof(request.LocationId));
+        if (request.Quantity <= 0)
+            throw new ArgumentOutOfRangeException(nameof(request.Quantity), "Quantity must be positive.");
+
+        EnsureSourceLineReference(request.SourceLineReference);
+        EnsureReservationFields(request.BatchNumber, request.Reason);
+        if (string.IsNullOrWhiteSpace(request.Reason))
+            throw new ArgumentException("A quarantine reason is required.", nameof(request));
+
+        var sourceLineReference = request.SourceLineReference.Trim();
+        var reason = request.Reason.Trim();
+        var expiryDate = StockLotExpiryDate.Normalize(request.ExpiryDate);
+        StockTransaction? transaction = null;
+
+        await ExecuteWithRetryAsync(request.ItemId, async () =>
+        {
+            await _unitOfWork.AcquireLocationLocksAsync([request.LocationId]);
+            var location = await EnsureLocationUsableAsync(request.LocationId);
+            await EnsureAuthorizedCompanyScopeAsync(location, mutationScope);
+
+            if (transactionType == TransactionType.QuarantineRelease &&
+                (mutationScope?.ReauthorizeQuarantinedStockOverride is not { } reauthorizeOverride ||
+                 !await reauthorizeOverride()))
+            {
+                throw new UnauthorizedAccessException(
+                    "An explicit company-scoped quarantined-stock override capability is required.");
+            }
+
+            var priorTransaction = (await _txRepo.FindAsync(candidate =>
+                candidate.SourceLineReference == sourceLineReference)).FirstOrDefault();
+            if (priorTransaction is not null)
+            {
+                var sameLot = priorTransaction.BatchNumber == request.BatchNumber &&
+                    StockLotExpiryDate.Normalize(priorTransaction.ExpiryDate) == expiryDate;
+                if (priorTransaction.TransactionType == transactionType &&
+                    priorTransaction.ItemId == request.ItemId &&
+                    priorTransaction.FromLocationId == request.LocationId &&
+                    priorTransaction.Quantity == request.Quantity &&
+                    priorTransaction.QuarantineReason == reason &&
+                    sameLot)
+                {
+                    transaction = priorTransaction;
+                    return;
+                }
+
+                throw new StockAvailabilityConflictException(
+                    "The source line already identifies a different stock quarantine operation.");
+            }
+
+            var stock = await GetStockForRequestedLotAsync(
+                request.ItemId, request.LocationId, request.BatchNumber, expiryDate)
+                ?? throw new StockAvailabilityConflictException(
+                    "No stock row matches the requested quarantine lot.");
+
+            if (transactionType == TransactionType.Quarantine)
+            {
+                EnsureAvailable(stock, request.Quantity, "quarantine");
+                stock.QuarantinedQuantity = checked(stock.QuarantinedQuantity + request.Quantity);
+            }
+            else
+            {
+                if (stock.QuarantinedQuantity < request.Quantity)
+                    throw new StockAvailabilityConflictException(
+                        "Insufficient quarantined stock is available for release.");
+
+                stock.QuarantinedQuantity -= request.Quantity;
+            }
+
+            await _stockRepo.UpdateAsync(stock);
+            transaction = new StockTransaction
+            {
+                ItemId = request.ItemId,
+                FromLocationId = request.LocationId,
+                Quantity = request.Quantity,
+                TransactionType = transactionType,
+                TransactionDate = DateTime.UtcNow,
+                BatchNumber = stock.BatchNumber,
+                ExpiryDate = stock.ExpiryDate,
+                SourceLineReference = sourceLineReference,
+                QuarantineReason = reason
+            };
+            await _txRepo.AddAsync(transaction);
+
+            var eventType = transactionType == TransactionType.Quarantine
+                ? "Stock.Quarantined"
+                : "Stock.QuarantineReleased";
+            await _webhookDispatcher.EnqueueAsync(WebhookEventFactory.Create(
+                _tenantContext,
+                eventType,
+                new StockQuarantineWebhookPayload(
+                    request.ItemId,
+                    request.LocationId,
+                    request.Quantity,
+                    sourceLineReference,
+                    stock.BatchNumber,
+                    stock.ExpiryDate,
+                    reason)));
+            await _unitOfWork.SaveChangesAsync();
+        }, () => VerifyTransactionCommitAsync(transaction), checkLowStock: false);
     }
 
     /// <inheritdoc />

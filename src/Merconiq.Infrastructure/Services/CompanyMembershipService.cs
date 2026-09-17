@@ -15,7 +15,7 @@ public sealed class CompanyMembershipService(
     private const CompanyCapability AllCapabilities =
         CompanyCapability.View | CompanyCapability.Edit | CompanyCapability.Approve |
         CompanyCapability.Post | CompanyCapability.Reverse | CompanyCapability.Administer |
-        CompanyCapability.OverrideExpiredStock;
+        CompanyCapability.OverrideExpiredStock | CompanyCapability.OverrideQuarantinedStock;
 
     public async Task<IReadOnlyList<CompanyMembership>> GetCompanyMembershipsAsync(int companyId)
     {

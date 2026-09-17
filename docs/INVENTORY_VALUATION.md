@@ -62,6 +62,24 @@ and included in the normal audit log. The same rule applies to
 reservation creation, reservation consumption, sales, and transfers. It does
 not add multi-lot allocation or automatically quarantine expired stock.
 
+## Quarantined stock
+
+Quarantined quantity remains part of on-hand stock but is excluded from
+available-to-promise quantity and cannot be reserved, sold, or transferred out.
+Quarantining moves only currently available units into the quarantine balance;
+it does not change physical quantity or valuation. Each quarantine and release
+requires a source-line reference and a reason recorded with the stock movement.
+Replaying the same source line is idempotent only when its request matches.
+
+Releasing quarantined units requires the normal company-scoped stock-post grant
+and an additional explicit `OverrideQuarantinedStock` company grant. This
+additional capability is never implied by the tenant Admin role; only Admin and
+Accountant roles may hold it, and a location without an owning company cannot
+use it. The service rechecks the posting and override grants after acquiring the
+location lock. Release restores availability without changing on-hand quantity
+or valuation. Multi-lot allocation and a complete quarantine-review workflow
+remain follow-up work.
+
 The current PostgreSQL schema stores expiry in `timestamp with time zone`
 columns. At service lookup and EF persistence boundaries, Merconiq preserves the
 supplied year/month/day and normalizes the value to UTC midnight. An unspecified

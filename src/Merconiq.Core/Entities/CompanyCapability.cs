@@ -11,5 +11,6 @@ public enum CompanyCapability
     Post = 1 << 3,
     Reverse = 1 << 4,
     Administer = 1 << 5,
-    OverrideExpiredStock = 1 << 6
+    OverrideExpiredStock = 1 << 6,
+    OverrideQuarantinedStock = 1 << 7
 }

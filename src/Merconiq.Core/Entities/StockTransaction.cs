@@ -51,4 +51,7 @@ public class StockTransaction : AuditableEntity
 
     /// <summary>Mandatory reason when an authorized user moves stock from an expired lot.</summary>
     public string? ExpiryExceptionReason { get; set; }
+
+    /// <summary>Reason recorded when stock is quarantined or released from quarantine.</summary>
+    public string? QuarantineReason { get; set; }
 }

@@ -186,6 +186,9 @@ public static class IdentityExtensions
             options.AddPolicy(CapabilityPolicies.OverrideExpiredStock, policy =>
                 policy.RequireRole("Admin", "Accountant")
                     .AddRequirements(new CompanyCapabilityRequirement(CompanyCapability.OverrideExpiredStock)));
+            options.AddPolicy(CapabilityPolicies.OverrideQuarantinedStock, policy =>
+                policy.RequireRole("Admin", "Accountant")
+                    .AddRequirements(new CompanyCapabilityRequirement(CompanyCapability.OverrideQuarantinedStock)));
             options.AddPolicy(CapabilityPolicies.Administer, policy =>
                 policy.RequireRole("Admin", "CompanyAdmin")
                     .AddRequirements(new CompanyCapabilityRequirement(CompanyCapability.Administer)));

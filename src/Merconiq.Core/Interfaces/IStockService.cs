@@ -105,6 +105,12 @@ public interface IStockService
     /// <summary>Posts an atomic, source-linked return against an original sale.</summary>
     Task ReturnStockAsync(CreateStockReturnRequest request, StockMutationScope? mutationScope = null);
 
+    /// <summary>Moves available stock into quarantine without changing on-hand quantity or valuation.</summary>
+    Task QuarantineStockAsync(ChangeStockQuarantineRequest request, StockMutationScope? mutationScope = null);
+
+    /// <summary>Releases quarantined stock after an explicit company-scoped override authorization.</summary>
+    Task ReleaseQuarantinedStockAsync(ChangeStockQuarantineRequest request, StockMutationScope? mutationScope = null);
+
     /// <summary>Creates a lot-specific reservation for one source document line.</summary>
     Task CreateReservationAsync(CreateStockReservationRequest request, StockMutationScope? mutationScope = null);
 

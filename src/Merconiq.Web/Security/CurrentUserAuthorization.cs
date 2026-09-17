@@ -18,7 +18,7 @@ public sealed class CurrentUserAuthorization(
     private const CompanyCapability AllCapabilities =
         CompanyCapability.View | CompanyCapability.Edit | CompanyCapability.Approve |
         CompanyCapability.Post | CompanyCapability.Reverse | CompanyCapability.Administer |
-        CompanyCapability.OverrideExpiredStock;
+        CompanyCapability.OverrideExpiredStock | CompanyCapability.OverrideQuarantinedStock;
 
     public Task<bool> IsSessionCurrentAsync(ClaimsPrincipal principal) =>
         WithCurrentUserAsync(principal, false, (_, _, _) => Task.FromResult(true));
@@ -44,7 +44,7 @@ public sealed class CurrentUserAuthorization(
                 return false;
             }
 
-            if (capability != CompanyCapability.OverrideExpiredStock &&
+            if (capability is not (CompanyCapability.OverrideExpiredStock or CompanyCapability.OverrideQuarantinedStock) &&
                 roles.Contains("Admin", StringComparer.Ordinal))
             {
                 return true;
@@ -72,7 +72,8 @@ public sealed class CurrentUserAuthorization(
                 return new HashSet<int>();
             }
 
-            if (roles.Contains("Admin", StringComparer.Ordinal))
+            if (roles.Contains("Admin", StringComparer.Ordinal) &&
+                capability != CompanyCapability.OverrideQuarantinedStock)
             {
                 return (IReadOnlySet<int>)new HashSet<int>(
                     await db.Companies.Select(company => company.Id).ToListAsync());
@@ -112,6 +113,7 @@ public sealed class CurrentUserAuthorization(
             if (!companyId.HasValue)
             {
                 return roles.Contains("Admin", StringComparer.Ordinal) &&
+                       capability != CompanyCapability.OverrideQuarantinedStock &&
                        await db.Locations.AnyAsync(location => location.Id == locationId);
             }
 
@@ -129,6 +131,20 @@ public sealed class CurrentUserAuthorization(
                 .SingleOrDefaultAsync();
             return companyId.HasValue && await CanAccessCompanyAsync(
                 db, user, roles, companyId.Value, CompanyCapability.OverrideExpiredStock,
+                requireExplicitGrant: true);
+        });
+
+    public Task<bool> CanOverrideQuarantinedStockAtLocationAsync(
+        ClaimsPrincipal principal,
+        int locationId) =>
+        WithCurrentUserAsync(principal, false, async (db, user, roles) =>
+        {
+            var companyId = await db.Locations
+                .Where(location => location.Id == locationId)
+                .Select(location => (int?)location.Branch!.CompanyId)
+                .SingleOrDefaultAsync();
+            return companyId.HasValue && await CanAccessCompanyAsync(
+                db, user, roles, companyId.Value, CompanyCapability.OverrideQuarantinedStock,
                 requireExplicitGrant: true);
         });
 
@@ -303,7 +319,8 @@ public sealed class CurrentUserAuthorization(
             return false;
         }
 
-        if (!requireExplicitGrant && roles.Contains("Admin", StringComparer.Ordinal))
+        if (!requireExplicitGrant && capability != CompanyCapability.OverrideQuarantinedStock &&
+            roles.Contains("Admin", StringComparer.Ordinal))
         {
             return true;
         }
@@ -327,7 +344,8 @@ public sealed class CurrentUserAuthorization(
             CompanyCapability.Post => roles.Any(role => role is "Admin" or "Manager" or "Staff" or "Operator" or "Accountant" or "Cashier"),
             CompanyCapability.Reverse => roles.Any(role => role is "Admin" or "Accountant"),
             CompanyCapability.OverrideExpiredStock => roles.Any(role => role is "Admin" or "Accountant"),
-        CompanyCapability.Administer => roles.Any(role => role is "Admin" or "CompanyAdmin"),
-        _ => false
-    };
+            CompanyCapability.OverrideQuarantinedStock => roles.Any(role => role is "Admin" or "Accountant"),
+            CompanyCapability.Administer => roles.Any(role => role is "Admin" or "CompanyAdmin"),
+            _ => false
+        };
 }
