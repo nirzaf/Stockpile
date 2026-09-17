@@ -36,6 +36,7 @@ public sealed class WebhookDeliveryBackgroundService(
     {
         long deliveryId;
         string tenantId;
+        Guid eventId;
         Guid leaseToken;
         string url;
         string secret;
@@ -81,6 +82,7 @@ public sealed class WebhookDeliveryBackgroundService(
 
             deliveryId = delivery.Id;
             tenantId = delivery.TenantId;
+            eventId = delivery.EventId;
             leaseToken = claimedLeaseToken;
             url = subscription.Url;
             secret = subscription.Secret ?? string.Empty;
@@ -102,7 +104,7 @@ public sealed class WebhookDeliveryBackgroundService(
                 Content = new StringContent(payload, Encoding.UTF8, "application/json")
             };
             request.Headers.Add("X-Inventory-Event", eventType);
-            request.Headers.Add("X-Inventory-Event-Id", deliveryId.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            AddEventIdentityHeader(request, eventId);
             if (!string.IsNullOrEmpty(secret))
             {
                 using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(secret));
@@ -133,6 +135,11 @@ public sealed class WebhookDeliveryBackgroundService(
         }
 
         return true;
+    }
+
+    internal static void AddEventIdentityHeader(HttpRequestMessage request, Guid eventId)
+    {
+        request.Headers.Add("X-Inventory-Event-Id", eventId.ToString("D"));
     }
 
     internal static async Task<string> ReadDiagnosticResponseAsync(

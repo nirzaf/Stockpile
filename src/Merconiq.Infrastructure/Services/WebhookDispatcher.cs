@@ -90,7 +90,7 @@ public class WebhookDispatcher : IWebhookDispatcher
             var jsonPayload = JsonSerializer.Serialize(webhookEvent);
 
             var deliveries = subscriptions.Select(subscription =>
-                SendAsync(subscription, client, webhookEvent.EventType, jsonPayload));
+                SendAsync(subscription, client, webhookEvent.EventId, webhookEvent.EventType, jsonPayload));
             await Task.WhenAll(deliveries);
         }
         catch (Exception ex)
@@ -103,6 +103,7 @@ public class WebhookDispatcher : IWebhookDispatcher
     private async Task SendAsync(
         WebhookSubscription subscription,
         HttpClient client,
+        Guid eventId,
         string eventType,
         string jsonPayload)
     {
@@ -113,6 +114,7 @@ public class WebhookDispatcher : IWebhookDispatcher
                 Content = new StringContent(jsonPayload, Encoding.UTF8, "application/json")
             };
             request.Headers.Add("X-Inventory-Event", eventType);
+            request.Headers.Add("X-Inventory-Event-Id", eventId.ToString("D"));
 
             if (!string.IsNullOrEmpty(subscription.Secret))
             {
