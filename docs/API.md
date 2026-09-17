@@ -134,13 +134,48 @@ journal and financial activation gate are outside this API slice.
 ## Outbound webhooks
 
 Webhook deliveries are at-least-once: a receiver can see the same delivery again
-after a timeout or worker restart, so it should deduplicate using the stable
-`X-Inventory-Event-Id` delivery identifier. The JSON body contains the event ID
-and tenant ID. When a subscription secret is configured, the sender adds
-`X-Inventory-Signature` as lower-case hexadecimal HMAC-SHA256 over the exact
-UTF-8 request body. Receivers should recompute the digest over the raw body and
-compare it in constant time; the subscription secret is not returned by the
-webhook administration responses.
+after a timeout or worker restart. `X-Inventory-Event-Id` is the stable event
+UUID and matches `EventId` in the JSON envelope; deduplicate business effects by
+this value. Retries and deliveries to multiple subscriptions retain that event
+identity. The sender does not expose its internal per-subscription delivery-row
+ID in request headers.
+
+When a non-empty subscription secret is configured, the sender adds
+`X-Inventory-Signature`: lower-case hexadecimal HMAC-SHA256 of the exact UTF-8
+JSON request-body bytes, using the subscription secret's UTF-8 bytes as the
+key. HTTP headers are not part of the signed value. Verify the raw request-body
+bytes before parsing or reserializing JSON, and fail closed on a missing,
+malformed, or mismatched signature. A receiver that requires authenticity must
+use a non-empty secret. The webhook administration API never returns the secret.
+
+Example receiver-side verification in .NET:
+
+```csharp
+using System;
+using System.Security.Cryptography;
+using System.Text;
+
+static bool HasValidWebhookSignature(
+    ReadOnlySpan<byte> rawBody,
+    string secret,
+    string? signatureHeader)
+{
+    if (string.IsNullOrEmpty(secret) || signatureHeader is null || signatureHeader.Length != 64)
+        return false;
+
+    Span<byte> supplied = stackalloc byte[32];
+    if (!Convert.TryFromHexString(signatureHeader, supplied, out var written) || written != supplied.Length)
+        return false;
+
+    Span<byte> expected = stackalloc byte[32];
+    HMACSHA256.HashData(Encoding.UTF8.GetBytes(secret), rawBody, expected);
+    return CryptographicOperations.FixedTimeEquals(expected, supplied);
+}
+```
+
+After signature verification, parse the envelope and use its `EventId` for
+idempotent event handling. Do not log the secret, signature, or unredacted
+payload.
 
 Webhook targets must be HTTPS on port 443 and resolve only to public addresses.
 The delivery worker retries transient failures with bounded exponential delay,
@@ -152,7 +187,7 @@ PostgreSQL workers claim due deliveries atomically with `SKIP LOCKED` and a
 two-minute lease. An expired in-progress lease can be reclaimed after a worker
 crash; a per-claim token prevents a superseded worker from persisting a stale
 completion. This protects outbox ownership, but does not make delivery exactly
-once: receivers must still deduplicate repeated HTTP requests by delivery ID.
+once: receivers must still deduplicate repeated HTTP requests by event ID.
 No remote endpoint is contacted unless an administrator explicitly configures
 the subscription.
 
