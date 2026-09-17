@@ -78,12 +78,32 @@ public class StockService : IStockService
         DateTime? expiryDate = null)
     {
         expiryDate = StockLotExpiryDate.Normalize(expiryDate);
-        var results = await _stockRepo.FindAsync(s =>
-            s.ItemId == itemId &&
-            s.LocationId == locationId &&
-            s.BatchNumber == batchNumber &&
-            s.ExpiryDate == expiryDate);
-        return results.FirstOrDefault();
+        IEnumerable<StockInHand> results;
+        if (expiryDate is DateTime expiryDayStart)
+        {
+            var expiryDayEnd = expiryDayStart.AddDays(1);
+            results = await _stockRepo.FindAsync(s =>
+                s.ItemId == itemId &&
+                s.LocationId == locationId &&
+                s.BatchNumber == batchNumber &&
+                s.ExpiryDate >= expiryDayStart &&
+                s.ExpiryDate < expiryDayEnd);
+        }
+        else
+        {
+            results = await _stockRepo.FindAsync(s =>
+                s.ItemId == itemId &&
+                s.LocationId == locationId &&
+                s.BatchNumber == batchNumber &&
+                s.ExpiryDate == null);
+        }
+
+        var matchingRows = results.Take(2).ToArray();
+        if (matchingRows.Length > 1)
+            throw new StockAvailabilityConflictException(
+                "Multiple stock rows match the same lot expiry date; reconcile inventory before changing it.");
+
+        return matchingRows.FirstOrDefault();
     }
 
     /// <inheritdoc />
@@ -409,7 +429,6 @@ public class StockService : IStockService
         request = request with { ExpiryDate = StockLotExpiryDate.Normalize(request.ExpiryDate) };
         EnsureReservationRequest(request.Quantity, request.SourceLineReference);
         EnsureReservationFields(request.BatchNumber, null);
-        EnsureLotNotExpired(request.ExpiryDate);
         EnsureReservationRepository();
 
         var sourceLineReference = request.SourceLineReference.Trim();
@@ -421,6 +440,25 @@ public class StockService : IStockService
         await ExecuteWithRetryAsync(request.ItemId, async () =>
         {
             await EnsureLocationUsableAsync(request.LocationId);
+            var existing = await FindReservationAsync(sourceLineReference);
+            if (existing is not null)
+            {
+                if (existing.Status == StockReservationStatus.Active &&
+                    existing.ExpiresAt > now &&
+                    existing.ItemId == request.ItemId && existing.LocationId == request.LocationId &&
+                    existing.Quantity == request.Quantity &&
+                    (request.ExpiresAt is null || existing.ExpiresAt == expiresAt) &&
+                    (request.BatchNumber is null && !request.ExpiryDate.HasValue ||
+                     existing.BatchNumber == request.BatchNumber && existing.ExpiryDate == request.ExpiryDate))
+                    return;
+
+                if (existing.Status == StockReservationStatus.Active && existing.ExpiresAt <= now)
+                    await ReleaseExpiredReservationsAsync(request.ItemId, request.LocationId);
+
+                throw new InvalidOperationException("The source line already has a different or closed reservation.");
+            }
+
+            EnsureLotNotExpired(request.ExpiryDate);
             if (request.BatchNumber is null && !request.ExpiryDate.HasValue)
             {
                 var selectedLot = await SelectStockForReservationAsync(
@@ -429,20 +467,6 @@ public class StockService : IStockService
                     EnsureLotNotExpired(selectedLot.ExpiryDate);
             }
             await ReleaseExpiredReservationsAsync(request.ItemId, request.LocationId);
-
-            var existing = await FindReservationAsync(sourceLineReference);
-            if (existing is not null)
-            {
-                if (existing.Status == StockReservationStatus.Active &&
-                    existing.ItemId == request.ItemId && existing.LocationId == request.LocationId &&
-                    existing.Quantity == request.Quantity &&
-                    (request.ExpiresAt is null || existing.ExpiresAt == expiresAt) &&
-                    (request.BatchNumber is null && !request.ExpiryDate.HasValue ||
-                     existing.BatchNumber == request.BatchNumber && existing.ExpiryDate == request.ExpiryDate))
-                    return;
-
-                throw new InvalidOperationException("The source line already has a different or closed reservation.");
-            }
 
             var stock = await SelectStockForReservationAsync(request.ItemId, request.LocationId,
                 request.BatchNumber, request.ExpiryDate);
@@ -539,16 +563,20 @@ public class StockService : IStockService
             (!itemId.HasValue || row.ItemId == itemId.Value) &&
             (!locationId.HasValue || row.LocationId == locationId.Value));
         var reservedByLot = reservations
-            .GroupBy(row => (row.ItemId, row.LocationId, row.BatchNumber, row.ExpiryDate))
+            .GroupBy(row => (row.ItemId, row.LocationId, row.BatchNumber,
+                ExpiryDate: StockLotExpiryDate.Normalize(row.ExpiryDate)))
             .ToDictionary(group => group.Key, group => group.Sum(Remaining));
 
         return stock
-            .Select(row =>
+            .GroupBy(row => (row.ItemId, row.LocationId, row.BatchNumber,
+                ExpiryDate: StockLotExpiryDate.Normalize(row.ExpiryDate)))
+            .Select(group =>
             {
-                var key = (row.ItemId, row.LocationId, row.BatchNumber, row.ExpiryDate);
+                var key = group.Key;
                 var reserved = reservedByLot.GetValueOrDefault(key);
-                return new StockAvailabilityView(row.ItemId, row.LocationId, row.BatchNumber, row.ExpiryDate,
-                    row.Quantity, reserved, Math.Max(0, row.Quantity - reserved));
+                var onHand = group.Sum(row => row.Quantity);
+                return new StockAvailabilityView(key.Item1, key.Item2, key.BatchNumber, key.ExpiryDate,
+                    onHand, reserved, Math.Max(0, onHand - reserved));
             })
             .OrderBy(row => row.ItemId)
             .ThenBy(row => row.LocationId)

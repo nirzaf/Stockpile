@@ -119,6 +119,65 @@ public sealed class StockReservationIntegrationTests
     }
 
     [Fact]
+    public async Task Retrying_an_existing_unselected_reservation_does_not_reselect_a_later_expired_lot()
+    {
+        var database = Guid.NewGuid().ToString();
+        var tenant = "reservation-idempotency-expiry-test";
+        int itemId;
+        int locationId;
+        var requestedExpiry = DateTime.UtcNow.Date.AddDays(2);
+        var expiredDate = DateTime.UtcNow.Date.AddDays(-1);
+        var request = new CreateStockReservationRequest(0, 0, 1, "line-idempotent-fefo");
+
+        await using (var context = CreateContext(database, tenant))
+        {
+            var item = new Item { ItemCode = $"IDEMPOTENT-FEFO-{Guid.NewGuid():N}", Description = "Idempotent FEFO" };
+            var location = new Location { Name = $"Idempotent FEFO {Guid.NewGuid():N}" };
+            context.Items.Add(item);
+            context.Locations.Add(location);
+            await context.SaveChangesAsync();
+            itemId = item.Id;
+            locationId = location.Id;
+            context.StockInHand.Add(new StockInHand
+            {
+                ItemId = itemId,
+                LocationId = locationId,
+                Quantity = 3,
+                BatchNumber = "FUTURE",
+                ExpiryDate = requestedExpiry
+            });
+            await context.SaveChangesAsync();
+        }
+
+        request = request with { ItemId = itemId, LocationId = locationId };
+        await using (var context = CreateContext(database, tenant))
+            await CreateService(context, tenant).CreateReservationAsync(request);
+
+        await using (var context = CreateContext(database, tenant))
+        {
+            context.StockInHand.Add(new StockInHand
+            {
+                ItemId = itemId,
+                LocationId = locationId,
+                Quantity = 3,
+                BatchNumber = "EXPIRED",
+                ExpiryDate = expiredDate
+            });
+            await context.SaveChangesAsync();
+        }
+
+        await using (var context = CreateContext(database, tenant))
+            await CreateService(context, tenant).CreateReservationAsync(request);
+
+        await using var verify = CreateContext(database, tenant);
+        var reservation = await verify.StockReservations.SingleAsync();
+        reservation.BatchNumber.Should().Be("FUTURE");
+        reservation.ExpiryDate.Should().Be(requestedExpiry);
+        (await verify.StockInHand.OrderBy(stock => stock.BatchNumber).Select(stock => stock.ReservedQuantity).ToArrayAsync())
+            .Should().Equal(0, 1);
+    }
+
+    [Fact]
     public async Task Explicit_expired_lot_cannot_be_reserved_without_changing_stock_or_reservations()
     {
         var database = Guid.NewGuid().ToString();
@@ -379,6 +438,62 @@ public sealed class StockReservationIntegrationTests
 [Trait("Category", "PostgreSQL")]
 public sealed class StockReservationPostgreSqlIntegrationTests(PostgreSqlIntegrationFixture fixture)
 {
+    [PostgreSqlFact]
+    public async Task Date_only_lookup_finds_and_canonicalizes_a_legacy_non_midnight_lot()
+    {
+        fixture.EnsureEnabled();
+        var tenant = $"expiry-legacy-{Guid.NewGuid():N}";
+        var calendarDate = DateTime.UtcNow.Date.AddDays(30);
+        var legacyExpiry = DateTime.SpecifyKind(calendarDate.AddHours(16), DateTimeKind.Utc);
+        const string batchNumber = "LOT-LEGACY-TIME";
+        int itemId;
+        int locationId;
+        int stockId;
+
+        await using (var setup = fixture.CreateContext(tenant))
+        {
+            var item = new Item { ItemCode = $"LEGACY-{Guid.NewGuid():N}", Description = "Legacy expiry" };
+            var location = new Location { Name = $"Legacy expiry {Guid.NewGuid():N}" };
+            setup.Items.Add(item);
+            setup.Locations.Add(location);
+            await setup.SaveChangesAsync();
+            itemId = item.Id;
+            locationId = location.Id;
+
+            var stock = new StockInHand
+            {
+                ItemId = itemId,
+                LocationId = locationId,
+                Quantity = 4,
+                BatchNumber = batchNumber,
+                ExpiryDate = calendarDate
+            };
+            setup.StockInHand.Add(stock);
+            await setup.SaveChangesAsync();
+            stockId = stock.Id;
+        }
+
+        await using (var legacyWriter = fixture.CreateContext(tenant))
+        {
+            await legacyWriter.Database.ExecuteSqlInterpolatedAsync(
+                $"UPDATE \"StockInHand\" SET \"ExpiryDate\" = {legacyExpiry} WHERE \"Id\" = {stockId}");
+        }
+
+        await using (var context = fixture.CreateContext(tenant))
+        {
+            var service = CreateService(context, tenant);
+            (await service.GetByItemAndLocationAsync(itemId, locationId, batchNumber, calendarDate))
+                .Should().NotBeNull();
+            await service.ReceiveStockAsync(itemId, locationId, 2, "same legacy lot", batchNumber, calendarDate);
+        }
+
+        await using var verify = fixture.CreateContext(tenant);
+        var rows = await verify.StockInHand.Where(stock => stock.ItemId == itemId).ToListAsync();
+        rows.Should().ContainSingle();
+        rows[0].Quantity.Should().Be(6);
+        AssertUtcCalendarDate(rows[0].ExpiryDate, calendarDate);
+    }
+
     [PostgreSqlFact]
     public async Task Unspecified_expiry_dates_are_stored_as_utc_calendar_days_and_still_block_expired_sales()
     {
