@@ -153,6 +153,45 @@ public sealed class OrganizationPostgreSqlIntegrationTests(PostgreSqlIntegration
     }
 
     [PostgreSqlFact]
+    public async Task Legacy_company_currency_scale_can_be_initialized_after_posted_stock_activity()
+    {
+        fixture.EnsureEnabled();
+        var tenantId = $"currency-scale-initialize-{Guid.NewGuid():N}";
+        int companyId;
+
+        await using (var setup = fixture.CreateContext(tenantId))
+        {
+            var company = new Company
+            {
+                Code = "SCALE-INIT",
+                LegalName = "Scale initialization company",
+                BaseCurrency = "USD"
+            };
+            var branch = new Branch { Company = company, Code = "BRANCH", Name = "Branch" };
+            var location = new Location { Branch = branch, Name = "Warehouse" };
+            var item = new Item { ItemCode = "SCALE-INIT-ITEM", Description = "Scale fixture", Rate = 1m };
+            setup.AddRange(company, branch, location, item);
+            await setup.SaveChangesAsync();
+            setup.StockTransactions.Add(new StockTransaction
+            {
+                ItemId = item.Id,
+                FromLocationId = location.Id,
+                Quantity = 1,
+                TransactionType = TransactionType.Receive
+            });
+            await setup.SaveChangesAsync();
+            companyId = company.Id;
+        }
+
+        await using var context = fixture.CreateContext(tenantId);
+        await CreateService(context, tenantId).UpdateCompanyAsync(companyId,
+            new UpdateCompanyRequest("Scale initialization company", null, null, null,
+                "USD", null, true, CurrencyScale: 2));
+
+        (await context.Companies.SingleAsync()).CurrencyScale.Should().Be(2);
+    }
+
+    [PostgreSqlFact]
     public async Task Location_branch_ownership_cannot_change_after_posted_stock_activity()
     {
         fixture.EnsureEnabled();

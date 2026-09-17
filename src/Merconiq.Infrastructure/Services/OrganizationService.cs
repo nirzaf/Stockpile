@@ -84,7 +84,7 @@ public sealed class OrganizationService(
             var baseCurrency = NormalizeCurrency(request.BaseCurrency);
             var currencyScale = NormalizeCurrencyScale(request.CurrencyScale);
             var currencyChanged = !string.Equals(company.BaseCurrency, baseCurrency, StringComparison.Ordinal);
-            var currencyScaleChanged = company.CurrencyScale != currencyScale;
+            var currencyScaleChanged = company.CurrencyScale.HasValue && company.CurrencyScale != currencyScale;
             if ((currencyChanged || currencyScaleChanged) && await HasPostedStockActivityAsync(id))
             {
                 if (currencyChanged)

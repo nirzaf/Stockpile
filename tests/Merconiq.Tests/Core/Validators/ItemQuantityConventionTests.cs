@@ -99,4 +99,20 @@ public sealed class ItemQuantityConventionTests
         act.Should().Throw<ArgumentException>()
             .WithMessage("Converted quantity must have no more than 2 decimal places.*");
     }
+
+    [Fact]
+    public void Same_as_base_unit_requires_an_identity_factor()
+    {
+        var item = new Item
+        {
+            BaseUnitId = 10,
+            PurchaseUnitId = 10,
+            PurchaseToBaseFactor = 12m
+        };
+
+        var act = () => ItemQuantityConventions.Validate(item);
+
+        act.Should().Throw<ArgumentException>()
+            .WithMessage("Purchase-to-base factor must be 1 when the purchase unit is the base unit.*");
+    }
 }

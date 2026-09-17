@@ -238,6 +238,23 @@ public sealed class OrganizationServiceTests
         (await context.Companies.SingleAsync()).CurrencyScale.Should().Be(2);
     }
 
+    [Fact]
+    public async Task Legacy_company_currency_scale_can_be_initialized_after_stock_activity()
+    {
+        await using var context = CreateContext(Guid.NewGuid().ToString(), "tenant-a");
+        var company = new Company { Code = "COMPANY", LegalName = "Company", BaseCurrency = "USD" };
+        var branch = new Branch { Company = company, Code = "BRANCH", Name = "Branch" };
+        var location = new Location { Branch = branch, Name = "Warehouse" };
+        context.StockTransactions.Add(new StockTransaction { FromLocation = location, Quantity = 1 });
+        await context.SaveChangesAsync();
+        var service = CreateService(context, "tenant-a");
+
+        await service.UpdateCompanyAsync(company.Id,
+            new UpdateCompanyRequest(company.LegalName, null, null, null, "USD", null, true, CurrencyScale: 2));
+
+        (await context.Companies.SingleAsync()).CurrencyScale.Should().Be(2);
+    }
+
     private static OrganizationService CreateService(InventoryDbContext context, string tenantId) => new(
         new Repository<Company>(context),
         new Repository<Branch>(context),

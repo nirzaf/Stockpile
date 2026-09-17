@@ -108,6 +108,9 @@ public sealed class MasterDataImportService(
             {
                 ItemQuantityConventions.Validate(new Item
                 {
+                    BaseUnitId = baseUnitId,
+                    PurchaseUnitId = purchaseUnitId,
+                    SalesUnitId = salesUnitId,
                     PurchaseToBaseFactor = row.PurchaseToBaseFactor,
                     SalesToBaseFactor = row.SalesToBaseFactor,
                     QuantityPrecision = row.QuantityPrecision,

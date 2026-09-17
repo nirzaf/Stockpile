@@ -86,6 +86,22 @@ public sealed class MasterDataImportServiceTests
         context.UnitsOfMeasure.Should().BeEmpty();
     }
 
+    [Fact]
+    public async Task ImportItems_rejects_non_identity_factor_for_a_base_unit_reference()
+    {
+        await using var context = CreateContext(Guid.NewGuid().ToString(), "tenant-a");
+        context.UnitsOfMeasure.Add(new UnitOfMeasure { ExternalId = "piece", Code = "PC", Name = "Piece" });
+        await context.SaveChangesAsync();
+
+        var result = await CreateService(context).ImportItemsAsync(new ImportItemsRequest(
+            Csv("item-1,SKU-1,Widget,12.50,piece,piece,,12,1,0,false"), DryRun: false));
+
+        result.Rejected.Should().Be(1);
+        result.Rows.Single().Error.Should().Contain(
+            "Purchase-to-base factor must be 1 when the purchase unit is the base unit.");
+        context.Items.Should().BeEmpty();
+    }
+
     private static MasterDataImportService CreateService(InventoryDbContext context) => new(
         new Repository<UnitOfMeasure>(context),
         new Repository<Item>(context),

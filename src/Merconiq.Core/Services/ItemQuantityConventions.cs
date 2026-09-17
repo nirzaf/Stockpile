@@ -18,6 +18,10 @@ public static class ItemQuantityConventions
             throw new ArgumentException("Purchase-to-base factor must be positive.", nameof(item));
         if (item.SalesToBaseFactor <= 0)
             throw new ArgumentException("Sales-to-base factor must be positive.", nameof(item));
+        if (item.PurchaseUnitId.HasValue && item.PurchaseUnitId == item.BaseUnitId && item.PurchaseToBaseFactor != 1m)
+            throw new ArgumentException("Purchase-to-base factor must be 1 when the purchase unit is the base unit.", nameof(item));
+        if (item.SalesUnitId.HasValue && item.SalesUnitId == item.BaseUnitId && item.SalesToBaseFactor != 1m)
+            throw new ArgumentException("Sales-to-base factor must be 1 when the sales unit is the base unit.", nameof(item));
         if (item.QuantityPrecision is < 0 or > 6)
             throw new ArgumentException("Quantity precision must be between 0 and 6.", nameof(item));
         if (item.WholeUnitOnly && item.QuantityPrecision != 0)
