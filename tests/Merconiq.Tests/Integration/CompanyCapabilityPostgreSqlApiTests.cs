@@ -18,6 +18,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Microsoft.IdentityModel.Tokens;
+using Npgsql;
 
 namespace Merconiq.Tests.Integration;
 
@@ -295,7 +296,9 @@ public sealed class CompanyCapabilityPostgreSqlApiTests(PostgreSqlIntegrationFix
         int LocationBId);
 }
 
-internal sealed class PostgreSqlCompanyApiFactory(PostgreSqlIntegrationFixture fixture)
+internal sealed class PostgreSqlCompanyApiFactory(
+    PostgreSqlIntegrationFixture fixture,
+    string applicationName = "merconiq-company-api")
     : WebApplicationFactory<Merconiq.Web.Program>
 {
     private const string TestTenantId = "test-tenant";
@@ -308,7 +311,11 @@ internal sealed class PostgreSqlCompanyApiFactory(PostgreSqlIntegrationFixture f
         builder.ConfigureTestServices(services =>
         {
             services.RemoveAll<IHostedService>();
-            services.AddDbContext<InventoryDbContext>(options => options.UseNpgsql(fixture.ConnectionString));
+            var connectionString = new NpgsqlConnectionStringBuilder(fixture.ConnectionString)
+            {
+                ApplicationName = applicationName
+            }.ConnectionString;
+            services.AddDbContext<InventoryDbContext>(options => options.UseNpgsql(connectionString));
             services.AddScoped<TenantContext>(_ =>
             {
                 var context = new TenantContext();
