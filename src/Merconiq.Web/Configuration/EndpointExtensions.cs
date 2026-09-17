@@ -12,6 +12,7 @@ using Merconiq.Web.Tenancy;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Localization;
 using Microsoft.AspNetCore.RateLimiting;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
@@ -121,6 +122,77 @@ public static class EndpointExtensions
             return Results.Ok(ApiResponse<IReadOnlyList<WebhookSubscriptionResponse>>.CreateSuccess(subscriptions));
         })
             .WithName("GetWebhooks")
+            .WithTags("Webhooks")
+            .RequireAuthorization(CapabilityPolicies.TenantAdministrator);
+
+        v1.MapGet("/webhooks/deliveries", async (
+            int? page,
+            int? pageSize,
+            InventoryDbContext db,
+            CancellationToken cancellationToken) =>
+        {
+            var requestedPage = page ?? 1;
+            var requestedPageSize = pageSize ?? 50;
+            if (requestedPage < 1 || requestedPageSize is < 1 or > 100)
+            {
+                return Results.BadRequest(ApiResponse<object>.CreateFailure(
+                    "Page must be positive and pageSize must be between 1 and 100."));
+            }
+
+            var skip = (long)(requestedPage - 1) * requestedPageSize;
+            if (skip > int.MaxValue)
+            {
+                return Results.BadRequest(ApiResponse<object>.CreateFailure("Page is too large."));
+            }
+
+            // Project only safe operational metadata; payloads, endpoints, lease tokens,
+            // response bodies and diagnostic text must remain private.
+            var rows = await db.WebhookDeliveries
+                .AsNoTracking()
+                .OrderByDescending(delivery => delivery.CreatedAt)
+                .ThenByDescending(delivery => delivery.Id)
+                .Skip((int)skip)
+                .Take(requestedPageSize + 1)
+                .Select(delivery => new
+                {
+                    delivery.Id,
+                    delivery.EventId,
+                    delivery.SubscriptionId,
+                    delivery.EventType,
+                    delivery.Status,
+                    delivery.AttemptCount,
+                    delivery.NextAttemptAt,
+                    delivery.LastAttemptAt,
+                    delivery.LastStatusCode,
+                    delivery.DeliveredAt,
+                    delivery.CreatedAt
+                })
+                .ToListAsync(cancellationToken);
+
+            var hasMore = rows.Count > requestedPageSize;
+            var deliveries = rows.Take(requestedPageSize)
+                .Select(delivery => new WebhookDeliveryDiagnosticResponse(
+                    delivery.Id,
+                    delivery.EventId,
+                    delivery.SubscriptionId,
+                    delivery.EventType,
+                    delivery.Status.ToString(),
+                    delivery.AttemptCount,
+                    delivery.NextAttemptAt,
+                    delivery.LastAttemptAt,
+                    delivery.LastStatusCode,
+                    delivery.DeliveredAt,
+                    delivery.CreatedAt))
+                .ToArray();
+
+            var result = new WebhookDeliveryDiagnosticsPageResponse(
+                requestedPage,
+                requestedPageSize,
+                hasMore,
+                deliveries);
+            return Results.Ok(ApiResponse<WebhookDeliveryDiagnosticsPageResponse>.CreateSuccess(result));
+        })
+            .WithName("GetWebhookDeliveryDiagnostics")
             .WithTags("Webhooks")
             .RequireAuthorization(CapabilityPolicies.TenantAdministrator);
 

@@ -100,6 +100,7 @@ mutations. Webhook administration is restricted to `Admin` and `Manager`.
 | POST | `/api/v1/stock/opening/replay` | Tenant `Admin` with `Approve` | `200` or `422` |
 | POST | `/api/v1/stock/opening/reverse` | Tenant `Admin` with `Approve` and `Reverse` | `200` |
 | GET | `/api/v1/webhooks` | `Admin` or `Manager` | `200` |
+| GET | `/api/v1/webhooks/deliveries?page=1&pageSize=50` | Tenant `Admin` | `200` or `400` |
 | POST | `/api/v1/webhooks` | `Admin` or `Manager` | `200` |
 | PUT | `/api/v1/webhooks/{id}` | `Admin` or `Manager` | `200` or `404` |
 | DELETE | `/api/v1/webhooks/{id}` | `Admin` or `Manager` | `204` or `404` |
@@ -154,6 +155,13 @@ completion. This protects outbox ownership, but does not make delivery exactly
 once: receivers must still deduplicate repeated HTTP requests by delivery ID.
 No remote endpoint is contacted unless an administrator explicitly configures
 the subscription.
+
+Tenant administrators can inspect recent delivery metadata at
+`GET /api/v1/webhooks/deliveries?page=1&pageSize=50`. Pages are returned newest
+first; `pageSize` is limited to 100 and the response includes `hasMore`. The
+endpoint uses the active tenant filter and returns only delivery IDs, event type,
+status, attempt timing and HTTP status. It never returns payloads, target URLs,
+subscription secrets, lease tokens, raw response bodies or diagnostic text.
 
 The item list validates `page >= 1` and `1 <= pageSize <= 100`. Item update
 also requires the route ID and body ID to match. Request validation failures
