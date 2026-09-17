@@ -7,6 +7,11 @@ public interface ITransferOrderService
 {
     Task<TransferOrderView?> GetByIdAsync(int id, CancellationToken cancellationToken = default);
 
+    /// <summary>Returns the newest 100 transfer orders in the supplied authorized companies.</summary>
+    Task<IReadOnlyList<TransferOrderView>> GetRecentForCompaniesAsync(
+        IReadOnlyCollection<int> companyIds,
+        CancellationToken cancellationToken = default);
+
     Task<TransferOrderView> CreateAsync(
         CreateTransferOrderRequest request,
         string idempotencyKey,

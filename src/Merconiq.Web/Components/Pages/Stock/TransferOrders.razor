@@ -1,0 +1,608 @@
+@page "/Stock/TransferOrders"
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Components.Authorization
+@using Merconiq.Core.Entities
+@using Merconiq.Core.Models
+@using Merconiq.Web.Security
+@attribute [Authorize(Policy = CapabilityPolicies.View)]
+@inject ITransferOrderService TransferOrderService
+@inject IOrganizationService OrganizationService
+@inject ILocationService LocationService
+@inject IItemService ItemService
+@inject AuthenticationStateProvider AuthenticationStateProvider
+@inject ICurrentUserAuthorization CurrentUserAuthorization
+@inject ISnackbar Snackbar
+@inject IJSRuntime JS
+@inject ILogger<TransferOrders> Logger
+
+<PageTitle>Transfer Orders</PageTitle>
+
+<MudStack Spacing="1" Class="mb-4">
+    <MudText Typo="Typo.h4">Transfer orders</MudText>
+    <MudText Typo="Typo.body2" Color="Color.Secondary">
+        Request and approve same-company stock transfers. Approved orders reserve stock; they do not move it.
+    </MudText>
+</MudStack>
+
+<MudAlert Severity="Severity.Info" Variant="Variant.Outlined" Class="mb-4">
+    Use <a href="/Stock/Transfer">Transfer Stock</a> for an immediate transfer. Use a transfer order when stock must be approved and reserved before dispatch.
+</MudAlert>
+
+<MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween" Class="mb-4" Wrap="Wrap.Wrap">
+    <MudText Typo="Typo.body2" Color="Color.Secondary">Showing up to 100 most recent orders in companies you can view.</MudText>
+    @if (_viewCompanyIds.Any(_editableCompanyIds.Contains))
+    {
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Add"
+                   Disabled="@_saving" OnClick="OpenCreateAsync">
+            New transfer order
+        </MudButton>
+    }
+</MudStack>
+
+@if (_loadError is not null)
+{
+    <MudAlert Severity="Severity.Error" Variant="Variant.Outlined" Class="mb-3">@_loadError</MudAlert>
+    <MudButton Variant="Variant.Text" Color="Color.Primary" Disabled="@_loading" OnClick="LoadAsync">Retry</MudButton>
+}
+else if (_loading)
+{
+    <MudProgressLinear Indeterminate="true" Color="Color.Primary" aria-label="Loading transfer orders" />
+}
+else if (_orders.Count == 0)
+{
+    <MudPaper Outlined="true" Class="pa-6 text-center">
+        <MudText Typo="Typo.h6">No transfer orders yet</MudText>
+        <MudText Typo="Typo.body2" Color="Color.Secondary" Class="mt-2">
+            Orders are limited to companies where you have view access.
+        </MudText>
+    </MudPaper>
+}
+else
+{
+    <MudStack Spacing="3">
+        @foreach (var order in _orders)
+        {
+            <MudPaper @key="order.Id" Outlined="true" Class="pa-4">
+                <MudStack Row="true" AlignItems="AlignItems.Start" Justify="Justify.SpaceBetween" Spacing="2" Wrap="Wrap.Wrap">
+                    <div>
+                        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Wrap="Wrap.Wrap">
+                            <MudText Typo="Typo.h6">@order.Number</MudText>
+                            <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="@StatusColor(order.Status)">
+                                @order.Status
+                            </MudChip>
+                        </MudStack>
+                        <MudText Typo="Typo.body2" Color="Color.Secondary">
+                            @CompanyLabel(order.CompanyId) · @order.OrderDate.ToLocalTime().ToString("d")
+                        </MudText>
+                    </div>
+                    <MudStack Row="true" Spacing="1" Wrap="Wrap.Wrap">
+                        @if (CanEditOrder(order))
+                        {
+                            <MudButton Variant="Variant.Outlined" Color="Color.Primary" Disabled="@_saving"
+                                       OnClick="@(() => OpenEditAsync(order))">
+                                Amend
+                            </MudButton>
+                        }
+                        @if (order.Status == TransferOrderStatus.Draft && CanApproveOrder(order))
+                        {
+                            <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="@_saving"
+                                       OnClick="@(() => ApproveAsync(order))">
+                                Approve and reserve
+                            </MudButton>
+                        }
+                        @if (order.Status != TransferOrderStatus.Cancelled && CanCancelOrder(order))
+                        {
+                            <MudButton Variant="Variant.Outlined" Color="Color.Error" Disabled="@_saving"
+                                       OnClick="@(() => CancelAsync(order))">
+                                Cancel
+                            </MudButton>
+                        }
+                    </MudStack>
+                </MudStack>
+
+                <MudDivider Class="my-3" />
+                <MudGrid Spacing="2">
+                    <MudItem xs="12" sm="6">
+                        <MudText Typo="Typo.caption" Color="Color.Secondary">From</MudText>
+                        <MudText Typo="Typo.body1">@LocationLabel(order.FromLocationId)</MudText>
+                    </MudItem>
+                    <MudItem xs="12" sm="6">
+                        <MudText Typo="Typo.caption" Color="Color.Secondary">To</MudText>
+                        <MudText Typo="Typo.body1">@LocationLabel(order.ToLocationId)</MudText>
+                    </MudItem>
+                    <MudItem xs="12">
+                        <MudText Typo="Typo.caption" Color="Color.Secondary">Lines (@order.Lines.Count)</MudText>
+                        @foreach (var line in order.Lines)
+                        {
+                            <MudText Typo="Typo.body2">
+                                @ItemLabel(line.ItemId) — @line.Quantity
+                                @if (!string.IsNullOrWhiteSpace(line.BatchNumber))
+                                {
+                                    <span> · Batch @line.BatchNumber</span>
+                                }
+                                @if (line.ExpiryDate.HasValue)
+                                {
+                                    <span> · Expires @line.ExpiryDate.Value.ToString("d")</span>
+                                }
+                            </MudText>
+                        }
+                    </MudItem>
+                    @if (!string.IsNullOrWhiteSpace(order.Notes))
+                    {
+                        <MudItem xs="12">
+                            <MudText Typo="Typo.caption" Color="Color.Secondary">Notes</MudText>
+                            <MudText Typo="Typo.body2">@order.Notes</MudText>
+                        </MudItem>
+                    }
+                </MudGrid>
+            </MudPaper>
+        }
+    </MudStack>
+}
+
+@if (_editorOpen)
+{
+    <MudPaper Outlined="true" Class="pa-4 mt-5">
+        <MudStack Spacing="1" Class="mb-3">
+            <MudText Typo="Typo.h5">@(_editingOrderId.HasValue ? $"Amend transfer order {_editingOrderNumber}" : "New transfer order")</MudText>
+            <MudText Typo="Typo.body2" Color="Color.Secondary">
+                All locations must belong to the selected company. Saving a changed approved order returns it to draft and releases its reservation.
+            </MudText>
+        </MudStack>
+
+        @if (_editorError is not null)
+        {
+            <MudAlert Severity="Severity.Error" Variant="Variant.Outlined" Class="mb-3" aria-live="polite">@_editorError</MudAlert>
+        }
+
+        <MudGrid Spacing="2">
+            <MudItem xs="12" md="4">
+                <MudSelect T="int" Label="Company" Value="@_companyId" ValueChanged="CompanyChangedAsync"
+                           Disabled="@(_saving || _editingOrderId.HasValue)" Required="true">
+                    <MudSelectItem T="int" Value="0">Select a company</MudSelectItem>
+                    @foreach (var company in _companies.Where(company =>
+                        (_editingOrderId.HasValue || _editableCompanyIds.Contains(company.Id)) &&
+                        (company.IsActive || company.Id == _companyId)))
+                    {
+                        <MudSelectItem T="int" Value="@company.Id">@company.Code — @company.LegalName</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12" md="4">
+                <MudSelect T="int" @bind-Value="_fromLocationId" Label="Source location" Disabled="@(_saving || _companyId <= 0)" Required="true">
+                    <MudSelectItem T="int" Value="0">Select source</MudSelectItem>
+                    @foreach (var location in _editorLocations)
+                    {
+                        <MudSelectItem T="int" Value="@location.Id">@location.Name</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12" md="4">
+                <MudSelect T="int" @bind-Value="_toLocationId" Label="Destination location" Disabled="@(_saving || _companyId <= 0)" Required="true">
+                    <MudSelectItem T="int" Value="0">Select destination</MudSelectItem>
+                    @foreach (var location in _editorLocations)
+                    {
+                        <MudSelectItem T="int" Value="@location.Id">@location.Name</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+        </MudGrid>
+
+        <MudStack Spacing="2" Class="mt-4">
+            @for (var index = 0; index < _lines.Count; index++)
+            {
+                var line = _lines[index];
+                <MudPaper @key="line" Outlined="true" Class="pa-3">
+                    <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween" Class="mb-2">
+                        <MudText Typo="Typo.subtitle1">Line @(index + 1)</MudText>
+                        @if (!_editingOrderId.HasValue && _lines.Count > 1)
+                        {
+                            <MudButton Variant="Variant.Text" Color="Color.Error" Disabled="@_saving"
+                                       OnClick="@(() => RemoveLine(line))">
+                                Remove line
+                            </MudButton>
+                        }
+                    </MudStack>
+                    <MudGrid Spacing="2">
+                        <MudItem xs="12" sm="6" md="4">
+                            <MudSelect T="int" @bind-Value="line.ItemId" Label="Item" Required="true" Disabled="@_saving">
+                                <MudSelectItem T="int" Value="0">Select an item</MudSelectItem>
+                                @foreach (var item in _items.Where(item => item.IsActive || item.Id == line.ItemId))
+                                {
+                                    <MudSelectItem T="int" Value="@item.Id">@item.ItemCode — @item.Description</MudSelectItem>
+                                }
+                            </MudSelect>
+                        </MudItem>
+                        <MudItem xs="12" sm="6" md="2">
+                            <MudNumericField T="int" @bind-Value="line.Quantity" Label="Quantity" Min="1" Required="true" Disabled="@_saving" />
+                        </MudItem>
+                        <MudItem xs="12" sm="6" md="3">
+                            <MudTextField T="string" @bind-Value="line.BatchNumber" Label="Batch / lot (optional)" Disabled="@_saving" />
+                        </MudItem>
+                        <MudItem xs="12" sm="6" md="3">
+                            <MudDatePicker @bind-Date="line.ExpiryDate" Label="Expiry date (optional)" DateFormat="yyyy-MM-dd" Clearable="true" Disabled="@_saving" />
+                        </MudItem>
+                    </MudGrid>
+                </MudPaper>
+            }
+        </MudStack>
+
+        @if (!_editingOrderId.HasValue)
+        {
+            <MudButton Variant="Variant.Outlined" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Add"
+                       Class="mt-3" Disabled="@_saving" OnClick="AddLine">
+                Add line
+            </MudButton>
+        }
+
+        <MudTextField T="string" @bind-Value="_notes" Label="Notes (optional)" Lines="2" Class="mt-4" Disabled="@_saving" />
+        <MudStack Row="true" Spacing="2" Class="mt-4" Wrap="Wrap.Wrap">
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="@_saving" OnClick="SaveAsync">
+                @if (_saving)
+                {
+                    <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="me-2" />
+                }
+                Save draft
+            </MudButton>
+            <MudButton Variant="Variant.Text" Color="Color.Secondary" Disabled="@_saving" OnClick="CloseEditor">
+                Close
+            </MudButton>
+        </MudStack>
+    </MudPaper>
+}
+
+@code {
+    private IReadOnlyList<TransferOrderView> _orders = Array.Empty<TransferOrderView>();
+    private IReadOnlyList<Company> _companies = Array.Empty<Company>();
+    private IReadOnlyList<Item> _items = Array.Empty<Item>();
+    private IReadOnlyList<Location> _editorLocations = Array.Empty<Location>();
+    private readonly Dictionary<int, string> _companyLabels = [];
+    private readonly Dictionary<int, string> _locationLabels = [];
+    private readonly Dictionary<int, string> _itemLabels = [];
+    private IReadOnlySet<int> _viewCompanyIds = new HashSet<int>();
+    private IReadOnlySet<int> _editableCompanyIds = new HashSet<int>();
+    private IReadOnlySet<int> _postableCompanyIds = new HashSet<int>();
+    private IReadOnlySet<int> _approvableCompanyIds = new HashSet<int>();
+    private readonly List<TransferOrderLineDraft> _lines = [];
+    private string? _loadError;
+    private string? _editorError;
+    private string? _editingOrderNumber;
+    private string? _createIdempotencyKey;
+    private string? _createRequestFingerprint;
+    private string? _notes;
+    private int _companyId;
+    private int _fromLocationId;
+    private int _toLocationId;
+    private int? _editingOrderId;
+    private bool _loading = true;
+    private bool _saving;
+    private bool _editorOpen;
+
+    protected override async Task OnInitializedAsync() => await LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+        _loadError = null;
+        try
+        {
+            var user = (await AuthenticationStateProvider.GetAuthenticationStateAsync()).User;
+            _viewCompanyIds = await CurrentUserAuthorization.GetAccessibleCompanyIdsAsync(user, CompanyCapability.View);
+            _editableCompanyIds = await CurrentUserAuthorization.GetAccessibleCompanyIdsAsync(user, CompanyCapability.Edit);
+            _postableCompanyIds = await CurrentUserAuthorization.GetAccessibleCompanyIdsAsync(user, CompanyCapability.Post);
+            _approvableCompanyIds = await CurrentUserAuthorization.GetAccessibleCompanyIdsAsync(user, CompanyCapability.Approve);
+
+            _companies = await OrganizationService.GetCompaniesAsync(accessibleCompanyIds: _viewCompanyIds.ToArray());
+            _companyLabels.Clear();
+            foreach (var company in _companies)
+                _companyLabels[company.Id] = $"{company.Code} — {company.LegalName}";
+
+            _items = (await ItemService.GetAllAsync()).ToArray();
+            _itemLabels.Clear();
+            foreach (var item in _items)
+                _itemLabels[item.Id] = $"{item.ItemCode} — {item.Description}";
+
+            _orders = await TransferOrderService.GetRecentForCompaniesAsync(_viewCompanyIds.ToArray());
+            _locationLabels.Clear();
+            if (_viewCompanyIds.Count > 0)
+            {
+                var visibleLocations = await LocationService.GetForCompaniesAsync(_viewCompanyIds.ToArray());
+                foreach (var location in visibleLocations)
+                    _locationLabels[location.Id] = location.Name;
+            }
+        }
+        catch (Exception exception)
+        {
+            Logger.LogError(exception, "Unable to load transfer orders for the current user.");
+            _loadError = "Unable to load transfer orders. Retry, or contact an administrator if the problem continues.";
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task OpenCreateAsync()
+    {
+        _editingOrderId = null;
+        _editingOrderNumber = null;
+        _createIdempotencyKey = null;
+        _createRequestFingerprint = null;
+        _companyId = 0;
+        _fromLocationId = 0;
+        _toLocationId = 0;
+        _notes = null;
+        _editorLocations = Array.Empty<Location>();
+        _lines.Clear();
+        _lines.Add(new TransferOrderLineDraft());
+        _editorError = null;
+        _editorOpen = true;
+        await Task.CompletedTask;
+    }
+
+    private async Task OpenEditAsync(TransferOrderView order)
+    {
+        _editorError = null;
+        try
+        {
+            var user = (await AuthenticationStateProvider.GetAuthenticationStateAsync()).User;
+            if (!CanEditOrder(order) ||
+                !await CurrentUserAuthorization.CanAccessTransferAsync(
+                    user, order.FromLocationId, order.ToLocationId, CompanyCapability.Edit) ||
+                !await CurrentUserAuthorization.CanAccessTransferAsync(
+                    user, order.FromLocationId, order.ToLocationId, CompanyCapability.Post))
+            {
+                _editorError = "You no longer have edit and posting access to both locations in this company.";
+                return;
+            }
+
+            _editorLocations = (await LocationService.GetForCompaniesAsync([order.CompanyId])).ToArray();
+            _editingOrderId = order.Id;
+            _editingOrderNumber = order.Number;
+            _companyId = order.CompanyId;
+            _fromLocationId = order.FromLocationId;
+            _toLocationId = order.ToLocationId;
+            _notes = order.Notes;
+            _lines.Clear();
+            _lines.AddRange(order.Lines.Select(line => new TransferOrderLineDraft
+            {
+                LineId = line.Id,
+                ItemId = line.ItemId,
+                Quantity = line.Quantity,
+                BatchNumber = line.BatchNumber,
+                ExpiryDate = line.ExpiryDate
+            }));
+            _editorOpen = true;
+        }
+        catch (Exception exception)
+        {
+            Logger.LogError(exception, "Unable to open transfer order {TransferOrderId} for amendment.", order.Id);
+            _editorError = "Unable to open this order for amendment. Please refresh and try again.";
+        }
+    }
+
+    private async Task CompanyChangedAsync(int companyId)
+    {
+        _companyId = companyId;
+        _fromLocationId = 0;
+        _toLocationId = 0;
+        _editorLocations = Array.Empty<Location>();
+        _editorError = null;
+        if (companyId <= 0 || !_viewCompanyIds.Contains(companyId))
+            return;
+
+        try
+        {
+            _editorLocations = (await LocationService.GetForCompaniesAsync([companyId])).ToArray();
+            foreach (var location in _editorLocations)
+                _locationLabels[location.Id] = location.Name;
+        }
+        catch (Exception exception)
+        {
+            Logger.LogError(exception, "Unable to load locations for company {CompanyId}.", companyId);
+            _editorError = "Unable to load locations for that company. Please select it again to retry.";
+        }
+    }
+
+    private async Task SaveAsync()
+    {
+        _editorError = ValidateEditor();
+        if (_editorError is not null)
+            return;
+
+        _saving = true;
+        try
+        {
+            var user = (await AuthenticationStateProvider.GetAuthenticationStateAsync()).User;
+            if (!_viewCompanyIds.Contains(_companyId) || !_editableCompanyIds.Contains(_companyId) ||
+                !await CurrentUserAuthorization.CanAccessTransferAsync(
+                    user, _fromLocationId, _toLocationId, CompanyCapability.Edit) ||
+                await CurrentUserAuthorization.GetLocationCompanyIdAsync(user, _fromLocationId) != _companyId)
+            {
+                _editorError = "You no longer have edit access to these locations in the selected company.";
+                return;
+            }
+
+            var request = new CreateTransferOrderRequest(
+                _companyId,
+                _fromLocationId,
+                _toLocationId,
+                _lines.Select(line => new TransferOrderLineRequest(
+                    line.ItemId, line.Quantity, Normalize(line.BatchNumber), line.ExpiryDate, line.LineId)).ToArray(),
+                Normalize(_notes));
+
+            if (_editingOrderId.HasValue)
+            {
+                if (!_postableCompanyIds.Contains(_companyId) ||
+                    !await CurrentUserAuthorization.CanAccessTransferAsync(
+                        user, _fromLocationId, _toLocationId, CompanyCapability.Post))
+                {
+                    _editorError = "Amendment requires current posting access to both locations.";
+                    return;
+                }
+
+                var scope = new StockMutationScope(_companyId, () => CurrentUserAuthorization.CanAccessTransferAsync(
+                    user, _fromLocationId, _toLocationId, CompanyCapability.Post));
+                await TransferOrderService.AmendAsync(_editingOrderId.Value, request, scope);
+            }
+            else
+            {
+                var fingerprint = System.Text.Json.JsonSerializer.Serialize(request);
+                if (!string.Equals(fingerprint, _createRequestFingerprint, StringComparison.Ordinal))
+                {
+                    _createRequestFingerprint = fingerprint;
+                    _createIdempotencyKey = Guid.NewGuid().ToString("N");
+                }
+
+                await TransferOrderService.CreateAsync(request, _createIdempotencyKey!);
+                _createIdempotencyKey = null;
+                _createRequestFingerprint = null;
+            }
+
+            CloseEditor();
+            SnackbarSuccess(_editingOrderId.HasValue ? "Transfer order amended." : "Transfer order created as a draft.");
+            await LoadAsync();
+        }
+        catch (Exception exception)
+        {
+            Logger.LogWarning(exception, "Unable to save transfer order.");
+            _editorError = $"Unable to save the order: {exception.Message}";
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private async Task ApproveAsync(TransferOrderView order)
+    {
+        _saving = true;
+        try
+        {
+            var user = (await AuthenticationStateProvider.GetAuthenticationStateAsync()).User;
+            var current = await TransferOrderService.GetByIdAsync(order.Id);
+            if (current is null || !_approvableCompanyIds.Contains(current.CompanyId) ||
+                !await CurrentUserAuthorization.CanAccessTransferAsync(
+                    user, current.FromLocationId, current.ToLocationId, CompanyCapability.Approve))
+            {
+                SnackbarError("You no longer have approval access to both locations.");
+                return;
+            }
+
+            var scope = new StockMutationScope(current.CompanyId, () => CurrentUserAuthorization.CanAccessTransferAsync(
+                user, current.FromLocationId, current.ToLocationId, CompanyCapability.Approve));
+            await TransferOrderService.ApproveAsync(current.Id, scope);
+            await LoadAsync();
+            SnackbarSuccess("Transfer order approved and stock reserved. No inventory has moved yet.");
+        }
+        catch (Exception exception)
+        {
+            Logger.LogWarning(exception, "Unable to approve transfer order {TransferOrderId}.", order.Id);
+            SnackbarError($"Unable to approve this order: {exception.Message}");
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private async Task CancelAsync(TransferOrderView order)
+    {
+        if (!await JS.InvokeAsync<bool>("confirm", $"Cancel transfer order {order.Number}? Any reservation will be released."))
+            return;
+
+        _saving = true;
+        try
+        {
+            var user = (await AuthenticationStateProvider.GetAuthenticationStateAsync()).User;
+            var current = await TransferOrderService.GetByIdAsync(order.Id);
+            if (current is null || !_editableCompanyIds.Contains(current.CompanyId) ||
+                !_postableCompanyIds.Contains(current.CompanyId) ||
+                !await CurrentUserAuthorization.CanAccessTransferAsync(
+                    user, current.FromLocationId, current.ToLocationId, CompanyCapability.Edit) ||
+                !await CurrentUserAuthorization.CanAccessTransferAsync(
+                    user, current.FromLocationId, current.ToLocationId, CompanyCapability.Post))
+            {
+                SnackbarError("Cancellation requires current edit and posting access to both locations.");
+                return;
+            }
+
+            var scope = new StockMutationScope(current.CompanyId, () => CurrentUserAuthorization.CanAccessTransferAsync(
+                user, current.FromLocationId, current.ToLocationId, CompanyCapability.Post));
+            await TransferOrderService.CancelAsync(current.Id, scope);
+            await LoadAsync();
+            SnackbarSuccess("Transfer order cancelled; any reservation was released.");
+        }
+        catch (Exception exception)
+        {
+            Logger.LogWarning(exception, "Unable to cancel transfer order {TransferOrderId}.", order.Id);
+            SnackbarError($"Unable to cancel this order: {exception.Message}");
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private string? ValidateEditor()
+    {
+        if (_companyId <= 0 || !_viewCompanyIds.Contains(_companyId))
+            return "Select a company where you have view access.";
+        if (_fromLocationId <= 0 || _toLocationId <= 0)
+            return "Select both a source and destination location.";
+        if (_fromLocationId == _toLocationId)
+            return "Source and destination locations must be different.";
+        if (_lines.Count == 0)
+            return "Add at least one item line.";
+        if (_lines.Any(line => line.ItemId <= 0 || line.Quantity <= 0))
+            return "Choose an item and enter a quantity greater than zero on every line.";
+        return null;
+    }
+
+    private bool CanEditOrder(TransferOrderView order) =>
+        order.Status != TransferOrderStatus.Cancelled &&
+        _editableCompanyIds.Contains(order.CompanyId) && _postableCompanyIds.Contains(order.CompanyId);
+
+    private bool CanApproveOrder(TransferOrderView order) => _approvableCompanyIds.Contains(order.CompanyId);
+
+    private bool CanCancelOrder(TransferOrderView order) =>
+        _editableCompanyIds.Contains(order.CompanyId) && _postableCompanyIds.Contains(order.CompanyId);
+
+    private void AddLine() => _lines.Add(new TransferOrderLineDraft());
+
+    private void RemoveLine(TransferOrderLineDraft line) => _lines.Remove(line);
+
+    private void CloseEditor()
+    {
+        _editorOpen = false;
+        _editorError = null;
+    }
+
+    private string CompanyLabel(int id) => _companyLabels.GetValueOrDefault(id, $"Company #{id}");
+
+    private string LocationLabel(int id) => _locationLabels.GetValueOrDefault(id, $"Location #{id}");
+
+    private string ItemLabel(int id) => _itemLabels.GetValueOrDefault(id, $"Item #{id}");
+
+    private static string? Normalize(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
+    private static Color StatusColor(TransferOrderStatus status) => status switch
+    {
+        TransferOrderStatus.Approved => Color.Success,
+        TransferOrderStatus.Cancelled => Color.Error,
+        _ => Color.Warning
+    };
+
+    private void SnackbarSuccess(string message) => Snackbar.Add(message, Severity.Success);
+
+    private void SnackbarError(string message) => Snackbar.Add(message, Severity.Error);
+
+    private sealed class TransferOrderLineDraft
+    {
+        public int? LineId { get; init; }
+        public int ItemId { get; set; }
+        public int Quantity { get; set; } = 1;
+        public string? BatchNumber { get; set; }
+        public DateTime? ExpiryDate { get; set; }
+    }
+}
