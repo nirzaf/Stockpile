@@ -28,7 +28,8 @@ public sealed class TransferOrdersController(
         var order = await transferOrders.GetByIdAsync(id, cancellationToken);
         if (order is null)
             return NotFound(ApiResponse<object>.CreateFailure("Transfer order not found."));
-        if (!await authorization.CanAccessTransferAsync(
+        if (!await authorization.CanAccessCompanyAsync(User, order.CompanyId, CompanyCapability.View) ||
+            !await authorization.CanAccessTransferAsync(
                 User, order.FromLocationId, order.ToLocationId, CompanyCapability.View))
             return await AccessFailureAsync();
         return Ok(ApiResponse<TransferOrderView>.CreateSuccess(order));
