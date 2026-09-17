@@ -636,7 +636,7 @@ public sealed class TransferOrderService(
                 IdempotencyKey = idempotencyKey,
                 RequestHash = requestHash,
                 SettledBy = settledBy.Trim(),
-                SettledAt = DateTimeOffset.UtcNow,
+                SettledAt = NormalizeDatabaseTimestamp(DateTimeOffset.UtcNow),
                 Reason = normalizedRequest.Reason,
                 TenantId = tenantContext.TenantId
             };
@@ -838,6 +838,9 @@ public sealed class TransferOrderService(
 
     private static string? NormalizeBatchNumber(string? batchNumber) =>
         string.IsNullOrWhiteSpace(batchNumber) ? null : batchNumber.Trim();
+
+    private static DateTimeOffset NormalizeDatabaseTimestamp(DateTimeOffset value) =>
+        value.AddTicks(-(value.Ticks % TimeSpan.TicksPerMicrosecond));
 
     private static void ValidateIdempotencyKey(string key)
     {
