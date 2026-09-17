@@ -144,4 +144,54 @@ public sealed class TransferOrderServiceTests
             It.Is<IReadOnlyCollection<int>>(ids => ids.SequenceEqual(new[] { 10, 20 })),
             It.IsAny<CancellationToken>()), Times.Once);
     }
+
+    [Fact]
+    public async Task Approve_acquires_organization_lock_before_location_lock()
+    {
+        var events = new List<string>();
+        var unitOfWork = new Mock<IUnitOfWork>();
+        unitOfWork.Setup(uow => uow.ExecuteInTransactionAsync(
+                It.IsAny<Func<Task>>(), It.IsAny<CancellationToken>(), It.IsAny<Func<Task<bool>>?>()))
+            .Returns((Func<Func<Task>, CancellationToken, Func<Task<bool>>?, Task>)
+                ((operation, _, _) => operation()));
+        unitOfWork.Setup(uow => uow.AcquireTenantOperationLockAsync("organization-state", It.IsAny<CancellationToken>()))
+            .Callback(() => events.Add("organization"))
+            .Returns(Task.CompletedTask);
+        unitOfWork.Setup(uow => uow.AcquireLocationLocksAsync(
+                It.Is<IReadOnlyCollection<int>>(ids => ids.SequenceEqual(new[] { 10, 20 })),
+                It.IsAny<CancellationToken>()))
+            .Callback(() => events.Add("locations"))
+            .Returns(Task.CompletedTask);
+        var orderRepository = new Mock<IRepository<TransferOrder>>();
+        orderRepository.Setup(repository => repository.GetByIdAsync(1))
+            .ReturnsAsync(new TransferOrder { Id = 1, FromLocationId = 10, ToLocationId = 20 });
+        var lineRepository = new Mock<IRepository<TransferOrderLine>>();
+        lineRepository.Setup(repository => repository.FindAsync(It.IsAny<Expression<Func<TransferOrderLine, bool>>>()))
+            .ReturnsAsync([new TransferOrderLine { Id = 1, TransferOrderId = 1, ItemId = 1, Quantity = 1 }]);
+        var companyRepository = new Mock<IRepository<Company>>();
+        companyRepository.Setup(repository => repository.FindAsync(It.IsAny<Expression<Func<Company, bool>>>()))
+            .Callback(() => events.Add("validation"))
+            .ReturnsAsync(Array.Empty<Company>());
+        var service = new TransferOrderService(
+            orderRepository.Object,
+            lineRepository.Object,
+            new Mock<IRepository<DocumentIdentity>>().Object,
+            new Mock<IRepository<DocumentLineIdentity>>().Object,
+            companyRepository.Object,
+            new Mock<IRepository<Branch>>().Object,
+            new Mock<IRepository<Location>>().Object,
+            new Mock<IRepository<Item>>().Object,
+            unitOfWork.Object,
+            new Mock<IDocumentIdentityService>().Object,
+            new Mock<IStockService>().Object,
+            new TestTenantContext("transfer-order-test"),
+            new Mock<IWebhookDispatcher>().Object,
+            NullLogger<TransferOrderService>.Instance);
+
+        var act = () => service.ApproveAsync(1, new StockMutationScope(1));
+
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("An active company in the current tenant is required.");
+        events.Should().Equal("organization", "locations", "validation");
+    }
 }
