@@ -32,4 +32,19 @@ public interface ITransferOrderService
         int id,
         StockMutationScope mutationScope,
         CancellationToken cancellationToken = default);
+
+    Task<TransferDispatchView> DispatchAsync(
+        int id,
+        int lineId,
+        int quantity,
+        string idempotencyKey,
+        string dispatchedBy,
+        StockMutationScope mutationScope,
+        CancellationToken cancellationToken = default);
+
+    Task<TransferDispatchView?> GetDispatchByKeyAsync(
+        int id,
+        int lineId,
+        string idempotencyKey,
+        CancellationToken cancellationToken = default);
 }
