@@ -1,3 +1,4 @@
+using System.Linq.Expressions;
 using AutoFixture;
 using FluentAssertions;
 using Merconiq.Core.Entities;
@@ -18,7 +19,17 @@ public class PurchaseOrderServiceTests
     private readonly Mock<IDocumentIdentityService> _documentIdentityMock = new();
     private readonly Mock<IWebhookDispatcher> _webhookDispatcherMock = new();
     private readonly Mock<IRepository<TaxRule>> _taxRuleRepoMock = new();
+    private readonly Mock<IRepository<OrderDetail>> _orderDetailRepoMock = new();
+    private readonly Mock<IRepository<Supplier>> _supplierRepoMock = new();
+    private readonly Mock<IRepository<Item>> _itemRepoMock = new();
+    private readonly Mock<IRepository<UnitOfMeasure>> _unitRepoMock = new();
+    private readonly Mock<IRepository<DocumentIdentity>> _documentRepoMock = new();
     private readonly PurchaseOrderService _sut;
+    private List<OrderDetail> _testLines = [];
+    private List<Supplier> _testSuppliers = [];
+    private List<Item> _testItems = [];
+    private List<UnitOfMeasure> _testUnits = [];
+    private List<DocumentIdentity> _testDocuments = [];
 
     public PurchaseOrderServiceTests()
     {
@@ -29,7 +40,23 @@ public class PurchaseOrderServiceTests
             _webhookDispatcherMock.Object,
             new TestTenantContext("test-tenant"),
             NullLogger<PurchaseOrderService>.Instance,
-            _taxRuleRepoMock.Object);
+            _taxRuleRepoMock.Object,
+            _orderDetailRepoMock.Object,
+            _supplierRepoMock.Object,
+            _itemRepoMock.Object,
+            _unitRepoMock.Object,
+            _documentRepoMock.Object);
+
+        _orderDetailRepoMock.Setup(repository => repository.FindAsync(It.IsAny<Expression<Func<OrderDetail, bool>>>() ))
+            .ReturnsAsync((Expression<Func<OrderDetail, bool>> predicate) => _testLines.Where(predicate.Compile()).ToArray());
+        _supplierRepoMock.Setup(repository => repository.FindAsync(It.IsAny<Expression<Func<Supplier, bool>>>() ))
+            .ReturnsAsync((Expression<Func<Supplier, bool>> predicate) => _testSuppliers.Where(predicate.Compile()).ToArray());
+        _itemRepoMock.Setup(repository => repository.FindAsync(It.IsAny<Expression<Func<Item, bool>>>() ))
+            .ReturnsAsync((Expression<Func<Item, bool>> predicate) => _testItems.Where(predicate.Compile()).ToArray());
+        _unitRepoMock.Setup(repository => repository.FindAsync(It.IsAny<Expression<Func<UnitOfMeasure, bool>>>() ))
+            .ReturnsAsync((Expression<Func<UnitOfMeasure, bool>> predicate) => _testUnits.Where(predicate.Compile()).ToArray());
+        _documentRepoMock.Setup(repository => repository.FindAsync(It.IsAny<Expression<Func<DocumentIdentity, bool>>>() ))
+            .ReturnsAsync((Expression<Func<DocumentIdentity, bool>> predicate) => _testDocuments.Where(predicate.Compile()).ToArray());
 
         _documentIdentityMock
             .Setup(service => service.TryReplayPurchaseOrderAsync(
@@ -51,6 +78,10 @@ public class PurchaseOrderServiceTests
                 It.IsAny<DocumentLifecycleStatus>(),
                 It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
+        _uowMock
+            .Setup(unitOfWork => unitOfWork.ExecuteInReadSnapshotAsync(
+                It.IsAny<Func<Task>>(), It.IsAny<CancellationToken>()))
+            .Returns((Func<Task> operation, CancellationToken _) => operation());
         _uowMock
             .Setup(uow => uow.ExecuteInTransactionAsync(
                 It.IsAny<Func<Task>>(),
@@ -79,6 +110,9 @@ public class PurchaseOrderServiceTests
 
         // Assert
         result.Status.Should().Be(PurchaseOrderStatus.Pending);
+        result.CommercialVersion.Should().Be(1);
+        result.ApprovedCommercialVersion.Should().BeNull();
+        result.ApprovedCommercialSnapshotJson.Should().BeNull();
         result.TotalAmount.Should().Be(expectedTotal);
         result.OrderDetails.Should().BeEquivalentTo(details);
         _documentIdentityMock.Verify(service => service.CreatePurchaseOrderAsync(
@@ -87,6 +121,21 @@ public class PurchaseOrderServiceTests
             It.Is<IReadOnlyCollection<OrderDetail>>(value => value.Count == details.Count),
             "purchase-order-create-1",
             default), Times.Once);
+    }
+
+    [Fact]
+    public async Task CreatePurchaseOrderAsync_RejectsUnitPriceBeyondPersistedScale()
+    {
+        var order = new PurchaseOrder { PONumber = "PO-PRECISION", SupplierId = 1, CurrencyScale = 4 };
+        var detail = new OrderDetail { ItemId = 1, Quantity = 1, UnitPrice = 1.23456m };
+
+        var act = () => _sut.CreateAsync(order, [detail], "purchase-order-create-precision");
+
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("Unit price must fit within decimal(20,4) storage precision.");
+        _documentIdentityMock.Verify(service => service.TryReplayPurchaseOrderAsync(
+            It.IsAny<PurchaseOrder>(), It.IsAny<IReadOnlyCollection<OrderDetail>>(),
+            It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
@@ -302,14 +351,40 @@ public class PurchaseOrderServiceTests
             .With(p => p.Status, PurchaseOrderStatus.Pending)
             .Create();
         _poRepoMock.Setup(r => r.GetByIdAsync(po.Id)).ReturnsAsync(po);
+        SetupSnapshotData(po, new OrderDetail { Id = 1, PurchaseOrderId = po.Id, ItemId = 10, Quantity = 2, UnitPrice = 4m });
 
         // Act
         await _sut.UpdateStatusAsync(po.Id, "Approved");
 
         // Assert
         po.Status.Should().Be(PurchaseOrderStatus.Approved);
+        po.ApprovedCommercialVersion.Should().Be(po.CommercialVersion);
+        po.ApprovedCommercialSnapshotJson.Should().Contain("\"supplierName\"");
         _poRepoMock.Verify(r => r.UpdateAsync(It.IsAny<PurchaseOrder>()), Times.Never);
         _uowMock.Verify(u => u.SaveChangesAsync(default), Times.Once);
+    }
+
+    [Fact]
+    public async Task UpdateStatusAsync_WhenApprovingAnEmptyPurchaseOrder_RejectsWithoutMutation()
+    {
+        var po = new PurchaseOrder
+        {
+            Id = 902,
+            PONumber = "PO-EMPTY-902",
+            Status = PurchaseOrderStatus.Pending,
+            CommercialVersion = 1
+        };
+        _poRepoMock.Setup(repository => repository.GetByIdAsync(po.Id)).ReturnsAsync(po);
+
+        var act = () => _sut.UpdateStatusAsync(po.Id, nameof(PurchaseOrderStatus.Approved));
+
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("A purchase order must contain at least one line before it can be approved.");
+        po.Status.Should().Be(PurchaseOrderStatus.Pending);
+        po.ApprovedCommercialVersion.Should().BeNull();
+        po.ApprovedCommercialSnapshotJson.Should().BeNull();
+        _uowMock.Verify(unitOfWork => unitOfWork.SaveChangesAsync(default), Times.Never);
+        _webhookDispatcherMock.Invocations.Should().BeEmpty();
     }
 
     [Fact]
@@ -359,6 +434,7 @@ public class PurchaseOrderServiceTests
             .With(p => p.PONumber, "PO-1001")
             .Create();
         _poRepoMock.Setup(r => r.GetByIdAsync(po.Id)).ReturnsAsync(po);
+        SetupSnapshotData(po, new OrderDetail { Id = 1, PurchaseOrderId = po.Id, ItemId = 10, Quantity = 2, UnitPrice = 4m });
 
         // Act
         await _sut.UpdateStatusAsync(po.Id, "Approved");
@@ -409,6 +485,170 @@ public class PurchaseOrderServiceTests
         // Assert
         await act.Should().ThrowAsync<ArgumentException>()
             .WithMessage("Invalid status: InvalidStatus");
+    }
+
+    [Fact]
+    public async Task AmendApprovedAsync_WhenCommercialTermsChange_InvalidatesApprovalAndPreservesLineIdentity()
+    {
+        var po = new PurchaseOrder
+        {
+            Id = 53,
+            PONumber = "PO-53",
+            SupplierId = 7,
+            Status = PurchaseOrderStatus.Approved,
+            CommercialVersion = 3,
+            ApprovedCommercialVersion = 3,
+            ApprovedCommercialSnapshotJson = "{\"schemaVersion\":1}",
+            CurrencyScale = 2
+        };
+        var line = new OrderDetail
+        {
+            Id = 9,
+            PurchaseOrderId = po.Id,
+            ItemId = 21,
+            Quantity = 2,
+            UnitPrice = 4m,
+            CurrencyScale = 2
+        };
+        var stableLineId = line.DocumentLineId;
+        _poRepoMock.Setup(repository => repository.GetByIdAsync(po.Id)).ReturnsAsync(po);
+        SetupSnapshotData(po, line);
+
+        await _sut.AmendApprovedAsync(po.Id, new Merconiq.Core.Models.PurchaseOrderAmendment(
+            ExpectedCommercialVersion: 3,
+            SupplierId: 7,
+            DeliveryTerms: "Deliver to receiving bay",
+            Notes: null,
+            CurrencyScale: 2,
+            Lines: [new Merconiq.Core.Models.PurchaseOrderAmendmentLine(
+                line.Id, line.ItemId, line.Quantity, 6m, line.DiscountPercent,
+                line.TaxRuleId, line.TaxRatePercent, line.TaxCategory, line.TaxMode, line.Direction)]));
+
+        po.Status.Should().Be(PurchaseOrderStatus.Pending);
+        po.CommercialVersion.Should().Be(4);
+        po.ApprovedCommercialVersion.Should().Be(3);
+        po.ApprovedCommercialSnapshotJson.Should().Be("{\"schemaVersion\":1}");
+        po.TotalAmount.Should().Be(12m);
+        line.UnitPrice.Should().Be(6m);
+        line.DocumentLineId.Should().Be(stableLineId);
+        _uowMock.Verify(unitOfWork => unitOfWork.SaveChangesAsync(default), Times.Once);
+    }
+
+    [Fact]
+    public async Task AmendApprovedAsync_PreservesHistoricalTaxSnapshotWhenSelectedRuleIsNoLongerActive()
+    {
+        var effectiveFrom = new DateTime(2024, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+        var po = new PurchaseOrder
+        {
+            Id = 56,
+            PONumber = "PO-56",
+            SupplierId = 7,
+            Status = PurchaseOrderStatus.Approved,
+            CommercialVersion = 1,
+            ApprovedCommercialVersion = 1,
+            ApprovedCommercialSnapshotJson = "{\"schemaVersion\":1}",
+            CurrencyScale = 2
+        };
+        var line = new OrderDetail
+        {
+            Id = 11,
+            PurchaseOrderId = po.Id,
+            ItemId = 21,
+            Quantity = 2,
+            UnitPrice = 4m,
+            CurrencyScale = 2,
+            TaxRuleId = 77,
+            TaxRatePercent = 7.5m,
+            TaxCategory = TaxCategory.Standard,
+            TaxMode = TaxCalculationMode.Inclusive,
+            TaxEffectiveFromUtc = effectiveFrom
+        };
+        _poRepoMock.Setup(repository => repository.GetByIdAsync(po.Id)).ReturnsAsync(po);
+        SetupSnapshotData(po, line);
+
+        await _sut.AmendApprovedAsync(po.Id, new Merconiq.Core.Models.PurchaseOrderAmendment(
+            ExpectedCommercialVersion: 1,
+            SupplierId: po.SupplierId,
+            DeliveryTerms: "Updated receiving bay",
+            Notes: null,
+            CurrencyScale: 2,
+            Lines: [new Merconiq.Core.Models.PurchaseOrderAmendmentLine(
+                line.Id, line.ItemId, line.Quantity, line.UnitPrice, line.DiscountPercent,
+                line.TaxRuleId, line.TaxRatePercent, line.TaxCategory, line.TaxMode, line.Direction)]));
+
+        line.TaxRatePercent.Should().Be(7.5m);
+        line.TaxCategory.Should().Be(TaxCategory.Standard);
+        line.TaxMode.Should().Be(TaxCalculationMode.Inclusive);
+        line.TaxEffectiveFromUtc.Should().Be(effectiveFrom);
+        _taxRuleRepoMock.Verify(repository => repository.FindAsync(
+            It.IsAny<Expression<Func<TaxRule, bool>>>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task AmendApprovedAsync_WhenCommercialTermsAreUnchanged_DoesNotInvalidateApproval()
+    {
+        var po = new PurchaseOrder
+        {
+            Id = 54,
+            PONumber = "PO-54",
+            SupplierId = 7,
+            Status = PurchaseOrderStatus.Approved,
+            CommercialVersion = 1,
+            ApprovedCommercialVersion = 1,
+            ApprovedCommercialSnapshotJson = "{\"schemaVersion\":1}",
+            CurrencyScale = 2,
+            DeliveryTerms = "Collect"
+        };
+        var line = new OrderDetail
+        {
+            Id = 10,
+            PurchaseOrderId = po.Id,
+            ItemId = 21,
+            Quantity = 2,
+            UnitPrice = 4m,
+            CurrencyScale = 2
+        };
+        _poRepoMock.Setup(repository => repository.GetByIdAsync(po.Id)).ReturnsAsync(po);
+        SetupSnapshotData(po, line);
+
+        await _sut.AmendApprovedAsync(po.Id, new Merconiq.Core.Models.PurchaseOrderAmendment(
+            ExpectedCommercialVersion: 1,
+            SupplierId: 7,
+            DeliveryTerms: "Collect",
+            Notes: null,
+            CurrencyScale: 2,
+            Lines: [new Merconiq.Core.Models.PurchaseOrderAmendmentLine(
+                line.Id, line.ItemId, line.Quantity, line.UnitPrice, line.DiscountPercent,
+                line.TaxRuleId, line.TaxRatePercent, line.TaxCategory, line.TaxMode, line.Direction)]));
+
+        po.Status.Should().Be(PurchaseOrderStatus.Approved);
+        po.CommercialVersion.Should().Be(1);
+        po.ApprovedCommercialVersion.Should().Be(1);
+        _uowMock.Verify(unitOfWork => unitOfWork.SaveChangesAsync(default), Times.Never);
+    }
+
+    [Fact]
+    public async Task AmendApprovedAsync_WhenExpectedVersionIsStale_RejectsWithoutMutation()
+    {
+        var po = new PurchaseOrder
+        {
+            Id = 55,
+            SupplierId = 7,
+            Status = PurchaseOrderStatus.Approved,
+            CommercialVersion = 2,
+            ApprovedCommercialVersion = 2,
+            ApprovedCommercialSnapshotJson = "{\"schemaVersion\":1}"
+        };
+        _poRepoMock.Setup(repository => repository.GetByIdAsync(po.Id)).ReturnsAsync(po);
+
+        var act = () => _sut.AmendApprovedAsync(po.Id, new Merconiq.Core.Models.PurchaseOrderAmendment(
+            1, 7, null, null, 2, []));
+
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("The purchase order changed after this amendment form was opened. Reload and try again.");
+        po.Status.Should().Be(PurchaseOrderStatus.Approved);
+        po.CommercialVersion.Should().Be(2);
+        _uowMock.Verify(unitOfWork => unitOfWork.SaveChangesAsync(default), Times.Never);
     }
 
     [Theory]
@@ -499,5 +739,34 @@ public class PurchaseOrderServiceTests
 
         // Assert
         _poRepoMock.Verify(r => r.DeleteAsync(It.IsAny<PurchaseOrder>()), Times.Never);
+    }
+
+    private void SetupSnapshotData(PurchaseOrder po, params OrderDetail[] lines)
+    {
+        if (string.IsNullOrWhiteSpace(po.PONumber) || po.PONumber.Length > 50)
+            po.PONumber = $"PO-{po.Id}";
+        if (po.OrderDate.Year is < 2000 or > 9999)
+            po.OrderDate = DateTime.UtcNow;
+
+        _testLines = lines.ToList();
+        foreach (var line in lines)
+            _orderDetailRepoMock.Setup(repository => repository.GetByIdAsync(line.Id)).ReturnsAsync(line);
+        _testSuppliers = [new Supplier { Id = po.SupplierId, Name = "Approved supplier", Address = "1 Warehouse Road", Email = "buyer@example.test" }];
+        _testItems = lines.Select(line => new Item
+        {
+            Id = line.ItemId,
+            ItemCode = $"ITEM-{line.ItemId}",
+            Description = "Approved item"
+        }).DistinctBy(item => item.Id).ToList();
+        _testUnits = [];
+        _testDocuments = [DocumentIdentity.Create(
+            po.DocumentId,
+            po.TenantId,
+            companyId: null,
+            "PurchaseOrder",
+            po.PONumber,
+            po.OrderDate.Year,
+            DocumentLifecycleStatus.Active,
+            "PurchaseOrderServiceTests")];
     }
 }

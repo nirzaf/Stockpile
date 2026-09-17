@@ -1,0 +1,204 @@
+@page "/PurchaseOrders/Amend/{Id:int}"
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Components.Authorization
+@using Merconiq.Core.Entities
+@using Merconiq.Core.Interfaces
+@using Merconiq.Core.Models
+@using Merconiq.Core.Services
+@using Merconiq.Web.Security
+@attribute [Authorize(Policy = CapabilityPolicies.TenantAdministrator)]
+@inject IPurchaseOrderService POService
+@inject ISupplierService SupplierService
+@inject IItemService ItemService
+@inject IRepository<TaxRule> TaxRuleRepository
+@inject AuthenticationStateProvider AuthenticationStateProvider
+@inject ICurrentUserAuthorization CurrentUserAuthorization
+@inject ISnackbar Snackbar
+@inject NavigationManager Nav
+
+<PageTitle>Amend Purchase Order</PageTitle>
+<MudText Typo="Typo.h4" Color="Color.Primary" Class="mb-3">Amend Purchase Order</MudText>
+<MudDivider Class="mb-4" />
+
+@if (_order is null)
+{
+    <MudProgressCircular Color="Color.Primary" Indeterminate="true" />
+}
+else
+{
+    <MudAlert Severity="Severity.Warning" Class="mb-3">
+        Saving a material amendment returns this PO to Pending. Its previous approved snapshot is retained and a buyer must approve the new commercial version.
+    </MudAlert>
+    <MudPaper Elevation="1" Class="pa-4">
+        <EditForm Model="this" OnValidSubmit="SaveAmendment">
+            <MudGrid>
+                <MudItem xs="12" sm="6">
+                    <MudSelect T="int" @bind-Value="_supplierId" Label="Supplier" Required="true">
+                        @foreach (var supplier in _suppliers)
+                        {
+                            <MudSelectItem T="int" Value="@supplier.Id">@supplier.Name</MudSelectItem>
+                        }
+                    </MudSelect>
+                </MudItem>
+                <MudItem xs="12" sm="6">
+                    <MudNumericField T="int" @bind-Value="_currencyScale" Label="Currency decimals" Min="0" Max="4" Required="true" />
+                </MudItem>
+                <MudItem xs="12">
+                    <MudTextField T="string" @bind-Value="_deliveryTerms" Label="Delivery terms" Lines="2" MaxLength="1000" />
+                    <MudTextField T="string" @bind-Value="_notes" Label="Notes" Lines="2" />
+                </MudItem>
+            </MudGrid>
+
+            <MudText Typo="Typo.h6" Class="mt-4 mb-2">Existing PO lines (line identities are preserved)</MudText>
+            @foreach (var line in _lines)
+            {
+                <MudPaper Outlined="true" Class="pa-3 mb-3">
+                    <MudGrid>
+                        <MudItem xs="12" md="4">
+                            <MudSelect T="int" @bind-Value="line.ItemId" Label="Item" Required="true">
+                                @foreach (var item in _items)
+                                {
+                                    <MudSelectItem T="int" Value="@item.Id">@item.ItemCode - @item.Description</MudSelectItem>
+                                }
+                            </MudSelect>
+                        </MudItem>
+                        <MudItem xs="6" md="2"><MudNumericField T="int" @bind-Value="line.Quantity" Label="Quantity" Min="1" Required="true" /></MudItem>
+                        <MudItem xs="6" md="2"><MudNumericField T="decimal" @bind-Value="line.UnitPrice" Label="Unit price" Min="0" Format="@UnitPriceFormat" Required="true" /></MudItem>
+                        <MudItem xs="6" md="2"><MudNumericField T="decimal" @bind-Value="line.DiscountPercent" Label="Discount %" Min="0" Max="100" Format="N2" /></MudItem>
+                        <MudItem xs="6" md="2">
+                            <MudSelect T="int?" @bind-Value="line.TaxRuleId" Label="Tax rule">
+                                <MudSelectItem T="int?" Value="@((int?)null)">No tax rule</MudSelectItem>
+                                @foreach (var rule in _taxRules)
+                                {
+                                    <MudSelectItem T="int?" Value="@((int?)rule.Id)">@rule.Code (@rule.RatePercent%)</MudSelectItem>
+                                }
+                            </MudSelect>
+                        </MudItem>
+                        <MudItem xs="6" md="3"><MudNumericField T="decimal" @bind-Value="line.TaxRatePercent" Label="Tax rate %" Min="0" Format="N2" Disabled="@line.TaxRuleId.HasValue" /></MudItem>
+                        <MudItem xs="6" md="3">
+                            <MudSelect T="TaxCategory" @bind-Value="line.TaxCategory" Label="Tax category" Disabled="@line.TaxRuleId.HasValue">
+                                @foreach (var category in Enum.GetValues<TaxCategory>())
+                                {
+                                    <MudSelectItem T="TaxCategory" Value="@category">@category</MudSelectItem>
+                                }
+                            </MudSelect>
+                        </MudItem>
+                        <MudItem xs="6" md="3">
+                            <MudSelect T="TaxCalculationMode" @bind-Value="line.TaxMode" Label="Tax pricing" Disabled="@line.TaxRuleId.HasValue">
+                                @foreach (var mode in Enum.GetValues<TaxCalculationMode>())
+                                {
+                                    <MudSelectItem T="TaxCalculationMode" Value="@mode">@mode</MudSelectItem>
+                                }
+                            </MudSelect>
+                        </MudItem>
+                    </MudGrid>
+                </MudPaper>
+            }
+
+            <div class="d-flex gap-2 mt-4">
+                <MudButton ButtonType="ButtonType.Submit" Variant="Variant.Filled" Color="Color.Warning">Save amendment and require reapproval</MudButton>
+                <MudButton Href="@($"/PurchaseOrders/Details/{Id}")" Variant="Variant.Outlined" Color="Color.Secondary">Cancel</MudButton>
+            </div>
+        </EditForm>
+    </MudPaper>
+}
+
+@code {
+    [Parameter] public int Id { get; set; }
+
+    private PurchaseOrder? _order;
+    private int _expectedVersion;
+    private int _supplierId;
+    private int _currencyScale;
+    private string UnitPriceFormat => $"N{_currencyScale}";
+    private string? _deliveryTerms;
+    private string? _notes;
+    private List<Supplier> _suppliers = [];
+    private List<Item> _items = [];
+    private List<TaxRule> _taxRules = [];
+    private List<LineEdit> _lines = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        var principal = (await AuthenticationStateProvider.GetAuthenticationStateAsync()).User;
+        if (!await CurrentUserAuthorization.IsTenantAdministratorAsync(principal))
+        {
+            Nav.NavigateTo("/PurchaseOrders");
+            return;
+        }
+
+        _order = await POService.GetForAmendmentAsync(Id);
+        if (_order is null || _order.Status != PurchaseOrderStatus.Approved)
+        {
+            Snackbar.Add("Only an approved purchase order can be amended.", Severity.Error);
+            Nav.NavigateTo("/PurchaseOrders");
+            return;
+        }
+
+        _expectedVersion = _order.CommercialVersion;
+        _supplierId = _order.SupplierId;
+        _currencyScale = _order.CurrencyScale;
+        _deliveryTerms = _order.DeliveryTerms;
+        _notes = _order.Notes;
+        _suppliers = (await SupplierService.GetAllAsync()).ToList();
+        _items = (await ItemService.GetAllAsync()).ToList();
+        _taxRules = (await TaxRuleRepository.FindAsync(rule => rule.IsActive)).ToList();
+        _lines = _order.OrderDetails.OrderBy(line => line.Id).Select(line => new LineEdit
+        {
+            Id = line.Id,
+            ItemId = line.ItemId,
+            Quantity = line.Quantity,
+            UnitPrice = line.UnitPrice,
+            DiscountPercent = line.DiscountPercent,
+            TaxRuleId = line.TaxRuleId,
+            TaxRatePercent = line.TaxRatePercent,
+            TaxCategory = line.TaxCategory,
+            TaxMode = line.TaxMode,
+            Direction = line.Direction
+        }).ToList();
+    }
+
+    private async Task SaveAmendment()
+    {
+        try
+        {
+            var principal = (await AuthenticationStateProvider.GetAuthenticationStateAsync()).User;
+            if (!await CurrentUserAuthorization.IsTenantAdministratorAsync(principal))
+            {
+                Snackbar.Add("Tenant administrator access is required for tenant-wide purchase orders.", Severity.Error);
+                return;
+            }
+
+            var amendment = new PurchaseOrderAmendment(
+                _expectedVersion,
+                _supplierId,
+                _deliveryTerms,
+                _notes,
+                _currencyScale,
+                _lines.Select(line => new PurchaseOrderAmendmentLine(
+                    line.Id, line.ItemId, line.Quantity, line.UnitPrice, line.DiscountPercent,
+                    line.TaxRuleId, line.TaxRatePercent, line.TaxCategory, line.TaxMode, line.Direction)).ToArray());
+            await POService.AmendApprovedAsync(Id, amendment);
+            Snackbar.Add("Amendment saved. The purchase order is Pending and requires reapproval.", Severity.Success);
+            Nav.NavigateTo($"/PurchaseOrders/Details/{Id}");
+        }
+        catch (Exception exception)
+        {
+            Snackbar.Add(exception.Message, Severity.Error);
+        }
+    }
+
+    private sealed class LineEdit
+    {
+        public int Id { get; init; }
+        public int ItemId { get; set; }
+        public int Quantity { get; set; }
+        public decimal UnitPrice { get; set; }
+        public decimal DiscountPercent { get; set; }
+        public int? TaxRuleId { get; set; }
+        public decimal TaxRatePercent { get; set; }
+        public TaxCategory TaxCategory { get; set; }
+        public TaxCalculationMode TaxMode { get; set; }
+        public DocumentLineDirection Direction { get; set; }
+    }
+}

@@ -335,6 +335,7 @@ public sealed class DocumentIdentityService(
         var payload = new StringBuilder();
         AppendField(payload, purchaseOrder.PONumber.Trim());
         AppendField(payload, purchaseOrder.SupplierId.ToString(CultureInfo.InvariantCulture));
+        AppendField(payload, NormalizeDeliveryTerms(purchaseOrder.DeliveryTerms));
         AppendField(payload, purchaseOrder.Notes);
         AppendField(payload, purchaseOrder.Status.ToString());
         AppendField(payload, details.Count.ToString(CultureInfo.InvariantCulture));
@@ -374,6 +375,9 @@ public sealed class DocumentIdentityService(
             .Append(':')
             .Append(value);
     }
+
+    private static string? NormalizeDeliveryTerms(string? deliveryTerms) =>
+        string.IsNullOrWhiteSpace(deliveryTerms) ? null : deliveryTerms.Trim();
 
     private static string HashNumberedRequest(int companyId, string documentType, int period, string prefix, string requestHash)
     {
