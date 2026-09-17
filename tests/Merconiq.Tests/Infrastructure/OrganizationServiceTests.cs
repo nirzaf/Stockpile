@@ -167,6 +167,52 @@ public sealed class OrganizationServiceTests
     }
 
     [Fact]
+    public async Task Location_branch_ownership_cannot_change_while_an_active_transfer_order_references_it()
+    {
+        await using var context = CreateContext(Guid.NewGuid().ToString(), "tenant-a");
+        var company = new Company { Code = "COMPANY", LegalName = "Company" };
+        var originalBranch = new Branch { Company = company, Code = "ORIGINAL", Name = "Original" };
+        var destinationBranch = new Branch { Company = company, Code = "DESTINATION", Name = "Destination" };
+        var newBranch = new Branch { Company = company, Code = "NEW", Name = "New" };
+        var location = new Location { Branch = originalBranch, Name = "Source" };
+        var destination = new Location { Branch = destinationBranch, Name = "Destination" };
+        context.Companies.Add(company);
+        context.Branches.AddRange(originalBranch, destinationBranch, newBranch);
+        context.Locations.AddRange(location, destination);
+        await context.SaveChangesAsync();
+
+        var identity = DocumentIdentity.Create(
+            DocumentIdentityId.New(),
+            "tenant-a",
+            company.Id,
+            "TransferOrder",
+            "TO-2026-000001",
+            2026,
+            DocumentLifecycleStatus.Draft,
+            "TransferOrder.Create");
+        var order = new TransferOrder
+        {
+            CompanyId = company.Id,
+            FromLocationId = location.Id,
+            ToLocationId = destination.Id,
+            Status = TransferOrderStatus.Approved,
+            TenantId = "tenant-a"
+        };
+        order.AttachDocumentIdentity(identity);
+        context.DocumentIdentities.Add(identity);
+        context.TransferOrders.Add(order);
+        await context.SaveChangesAsync();
+
+        var service = CreateService(context, "tenant-a");
+        var act = () => service.AssignLocationBranchAsync(location.Id, newBranch.Id);
+
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("A location's branch ownership cannot change while an active transfer order references it.");
+        (await context.Locations.SingleAsync(candidate => candidate.Id == location.Id))
+            .BranchId.Should().Be(originalBranch.Id);
+    }
+
+    [Fact]
     public async Task Unmapped_legacy_location_can_be_assigned_after_posted_stock_activity()
     {
         await using var context = CreateContext(Guid.NewGuid().ToString(), "tenant-a");

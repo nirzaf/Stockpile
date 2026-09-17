@@ -70,6 +70,17 @@ public sealed class DocumentIdentityPostgreSqlIntegrationTests(PostgreSqlIntegra
         {
             var unitOfWork = new UnitOfWork(retryContext);
             var service = new DocumentIdentityService(retryContext, unitOfWork, new DocumentNumberService(retryContext, unitOfWork));
+            var nextYearReplay = await service.CreateNumberedAsync(
+                companyId,
+                "PurchaseInvoice",
+                2027,
+                "PINV-",
+                "PurchaseInvoice.Create",
+                requestKey,
+                requestHash);
+            nextYearReplay.Id.Should().Be(identities[0].Id);
+            nextYearReplay.Period.Should().Be(2026);
+
             var act = () => service.CreateNumberedAsync(
                 companyId,
                 "PurchaseInvoice",

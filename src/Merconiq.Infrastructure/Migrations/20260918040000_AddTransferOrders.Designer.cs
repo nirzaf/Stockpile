@@ -3,6 +3,7 @@ using System;
 using Merconiq.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace Merconiq.Infrastructure.Migrations
 {
     [DbContext(typeof(InventoryDbContext))]
-    partial class InventoryDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260918040000_AddTransferOrders")]
+    partial class AddTransferOrders
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -1350,10 +1353,6 @@ namespace Merconiq.Infrastructure.Migrations
                     b.Property<DateTime?>("ExpiryDate")
                         .HasColumnType("timestamp with time zone");
 
-                    b.Property<string>("ExpiryExceptionReason")
-                        .HasMaxLength(500)
-                        .HasColumnType("character varying(500)");
-
                     b.Property<int>("ItemId")
                         .HasColumnType("integer");
 
@@ -1408,75 +1407,6 @@ namespace Merconiq.Infrastructure.Migrations
                     b.ToTable("StockReservations");
                 });
 
-            modelBuilder.Entity("Merconiq.Core.Entities.StockReservationAllocation", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer");
-
-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
-
-                    b.Property<string>("BatchNumber")
-                        .HasMaxLength(100)
-                        .HasColumnType("character varying(100)");
-
-                    b.Property<int>("ConsumedQuantity")
-                        .HasColumnType("integer");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("CreatedBy")
-                        .HasColumnType("text");
-
-                    b.Property<DateTime?>("ExpiryDate")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("ExpiryExceptionReason")
-                        .HasMaxLength(500)
-                        .HasColumnType("character varying(500)");
-
-                    b.Property<int>("Ordinal")
-                        .HasColumnType("integer");
-
-                    b.Property<int>("Quantity")
-                        .HasColumnType("integer");
-
-                    b.Property<int>("ReservationId")
-                        .HasColumnType("integer");
-
-                    b.Property<string>("TenantId")
-                        .IsRequired()
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)");
-
-                    b.Property<DateTime?>("UpdatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("UpdatedBy")
-                        .HasColumnType("text");
-
-                    b.Property<uint>("Version")
-                        .IsConcurrencyToken()
-                        .ValueGeneratedOnAddOrUpdate()
-                        .HasColumnType("xid")
-                        .HasColumnName("xmin");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("ReservationId", "TenantId");
-
-                    b.HasIndex("TenantId", "ReservationId");
-
-                    b.HasIndex("TenantId", "ReservationId", "Ordinal")
-                        .IsUnique();
-
-                    b.ToTable("StockReservationAllocations", t =>
-                        {
-                            t.HasCheckConstraint("CK_StockReservationAllocations_Quantities", "\"Quantity\" > 0 AND \"ConsumedQuantity\" >= 0 AND \"ConsumedQuantity\" <= \"Quantity\"");
-                        });
-                });
-
             modelBuilder.Entity("Merconiq.Core.Entities.StockTransaction", b =>
                 {
                     b.Property<int>("Id")
@@ -1498,10 +1428,6 @@ namespace Merconiq.Infrastructure.Migrations
                     b.Property<DateTime?>("ExpiryDate")
                         .HasColumnType("timestamp with time zone");
 
-                    b.Property<string>("ExpiryExceptionReason")
-                        .HasMaxLength(500)
-                        .HasColumnType("character varying(500)");
-
                     b.Property<int>("FromLocationId")
                         .HasColumnType("integer");
 
@@ -1517,10 +1443,6 @@ namespace Merconiq.Infrastructure.Migrations
 
                     b.Property<int>("Quantity")
                         .HasColumnType("integer");
-
-                    b.Property<string>("QuarantineReason")
-                        .HasMaxLength(500)
-                        .HasColumnType("character varying(500)");
 
                     b.Property<string>("ReturnDisposition")
                         .HasMaxLength(32)
@@ -2543,18 +2465,6 @@ namespace Merconiq.Infrastructure.Migrations
                     b.Navigation("Location");
                 });
 
-            modelBuilder.Entity("Merconiq.Core.Entities.StockReservationAllocation", b =>
-                {
-                    b.HasOne("Merconiq.Core.Entities.StockReservation", "Reservation")
-                        .WithMany("Allocations")
-                        .HasForeignKey("ReservationId", "TenantId")
-                        .HasPrincipalKey("Id", "TenantId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-
-                    b.Navigation("Reservation");
-                });
-
             modelBuilder.Entity("Merconiq.Core.Entities.StockTransaction", b =>
                 {
                     b.HasOne("Merconiq.Core.Entities.Item", "Item")
@@ -2813,11 +2723,6 @@ namespace Merconiq.Infrastructure.Migrations
             modelBuilder.Entity("Merconiq.Core.Entities.PurchaseOrder", b =>
                 {
                     b.Navigation("OrderDetails");
-                });
-
-            modelBuilder.Entity("Merconiq.Core.Entities.StockReservation", b =>
-                {
-                    b.Navigation("Allocations");
                 });
 
             modelBuilder.Entity("Merconiq.Core.Entities.Supplier", b =>
