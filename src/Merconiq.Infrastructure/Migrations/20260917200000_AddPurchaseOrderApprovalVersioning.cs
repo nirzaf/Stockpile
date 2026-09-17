@@ -119,7 +119,7 @@ namespace Merconiq.Infrastructure.Migrations
                                AND unit."TenantId" = item."TenantId"
                             WHERE line."PurchaseOrderId" = po."Id"
                               AND line."TenantId" = po."TenantId"
-                        ), '[]'::jsonb))::text
+                        ), '[]'::jsonb))
                 FROM "Suppliers" AS supplier
                 WHERE po."Status" = 'Approved'
                   AND supplier."Id" = po."SupplierId"
