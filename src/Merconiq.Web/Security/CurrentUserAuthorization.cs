@@ -116,6 +116,13 @@ public sealed class CurrentUserAuthorization(
             return await CanAccessCompanyAsync(db, user, roles, companyId.Value, capability);
         });
 
+    public Task<int?> GetLocationCompanyIdAsync(ClaimsPrincipal principal, int locationId) =>
+        WithCurrentUserAsync(principal, (int?)null, async (db, _, _) =>
+            await db.Locations
+                .Where(location => location.Id == locationId)
+                .Select(location => (int?)location.Branch!.CompanyId)
+                .SingleOrDefaultAsync());
+
     public Task<bool> CanAccessTransferAsync(
         ClaimsPrincipal principal,
         int fromLocationId,

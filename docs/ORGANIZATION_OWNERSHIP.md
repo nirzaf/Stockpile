@@ -54,6 +54,24 @@ future adapters, but no decimal stock API is implied here. Weighted goods and
 other fractional stock require an explicitly versioned additive quantity contract
 before they can be posted; callers must not silently round them.
 
+An owner-approved mapping may assign a branch to an existing unmapped location
+without moving or rewriting its stock history. Once a location already has a
+branch and posted stock activity, its branch ownership cannot be changed;
+historical movements remain tied to the company context under which they were
+posted. Branch assignment and stock posting share tenant-scoped, per-location
+transaction locks, so the history check cannot race a movement commit.
+
+User-facing stock commands carry the company scope that was authorized before
+dispatch. After acquiring the same location lock, the stock service verifies
+that each affected location still belongs to that company and rechecks the
+company capability; a reassignment or revocation that wins before posting causes
+the old authorization to fail closed. Reservation
+creation, release, cancellation, consumption, and opening-stock reversals use
+the location lock as well. A reversal serializes by import before checking its
+correction record, then acquires all affected location locks in ascending order
+before posting, so concurrent retries are idempotent and cannot deadlock against
+multi-location transfers.
+
 Stock receive, sell, and transfer operations resolve every location through
 the current tenant scope. Transfers between two branch-owned locations are
 limited to one company; intentionally unmapped legacy locations remain usable

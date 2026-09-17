@@ -147,6 +147,43 @@ public sealed class OrganizationServiceTests
     }
 
     [Fact]
+    public async Task Location_branch_ownership_cannot_change_after_posted_stock_activity()
+    {
+        await using var context = CreateContext(Guid.NewGuid().ToString(), "tenant-a");
+        var company = new Company { Code = "COMPANY", LegalName = "Company" };
+        var originalBranch = new Branch { Company = company, Code = "ORIGINAL", Name = "Original" };
+        var newBranch = new Branch { Company = company, Code = "NEW", Name = "New" };
+        var location = new Location { Branch = originalBranch, Name = "Warehouse" };
+        context.StockTransactions.Add(new StockTransaction { FromLocation = location, Quantity = 1 });
+        context.Branches.Add(newBranch);
+        await context.SaveChangesAsync();
+        var service = CreateService(context, "tenant-a");
+
+        var act = () => service.AssignLocationBranchAsync(location.Id, newBranch.Id);
+
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("A location's branch ownership cannot change after posted stock activity.");
+        (await context.Locations.SingleAsync()).BranchId.Should().Be(originalBranch.Id);
+    }
+
+    [Fact]
+    public async Task Unmapped_legacy_location_can_be_assigned_after_posted_stock_activity()
+    {
+        await using var context = CreateContext(Guid.NewGuid().ToString(), "tenant-a");
+        var company = new Company { Code = "COMPANY", LegalName = "Company" };
+        var branch = new Branch { Company = company, Code = "BRANCH", Name = "Branch" };
+        var location = new Location { Name = "Legacy warehouse" };
+        context.StockTransactions.Add(new StockTransaction { FromLocation = location, Quantity = 1 });
+        context.Branches.Add(branch);
+        await context.SaveChangesAsync();
+        var service = CreateService(context, "tenant-a");
+
+        await service.AssignLocationBranchAsync(location.Id, branch.Id);
+
+        (await context.Locations.SingleAsync()).BranchId.Should().Be(branch.Id);
+    }
+
+    [Fact]
     public async Task Company_base_currency_cannot_change_after_stock_activity()
     {
         await using var context = CreateContext(Guid.NewGuid().ToString(), "tenant-a");
