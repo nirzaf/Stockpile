@@ -1,4 +1,5 @@
 using Merconiq.Core.Entities;
+using Merconiq.Core.Exceptions;
 using Merconiq.Core.Interfaces;
 using Merconiq.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
@@ -37,6 +38,7 @@ public sealed class IdempotencyKeyStore(
             return;
         }
 
+        var claimedVersion = record.Version;
         var ownsTransaction = !unitOfWork.HasActiveTransaction;
         var concurrencyRetries = 3;
         try
@@ -47,6 +49,7 @@ public sealed class IdempotencyKeyStore(
                 {
                     await unitOfWork.ExecuteInTransactionAsync(async () =>
                     {
+                        await EnsureClaimCurrentAsync(record.Id, claimedVersion);
                         await operation();
                         TrackRecord(record);
                         record.Status = IdempotencyRecordStatus.Completed;
@@ -95,7 +98,27 @@ public sealed class IdempotencyKeyStore(
             }
             context.ChangeTracker.Clear();
             record = await context.IdempotencyRecords
-                .SingleAsync(item => item.Id == recordId, CancellationToken.None);
+                .SingleOrDefaultAsync(item => item.Id == recordId, CancellationToken.None);
+            if (record is null)
+            {
+                throw new ConcurrencyException("The idempotency claim no longer exists; the operation outcome must be reconciled.", ex);
+            }
+
+            if (record.Status == IdempotencyRecordStatus.Completed &&
+                string.Equals(record.RequestHash, requestHash, StringComparison.Ordinal))
+            {
+                // Another claimant completed the same request after this worker's
+                // lease expired. Its result is the durable outcome for this key.
+                return;
+            }
+
+            if (record.Version != claimedVersion || record.Status != IdempotencyRecordStatus.InProgress)
+            {
+                // Never let an expired worker overwrite the current owner's claim or
+                // mark its attempt failed. The row version is the fencing token.
+                throw new ConcurrencyException("The idempotency claim was reclaimed by another worker.", ex);
+            }
+
             record.Status = IdempotencyRecordStatus.Failed;
             record.LeaseUntil = null;
             record.LastError = ex.Message[..Math.Min(ex.Message.Length, 4096)];
@@ -131,13 +154,22 @@ public sealed class IdempotencyKeyStore(
         var now = DateTimeOffset.UtcNow;
         var deadline = now.Add(MaxClaimWait);
         var expired = await context.IdempotencyRecords
-            .Where(record => record.ExpiresAt <= now)
+            .Where(record => record.ExpiresAt <= now && record.Status != IdempotencyRecordStatus.InProgress)
             .Take(100)
             .ToListAsync(cancellationToken);
         if (expired.Count > 0)
         {
             context.IdempotencyRecords.RemoveRange(expired);
-            await context.SaveChangesAsync(cancellationToken);
+            try
+            {
+                await context.SaveChangesAsync(cancellationToken);
+            }
+            catch (DbUpdateConcurrencyException)
+            {
+                // A failed/completed record may have been reclaimed between cleanup
+                // selection and deletion. Retry the claim against its fresh state.
+                context.ChangeTracker.Clear();
+            }
         }
 
         while (true)
@@ -174,7 +206,17 @@ public sealed class IdempotencyKeyStore(
                 record.AttemptCount++;
                 record.LeaseUntil = now.Add(ClaimLease);
                 record.LastError = null;
-                await context.SaveChangesAsync(cancellationToken);
+                try
+                {
+                    await context.SaveChangesAsync(cancellationToken);
+                }
+                catch (DbUpdateConcurrencyException)
+                {
+                    // Only one worker may reclaim an expired/failed row version.
+                    context.ChangeTracker.Clear();
+                    await Task.Delay(TimeSpan.FromMilliseconds(25), cancellationToken);
+                    continue;
+                }
                 return record;
             }
 
@@ -203,4 +245,21 @@ public sealed class IdempotencyKeyStore(
         }
     }
 
+    private async Task EnsureClaimCurrentAsync(long recordId, uint claimedVersion)
+    {
+        var current = await context.IdempotencyRecords
+            .AsNoTracking()
+            .SingleOrDefaultAsync(item => item.Id == recordId, CancellationToken.None);
+
+        if (current is null ||
+            current.Version != claimedVersion ||
+            current.Status != IdempotencyRecordStatus.InProgress ||
+            current.LeaseUntil is not DateTimeOffset leaseUntil ||
+            leaseUntil <= DateTimeOffset.UtcNow)
+        {
+            // Do not run business work under a stale claim. The completion update also
+            // uses xmin, covering a lease that expires while the operation is running.
+            throw new ConcurrencyException("The idempotency claim expired or was reclaimed by another worker.");
+        }
+    }
 }

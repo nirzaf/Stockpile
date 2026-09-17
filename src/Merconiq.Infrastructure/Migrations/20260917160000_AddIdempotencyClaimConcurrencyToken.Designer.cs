@@ -3,6 +3,7 @@ using System;
 using Merconiq.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace Merconiq.Infrastructure.Migrations
 {
     [DbContext(typeof(InventoryDbContext))]
-    partial class InventoryDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260917160000_AddIdempotencyClaimConcurrencyToken")]
+    partial class AddIdempotencyClaimConcurrencyToken
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -795,81 +798,6 @@ namespace Merconiq.Infrastructure.Migrations
                     b.ToTable("Locations");
                 });
 
-            modelBuilder.Entity("Merconiq.Core.Entities.OpeningStockCorrection", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer");
-
-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
-
-                    b.Property<string>("ApprovalReference")
-                        .IsRequired()
-                        .HasMaxLength(128)
-                        .HasColumnType("character varying(128)");
-
-                    b.Property<DateTime>("CorrectedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("CorrectedBy")
-                        .IsRequired()
-                        .HasMaxLength(256)
-                        .HasColumnType("character varying(256)");
-
-                    b.Property<string>("CorrectionReference")
-                        .IsRequired()
-                        .HasMaxLength(128)
-                        .HasColumnType("character varying(128)");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("CreatedBy")
-                        .HasColumnType("text");
-
-                    b.Property<int>("LineCount")
-                        .HasColumnType("integer");
-
-                    b.Property<int>("OpeningStockImportId")
-                        .HasColumnType("integer");
-
-                    b.Property<string>("Reason")
-                        .IsRequired()
-                        .HasMaxLength(500)
-                        .HasColumnType("character varying(500)");
-
-                    b.Property<string>("RequestHash")
-                        .IsRequired()
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)");
-
-                    b.Property<string>("TenantId")
-                        .IsRequired()
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)");
-
-                    b.Property<DateTime?>("UpdatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("UpdatedBy")
-                        .HasColumnType("text");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("OpeningStockImportId", "TenantId");
-
-                    b.HasIndex("TenantId", "ApprovalReference")
-                        .IsUnique();
-
-                    b.HasIndex("TenantId", "CorrectionReference")
-                        .IsUnique();
-
-                    b.HasIndex("TenantId", "OpeningStockImportId")
-                        .IsUnique();
-
-                    b.ToTable("OpeningStockCorrections");
-                });
-
             modelBuilder.Entity("Merconiq.Core.Entities.OpeningStockImport", b =>
                 {
                     b.Property<int>("Id")
@@ -897,9 +825,6 @@ namespace Merconiq.Infrastructure.Migrations
                     b.Property<string>("CreatedBy")
                         .HasColumnType("text");
 
-                    b.Property<DateTime>("CutoverAt")
-                        .HasColumnType("timestamp with time zone");
-
                     b.Property<string>("ImportReference")
                         .IsRequired()
                         .HasMaxLength(128)
@@ -925,9 +850,6 @@ namespace Merconiq.Infrastructure.Migrations
                         .HasColumnType("text");
 
                     b.HasKey("Id");
-
-                    b.HasIndex("TenantId")
-                        .IsUnique();
 
                     b.HasIndex("TenantId", "ApprovalReference")
                         .IsUnique();
@@ -972,9 +894,6 @@ namespace Merconiq.Infrastructure.Migrations
                     b.Property<int>("RowNumber")
                         .HasColumnType("integer");
 
-                    b.Property<int?>("StockTransactionId")
-                        .HasColumnType("integer");
-
                     b.Property<string>("TenantId")
                         .IsRequired()
                         .HasMaxLength(64)
@@ -999,8 +918,6 @@ namespace Merconiq.Infrastructure.Migrations
                         .IsUnique();
 
                     b.HasIndex("OpeningStockImportId", "TenantId");
-
-                    b.HasIndex("StockTransactionId", "TenantId");
 
                     b.HasIndex("TenantId", "ItemId", "LocationId");
 
@@ -1632,10 +1549,6 @@ namespace Merconiq.Infrastructure.Migrations
                     b.Property<int?>("LastStatusCode")
                         .HasColumnType("integer");
 
-                    b.Property<Guid?>("LeaseToken")
-                        .IsConcurrencyToken()
-                        .HasColumnType("uuid");
-
                     b.Property<DateTimeOffset?>("LeaseUntil")
                         .HasColumnType("timestamp with time zone");
 
@@ -1660,9 +1573,6 @@ namespace Merconiq.Infrastructure.Migrations
                         .HasColumnType("character varying(64)");
 
                     b.HasKey("Id");
-
-                    b.HasIndex("LeaseToken")
-                        .IsUnique();
 
                     b.HasIndex("TenantId");
 
@@ -1969,18 +1879,6 @@ namespace Merconiq.Infrastructure.Migrations
                     b.Navigation("Branch");
                 });
 
-            modelBuilder.Entity("Merconiq.Core.Entities.OpeningStockCorrection", b =>
-                {
-                    b.HasOne("Merconiq.Core.Entities.OpeningStockImport", "OpeningStockImport")
-                        .WithMany()
-                        .HasForeignKey("OpeningStockImportId", "TenantId")
-                        .HasPrincipalKey("Id", "TenantId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-
-                    b.Navigation("OpeningStockImport");
-                });
-
             modelBuilder.Entity("Merconiq.Core.Entities.OpeningStockImportLine", b =>
                 {
                     b.HasOne("Merconiq.Core.Entities.Item", "Item")
@@ -2003,19 +1901,11 @@ namespace Merconiq.Infrastructure.Migrations
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
-                    b.HasOne("Merconiq.Core.Entities.StockTransaction", "StockTransaction")
-                        .WithMany()
-                        .HasForeignKey("StockTransactionId", "TenantId")
-                        .HasPrincipalKey("Id", "TenantId")
-                        .OnDelete(DeleteBehavior.Restrict);
-
                     b.Navigation("Item");
 
                     b.Navigation("Location");
 
                     b.Navigation("OpeningStockImport");
-
-                    b.Navigation("StockTransaction");
                 });
 
             modelBuilder.Entity("Merconiq.Core.Entities.OrderDetail", b =>
