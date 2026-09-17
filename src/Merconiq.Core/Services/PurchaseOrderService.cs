@@ -99,6 +99,8 @@ public class PurchaseOrderService : IPurchaseOrderService
         ArgumentNullException.ThrowIfNull(purchaseOrder);
         ArgumentNullException.ThrowIfNull(details);
         ArgumentException.ThrowIfNullOrWhiteSpace(idempotencyKey);
+        if (details.Any(detail => detail.Quantity == 0))
+            throw new InvalidOperationException("Purchase-order line quantity must be greater than zero.");
 
         purchaseOrder.OrderDate = DateTime.UtcNow;
         purchaseOrder.Status = PurchaseOrderStatus.Pending;
