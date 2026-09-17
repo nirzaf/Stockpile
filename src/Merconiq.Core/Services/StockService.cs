@@ -1019,6 +1019,13 @@ public class StockService : IStockService
                 $"Insufficient available stock for {operation}; reserved stock or quarantined stock cannot be used.");
     }
 
+    private static void EnsureLotNotExpired(DateTime? expiryDate)
+    {
+        if (IsExpiredStockLot(expiryDate))
+            throw new StockAvailabilityConflictException(
+                "The selected stock lot has expired and cannot be restocked.");
+    }
+
     private static async Task<string?> EnsureExpiredLotExceptionAsync(
         DateTime? expiryDate,
         string? reason,
