@@ -186,7 +186,7 @@ public sealed class DocumentIdentityPostgreSqlIntegrationTests(PostgreSqlIntegra
     }
 
     [PostgreSqlFact]
-    public async Task Line_links_require_company_mapping_and_reject_cross_company_sources()
+    public async Task Line_links_are_retry_safe_atomic_and_require_company_mapping()
     {
         fixture.EnsureEnabled();
         var tenantId = $"document-line-links-{Guid.NewGuid():N}";
@@ -225,7 +225,34 @@ public sealed class DocumentIdentityPostgreSqlIntegrationTests(PostgreSqlIntegra
         await using var context = fixture.CreateContext(tenantId);
         var unitOfWork = new UnitOfWork(context);
         var service = new DocumentIdentityService(context, unitOfWork, new DocumentNumberService(context, unitOfWork));
+        await Task.WhenAll(Enumerable.Range(0, 12).Select(async _ =>
+        {
+            await using var concurrentContext = fixture.CreateContext(tenantId);
+            var concurrentUnitOfWork = new UnitOfWork(concurrentContext);
+            var concurrentService = new DocumentIdentityService(
+                concurrentContext,
+                concurrentUnitOfWork,
+                new DocumentNumberService(concurrentContext, concurrentUnitOfWork));
+            await concurrentService.LinkLinesAsync(
+                companyOneLineA,
+                companyOneLineB,
+                DocumentLineRelationshipType.Successor);
+        }));
+
         await service.LinkLinesAsync(companyOneLineA, companyOneLineB, DocumentLineRelationshipType.Successor);
+        await service.LinkLinesAsync(companyOneLineA, companyOneLineB, DocumentLineRelationshipType.Successor);
+
+        var rollback = () => unitOfWork.ExecuteInTransactionAsync(async () =>
+        {
+            await service.LinkLinesAsync(
+                companyOneLineA,
+                companyOneLineB,
+                DocumentLineRelationshipType.Source);
+            await unitOfWork.SaveChangesAsync();
+            throw new InvalidOperationException("Injected failure after persisting document-line lineage in the outer transaction.");
+        });
+        await rollback.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("Injected failure after persisting document-line lineage in the outer transaction.");
 
         context.ChangeTracker.Clear();
         var persistedLink = await context.DocumentLineLinks.SingleAsync();
