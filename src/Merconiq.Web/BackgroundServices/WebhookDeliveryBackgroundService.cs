@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Text;
 using Merconiq.Core.Entities;
 using Merconiq.Core.Diagnostics;
+using Merconiq.Core.Models;
 using Merconiq.Infrastructure.Data;
 using Merconiq.Web.Tenancy;
 using Merconiq.Web.Security;
@@ -77,6 +78,27 @@ public sealed class WebhookDeliveryBackgroundService(
                 delivery.LeaseUntil = null;
                 delivery.LeaseToken = null;
                 await TrySaveLeaseOwnerAsync(db, delivery, claimedLeaseToken, cancellationToken);
+                return true;
+            }
+
+            if (WebhookPayloadPolicy.ExceedsLimit(delivery.Payload))
+            {
+                delivery.Status = WebhookDeliveryStatus.DeadLetter;
+                delivery.LastError = WebhookPayloadPolicy.OversizedEnvelopeDiagnostic;
+                delivery.LastResponse = null;
+                delivery.LastStatusCode = null;
+                delivery.LastAttemptAt = now;
+                delivery.LeaseUntil = null;
+                delivery.LeaseToken = null;
+                if (await TrySaveLeaseOwnerAsync(db, delivery, claimedLeaseToken, cancellationToken))
+                {
+                    InventoryTelemetry.WebhookFailures.Add(1);
+                    logger.LogWarning(
+                        "Webhook delivery {DeliveryId} was dead-lettered because its payload exceeds {MaximumBytes} UTF-8 bytes.",
+                        delivery.Id,
+                        WebhookPayloadPolicy.MaximumSerializedEnvelopeBytes);
+                }
+
                 return true;
             }
 

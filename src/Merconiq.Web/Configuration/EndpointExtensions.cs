@@ -146,7 +146,8 @@ public static class EndpointExtensions
             }
 
             // Project only safe operational metadata; payloads, endpoints, lease tokens,
-            // response bodies and diagnostic text must remain private.
+            // response bodies and arbitrary diagnostic text remain private. The only
+            // exposed failure reason is an allowlisted fixed payload-limit message.
             var rows = await db.WebhookDeliveries
                 .AsNoTracking()
                 .OrderByDescending(delivery => delivery.CreatedAt)
@@ -165,7 +166,8 @@ public static class EndpointExtensions
                     delivery.LastAttemptAt,
                     delivery.LastStatusCode,
                     delivery.DeliveredAt,
-                    delivery.CreatedAt
+                    delivery.CreatedAt,
+                    IsOversizedPayload = delivery.LastError == WebhookPayloadPolicy.OversizedEnvelopeDiagnostic
                 })
                 .ToListAsync(cancellationToken);
 
@@ -182,7 +184,8 @@ public static class EndpointExtensions
                     delivery.LastAttemptAt,
                     delivery.LastStatusCode,
                     delivery.DeliveredAt,
-                    delivery.CreatedAt))
+                    delivery.CreatedAt,
+                    delivery.IsOversizedPayload ? WebhookPayloadPolicy.OversizedEnvelopeDiagnostic : null))
                 .ToArray();
 
             var result = new WebhookDeliveryDiagnosticsPageResponse(

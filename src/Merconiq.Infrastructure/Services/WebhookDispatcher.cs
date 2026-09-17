@@ -7,7 +7,6 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using System.Security.Cryptography;
 using System.Text;
-using System.Text.Json;
 
 namespace Merconiq.Infrastructure.Services;
 
@@ -42,6 +41,7 @@ public class WebhookDispatcher : IWebhookDispatcher
             throw new InvalidOperationException("Webhook event tenant does not match the current database context.");
         }
 
+        var payload = WebhookPayloadPolicy.Serialize(webhookEvent);
         var subscriptions = await _context.WebhookSubscriptions
             .AsNoTracking()
             .Where(subscription => subscription.IsActive &&
@@ -54,7 +54,6 @@ public class WebhookDispatcher : IWebhookDispatcher
         }
 
         var now = DateTimeOffset.UtcNow;
-        var payload = JsonSerializer.Serialize(webhookEvent);
         foreach (var subscription in subscriptions)
         {
             _context.WebhookDeliveries.Add(new WebhookDelivery
@@ -72,6 +71,7 @@ public class WebhookDispatcher : IWebhookDispatcher
 
     public async Task DispatchAsync<T>(WebhookEvent<T> webhookEvent)
     {
+        var jsonPayload = WebhookPayloadPolicy.Serialize(webhookEvent);
         try
         {
             using var scope = _serviceProvider.CreateScope();
@@ -87,7 +87,6 @@ public class WebhookDispatcher : IWebhookDispatcher
             }
 
             var client = _httpClientFactory.CreateClient("Webhooks");
-            var jsonPayload = JsonSerializer.Serialize(webhookEvent);
 
             var deliveries = subscriptions.Select(subscription =>
                 SendAsync(subscription, client, webhookEvent.EventId, webhookEvent.EventType, jsonPayload));
