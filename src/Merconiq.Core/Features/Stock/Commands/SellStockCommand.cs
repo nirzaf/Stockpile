@@ -11,4 +11,5 @@ public record SellStockCommand(
     string? Notes,
     string? BatchNumber = null,
     DateTime? ExpiryDate = null,
-    [property: JsonIgnore] StockMutationScope? MutationScope = null) : IRequest;
+    [property: JsonIgnore] StockMutationScope? MutationScope = null,
+    string? ExpiryExceptionReason = null) : IRequest;

@@ -14,6 +14,7 @@ public interface ICurrentUserAuthorization
     Task<IReadOnlySet<int>> GetAccessibleCompanyIdsAsync(ClaimsPrincipal principal, CompanyCapability capability);
     Task<bool> CanAccessBranchAsync(ClaimsPrincipal principal, int branchId, CompanyCapability capability);
     Task<bool> CanAccessLocationAsync(ClaimsPrincipal principal, int locationId, CompanyCapability capability);
+    Task<bool> CanOverrideExpiredStockAtLocationAsync(ClaimsPrincipal principal, int locationId);
     Task<int?> GetLocationCompanyIdAsync(ClaimsPrincipal principal, int locationId);
     Task<bool> CanAccessTransferAsync(
         ClaimsPrincipal principal,
