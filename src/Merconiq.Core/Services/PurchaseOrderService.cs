@@ -234,7 +234,7 @@ public class PurchaseOrderService : IPurchaseOrderService
         if (!Enum.TryParse<PurchaseOrderStatus>(status, ignoreCase: true, out var parsedStatus))
             throw new ArgumentException($"Invalid status: {status}");
 
-        await _unitOfWork.ExecuteInTransactionAsync(async () =>
+        Func<Task> updateStatus = async () =>
         {
             var po = await _poRepo.GetByIdAsync(id);
             if (po == null) throw new InvalidOperationException("Purchase order not found");
@@ -248,7 +248,7 @@ public class PurchaseOrderService : IPurchaseOrderService
                 if (po.CommercialVersion < 1)
                     throw new InvalidOperationException("A purchase order must have a valid commercial version before approval.");
 
-                po.ApprovedCommercialSnapshotJson = await CaptureApprovedSnapshotAsync(po);
+                po.ApprovedCommercialSnapshotJson = await CaptureApprovedSnapshotWithinReadSnapshotAsync(po);
                 po.ApprovedCommercialVersion = po.CommercialVersion;
             }
 
@@ -268,7 +268,16 @@ public class PurchaseOrderService : IPurchaseOrderService
             }
             await _unitOfWork.SaveChangesAsync();
             _logger.LogInformation("Updated PO {Id} status to {Status}", id, parsedStatus);
-        });
+        };
+
+        if (parsedStatus == PurchaseOrderStatus.Approved)
+        {
+            await _unitOfWork.ExecuteInReadSnapshotAsync(updateStatus);
+        }
+        else
+        {
+            await _unitOfWork.ExecuteInTransactionAsync(updateStatus);
+        }
     }
 
     /// <inheritdoc />
@@ -409,17 +418,6 @@ public class PurchaseOrderService : IPurchaseOrderService
         }));
         await _unitOfWork.SaveChangesAsync();
         _logger.LogInformation("Amended PO {Id}; commercial version {Version} requires reapproval", id, po.CommercialVersion);
-    }
-
-    private async Task<string> CaptureApprovedSnapshotAsync(PurchaseOrder po)
-    {
-        string? snapshotJson = null;
-        await _unitOfWork.ExecuteInReadSnapshotAsync(async () =>
-        {
-            snapshotJson = await CaptureApprovedSnapshotWithinReadSnapshotAsync(po);
-        });
-
-        return snapshotJson ?? throw new InvalidOperationException("The approved purchase-order snapshot was not captured.");
     }
 
     private async Task<string> CaptureApprovedSnapshotWithinReadSnapshotAsync(PurchaseOrder po)
