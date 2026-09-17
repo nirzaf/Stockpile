@@ -51,6 +51,8 @@ public class WebhookDispatcherTests
         await dispatcher.DispatchAsync(webhookEvent);
 
         handler.EventHeader.Should().Be("Stock.Low");
+        handler.EventIdHeader.Should().Be(webhookEvent.EventId.ToString("D"));
+        handler.DeliveryIdHeader.Should().BeNull();
         handler.Body.Should().Contain($"\"TenantId\":\"{webhookEvent.TenantId}\"");
         handler.Body.Should().Contain($"\"EventId\":\"{webhookEvent.EventId}\"");
         handler.Body.Should().Contain("\"EventType\":\"Stock.Low\"");
@@ -65,6 +67,8 @@ public class WebhookDispatcherTests
     {
         public string Body { get; private set; } = string.Empty;
         public string? EventHeader { get; private set; }
+        public string? EventIdHeader { get; private set; }
+        public string? DeliveryIdHeader { get; private set; }
         public string? Signature { get; private set; }
 
         protected override async Task<HttpResponseMessage> SendAsync(
@@ -73,6 +77,10 @@ public class WebhookDispatcherTests
         {
             Body = await request.Content!.ReadAsStringAsync(cancellationToken);
             EventHeader = request.Headers.GetValues("X-Inventory-Event").Single();
+            EventIdHeader = request.Headers.GetValues("X-Inventory-Event-Id").Single();
+            DeliveryIdHeader = request.Headers.TryGetValues("X-Inventory-Delivery-Id", out var deliveryIds)
+                ? deliveryIds.Single()
+                : null;
             Signature = request.Headers.GetValues("X-Inventory-Signature").Single();
             return new HttpResponseMessage(HttpStatusCode.OK);
         }
