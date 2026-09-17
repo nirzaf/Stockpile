@@ -53,7 +53,7 @@ public sealed class StockReservationPostgreSqlApiAcceptanceTests(PostgreSqlInteg
 
         // Give one line a short-lived reservation, then exercise its expiry through the
         // authenticated direct-sale route. The API operation also performs expired-reservation cleanup.
-        var expiresAt = DateTimeOffset.UtcNow.AddSeconds(5);
+        var expiresAt = DateTimeOffset.UtcNow.AddMinutes(1);
         var expiringLine = $"issue-278-expiring-{suffix}";
         var createExpiring = await operatorA.PostAsJsonAsync("/api/v1/stock/reservations", new
         {
@@ -74,9 +74,16 @@ public sealed class StockReservationPostgreSqlApiAcceptanceTests(PostgreSqlInteg
             Lot(seed.CompanyAId, seed.LocationAId, "LOT-QUARANTINED", seed.LateDate, 3, 0, 1)
         ]);
 
-        var expiryWait = expiresAt - DateTimeOffset.UtcNow + TimeSpan.FromMilliseconds(150);
-        if (expiryWait > TimeSpan.Zero)
-            await Task.Delay(expiryWait);
+        // Advance only this synthetic row's expiry in PostgreSQL instead of relying
+        // on wall-clock scheduling in CI; the authenticated sale below still runs
+        // the real expired-reservation cleanup path.
+        await using (var expireReservation = fixture.CreateContext(TenantId))
+        {
+            var reservation = await expireReservation.StockReservations
+                .SingleAsync(row => row.SourceLineReference == expiringLine);
+            reservation.ExpiresAt = DateTimeOffset.UtcNow.AddSeconds(-1);
+            await expireReservation.SaveChangesAsync();
+        }
 
         var cleanupSale = await operatorA.PostAsJsonAsync("/api/v1/stock/sell", new
         {
