@@ -153,6 +153,57 @@ public sealed class OrganizationPostgreSqlIntegrationTests(PostgreSqlIntegration
     }
 
     [PostgreSqlFact]
+    public async Task Company_currency_change_waits_for_an_inflight_stock_posting()
+    {
+        fixture.EnsureEnabled();
+        var tenantId = $"currency-stock-race-{Guid.NewGuid():N}";
+        var token = Guid.NewGuid().ToString("N");
+        int companyId;
+        int itemId;
+        int locationId;
+
+        await using (var setup = fixture.CreateContext(tenantId))
+        {
+            var company = new Company
+            {
+                Code = $"C-{token[..12]}",
+                LegalName = "Currency stock race",
+                BaseCurrency = "USD",
+                CurrencyScale = 2
+            };
+            var branch = new Branch { Company = company, Code = "BRANCH", Name = "Branch" };
+            var location = new Location { Branch = branch, Name = "Warehouse" };
+            var item = new Item { ItemCode = $"ITEM-{token[..12]}", Description = "Race item", Rate = 1m };
+            setup.AddRange(company, branch, location, item);
+            await setup.SaveChangesAsync();
+            companyId = company.Id;
+            itemId = item.Id;
+            locationId = location.Id;
+        }
+
+        await using var blocker = fixture.CreateContext(tenantId, $"currency-stock-blocker-{token}");
+        var blockerUnitOfWork = new UnitOfWork(blocker);
+        await blockerUnitOfWork.BeginTransactionAsync();
+        await blockerUnitOfWork.AcquireTenantOperationLockAsync("organization-state");
+
+        var postingName = $"currency-stock-posting-{token}";
+        var posting = RunReceiveStockAsync(fixture, tenantId, postingName, itemId, locationId);
+        await using var monitor = fixture.CreateContext(tenantId, $"currency-stock-monitor-{token}");
+        await WaitForLockWaitAsync(monitor, postingName, "advisory");
+
+        var updateName = $"currency-stock-update-{token}";
+        var update = RunCompanyUpdateAsync(fixture, tenantId, updateName, companyId,
+            isActive: true, currencyScale: 3, baseCurrency: "USD");
+        await WaitForLockWaitAsync(monitor, updateName, "advisory");
+
+        await blockerUnitOfWork.CommitTransactionAsync();
+        await posting;
+        var updateAct = () => update;
+        await updateAct.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("A company's currency scale cannot change after posted stock activity.");
+    }
+
+    [PostgreSqlFact]
     public async Task Legacy_company_currency_scale_can_be_initialized_after_posted_stock_activity()
     {
         fixture.EnsureEnabled();
@@ -350,12 +401,28 @@ public sealed class OrganizationPostgreSqlIntegrationTests(PostgreSqlIntegration
         string tenantId,
         string applicationName,
         int companyId,
-        bool isActive)
+        bool isActive,
+        int currencyScale = 2,
+        string baseCurrency = "QAR")
     {
         await using var context = fixture.CreateContext(tenantId, applicationName);
         var service = CreateService(context, tenantId);
         await service.UpdateCompanyAsync(companyId,
-            new UpdateCompanyRequest("Concurrent company", null, null, null, "QAR", null, isActive, CurrencyScale: 2));
+            new UpdateCompanyRequest("Concurrent company", null, null, null, baseCurrency, null, isActive,
+                CurrencyScale: currencyScale));
+    }
+
+    private static async Task RunReceiveStockAsync(
+        PostgreSqlIntegrationFixture fixture,
+        string tenantId,
+        string applicationName,
+        int itemId,
+        int locationId)
+    {
+        await using var context = fixture.CreateContext(tenantId, applicationName);
+        var unitOfWork = new UnitOfWork(context);
+        await CreateStockService(context, tenantId, unitOfWork)
+            .ReceiveStockAsync(itemId, locationId, 1, "Concurrent stock posting");
     }
 
     private static async Task RunBranchUpdateAsync(

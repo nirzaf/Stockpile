@@ -102,6 +102,18 @@ public sealed class MasterDataImportServiceTests
         context.Items.Should().BeEmpty();
     }
 
+    [Fact]
+    public async Task ImportItems_rejects_a_factor_that_would_round_in_postgresql()
+    {
+        await using var context = CreateContext(Guid.NewGuid().ToString(), "tenant-a");
+        var result = await CreateService(context).ImportItemsAsync(new ImportItemsRequest(
+            Csv("item-1,SKU-1,Widget,12.50,,,,1.0000001,1,0,false"), DryRun: false));
+
+        result.Rejected.Should().Be(1);
+        result.Rows.Single().Error.Should().Contain("must fit decimal(18,6) without rounding");
+        context.Items.Should().BeEmpty();
+    }
+
     private static MasterDataImportService CreateService(InventoryDbContext context) => new(
         new Repository<UnitOfMeasure>(context),
         new Repository<Item>(context),

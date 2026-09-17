@@ -1,4 +1,3 @@
-using System.Globalization;
 using Merconiq.Core.Entities;
 using Merconiq.Core.Interfaces;
 using Merconiq.Core.Models;
@@ -82,7 +81,9 @@ public sealed class OrganizationService(
                 await branches.Query().AnyAsync(b => b.CompanyId == id && b.IsActive))
                 throw new InvalidOperationException("Deactivate or reassign active branches before deactivating the company.");
             var baseCurrency = NormalizeCurrency(request.BaseCurrency);
-            var currencyScale = NormalizeCurrencyScale(request.CurrencyScale);
+            var currencyScale = request.CurrencyScale.HasValue
+                ? NormalizeCurrencyScale(request.CurrencyScale)
+                : company.CurrencyScale;
             var currencyChanged = !string.Equals(company.BaseCurrency, baseCurrency, StringComparison.Ordinal);
             var currencyScaleChanged = company.CurrencyScale.HasValue && company.CurrencyScale != currencyScale;
             if ((currencyChanged || currencyScaleChanged) && await HasPostedStockActivityAsync(id))
@@ -247,10 +248,7 @@ public sealed class OrganizationService(
             {
                 // One tenant-scoped transaction lock serializes company, branch and location
                 // ownership transitions, including checks that span several rows.
-                var lockKey = string.Create(CultureInfo.InvariantCulture,
-                    $"organization-state:{tenantContext.TenantId}");
-                await context.Database.ExecuteSqlInterpolatedAsync(
-                    $"SELECT pg_advisory_xact_lock(hashtextextended({lockKey}, 0))");
+                await unitOfWork.AcquireTenantOperationLockAsync("organization-state");
             }
 
             await operation();

@@ -14,10 +14,8 @@ public static class ItemQuantityConventions
 {
     public static void Validate(Item item)
     {
-        if (item.PurchaseToBaseFactor <= 0)
-            throw new ArgumentException("Purchase-to-base factor must be positive.", nameof(item));
-        if (item.SalesToBaseFactor <= 0)
-            throw new ArgumentException("Sales-to-base factor must be positive.", nameof(item));
+        ValidateFactor(item.PurchaseToBaseFactor, "Purchase-to-base factor");
+        ValidateFactor(item.SalesToBaseFactor, "Sales-to-base factor");
         if (item.PurchaseUnitId.HasValue && item.PurchaseUnitId == item.BaseUnitId && item.PurchaseToBaseFactor != 1m)
             throw new ArgumentException("Purchase-to-base factor must be 1 when the purchase unit is the base unit.", nameof(item));
         if (item.SalesUnitId.HasValue && item.SalesUnitId == item.BaseUnitId && item.SalesToBaseFactor != 1m)
@@ -26,6 +24,14 @@ public static class ItemQuantityConventions
             throw new ArgumentException("Quantity precision must be between 0 and 6.", nameof(item));
         if (item.WholeUnitOnly && item.QuantityPrecision != 0)
             throw new ArgumentException("Whole-unit-only items must use zero quantity precision.", nameof(item));
+    }
+
+    private static void ValidateFactor(decimal factor, string name)
+    {
+        if (factor <= 0)
+            throw new ArgumentException($"{name} must be positive.", nameof(factor));
+        if (factor >= 1_000_000_000_000m || decimal.Round(factor, 6, MidpointRounding.ToEven) != factor)
+            throw new ArgumentException($"{name} must fit decimal(18,6) without rounding.", nameof(factor));
     }
 
     public static decimal ToBaseQuantity(Item item, decimal quantity, ItemQuantityUnit unit)

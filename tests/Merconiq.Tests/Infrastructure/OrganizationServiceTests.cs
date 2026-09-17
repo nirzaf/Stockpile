@@ -239,6 +239,23 @@ public sealed class OrganizationServiceTests
     }
 
     [Fact]
+    public async Task Company_update_without_currency_scale_preserves_existing_scale()
+    {
+        await using var context = CreateContext(Guid.NewGuid().ToString(), "tenant-a");
+        var company = new Company { Code = "COMPANY", LegalName = "Company", BaseCurrency = "USD", CurrencyScale = 2 };
+        context.Companies.Add(company);
+        await context.SaveChangesAsync();
+        var service = CreateService(context, "tenant-a");
+
+        await service.UpdateCompanyAsync(company.Id,
+            new UpdateCompanyRequest("Renamed company", null, null, null, "USD", null, true));
+
+        var updated = await context.Companies.SingleAsync();
+        updated.LegalName.Should().Be("Renamed company");
+        updated.CurrencyScale.Should().Be(2);
+    }
+
+    [Fact]
     public async Task Legacy_company_currency_scale_can_be_initialized_after_stock_activity()
     {
         await using var context = CreateContext(Guid.NewGuid().ToString(), "tenant-a");

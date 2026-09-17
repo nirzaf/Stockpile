@@ -123,4 +123,19 @@ public sealed class ItemQuantityConventionTests
         act.Should().Throw<ArgumentException>()
             .WithMessage("Purchase-to-base factor must be 1 when the purchase unit is the base unit.*");
     }
+
+    [Fact]
+    public void Conversion_factor_must_fit_the_database_precision_without_rounding()
+    {
+        var fractional = new Item { PurchaseToBaseFactor = 1.0000001m };
+        var oversized = new Item { SalesToBaseFactor = 1_000_000_000_000m };
+
+        var fractionalAct = () => ItemQuantityConventions.Validate(fractional);
+        var oversizedAct = () => ItemQuantityConventions.Validate(oversized);
+
+        fractionalAct.Should().Throw<ArgumentException>()
+            .WithMessage("Purchase-to-base factor must fit decimal(18,6) without rounding.*");
+        oversizedAct.Should().Throw<ArgumentException>()
+            .WithMessage("Sales-to-base factor must fit decimal(18,6) without rounding.*");
+    }
 }

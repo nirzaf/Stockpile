@@ -54,6 +54,7 @@ public sealed class OpeningStockImportService(
         {
             await unitOfWork.ExecuteInTransactionAsync(async () =>
             {
+                await unitOfWork.AcquireTenantOperationLockAsync("organization-state", cancellationToken);
                 await unitOfWork.AcquireTenantOperationLockAsync("opening-stock-baseline", cancellationToken);
                 var existing = await context.OpeningStockImports
                     .AsNoTracking()
@@ -227,6 +228,7 @@ public sealed class OpeningStockImportService(
         var requestHash = Convert.ToHexString(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(request)));
         await unitOfWork.ExecuteInTransactionAsync(async () =>
         {
+            await unitOfWork.AcquireTenantOperationLockAsync("organization-state", cancellationToken);
             await unitOfWork.AcquireTenantOperationLockAsync(
                 $"opening-stock-reversal-correction:{request.CorrectionReference}", cancellationToken);
             await unitOfWork.AcquireTenantOperationLockAsync(

@@ -39,6 +39,9 @@ approved business configuration; values from 0 through 4 are supported. Legacy
 rows may remain unconfigured until an owner supplies the value. Neither the
 country field nor the currency code selects a scale, and the application does
 not claim a maintained ISO 4217 catalog.
+Updates that omit `CurrencyScale` preserve the current value for compatibility;
+an explicit value is required when configuring a new company or initializing a
+legacy company.
 
 Items keep `Rate` as the current selling price. Acquisition cost is supplied by
 costed stock postings and moving-average valuation; it is never inferred from
