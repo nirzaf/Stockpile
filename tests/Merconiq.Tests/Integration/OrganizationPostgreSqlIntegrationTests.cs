@@ -473,7 +473,8 @@ public sealed class OrganizationPostgreSqlIntegrationTests(PostgreSqlIntegration
         NullLogger<StockService>.Instance,
         new Repository<StockValuationBucket>(context),
         new Repository<StockValuationEntry>(context),
-        new Repository<StockReservation>(context));
+        new Repository<StockReservation>(context),
+        new Repository<StockReservationAllocation>(context));
 
     private static async Task WaitForLockWaitAsync(
         InventoryDbContext context,

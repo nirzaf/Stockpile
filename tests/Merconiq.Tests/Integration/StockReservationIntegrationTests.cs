@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Text.Json;
 using FluentAssertions;
 using Merconiq.Core.Entities;
 using Merconiq.Core.Exceptions;
@@ -124,6 +125,64 @@ public sealed class StockReservationIntegrationTests
     }
 
     [Fact]
+    public async Task Ordinary_fefo_reservation_skips_expired_lots_when_fresh_stock_is_sufficient()
+    {
+        var database = Guid.NewGuid().ToString();
+        const string tenant = "fefo-skips-expired-test";
+        var expiredDate = DateTime.SpecifyKind(DateTime.UtcNow.Date.AddDays(-2), DateTimeKind.Utc);
+        var freshDate = DateTime.SpecifyKind(DateTime.UtcNow.Date.AddDays(20), DateTimeKind.Utc);
+        int itemId;
+        int locationId;
+
+        await using (var setup = CreateContext(database, tenant))
+        {
+            var item = new Item { ItemCode = $"FEFO-SKIP-{Guid.NewGuid():N}", Description = "FEFO skips expired" };
+            var location = new Location { Name = "FEFO skips expired location" };
+            setup.Items.Add(item);
+            setup.Locations.Add(location);
+            await setup.SaveChangesAsync();
+            itemId = item.Id;
+            locationId = location.Id;
+            setup.StockInHand.AddRange(
+                new StockInHand
+                {
+                    ItemId = itemId,
+                    LocationId = locationId,
+                    Quantity = 2,
+                    BatchNumber = "EXPIRED-FEFO",
+                    ExpiryDate = expiredDate
+                },
+                new StockInHand
+                {
+                    ItemId = itemId,
+                    LocationId = locationId,
+                    Quantity = 3,
+                    BatchNumber = "FRESH-FEFO",
+                    ExpiryDate = freshDate
+                });
+            await setup.SaveChangesAsync();
+        }
+
+        await using (var create = CreateContext(database, tenant))
+        {
+            await CreateService(create, tenant).CreateReservationAsync(
+                new CreateStockReservationRequest(itemId, locationId, 3, "line-fefo-skips-expired"));
+        }
+
+        await using var verify = CreateContext(database, tenant);
+        var reservation = await CreateService(verify, tenant).GetReservationAsync("line-fefo-skips-expired");
+        reservation.Should().NotBeNull();
+        reservation!.Allocations.Should().NotBeNull();
+        reservation.Allocations!.Should().ContainSingle().Which.Should().Be(
+            new StockReservationAllocationView("FRESH-FEFO", freshDate, 3, 0, 3, null));
+        var stock = await verify.StockInHand
+            .Where(row => row.ItemId == itemId && row.LocationId == locationId)
+            .OrderBy(row => row.ExpiryDate)
+            .ToListAsync();
+        stock.Select(row => row.ReservedQuantity).Should().Equal(0, 3);
+    }
+
+    [Fact]
     public async Task Retrying_an_existing_unselected_reservation_does_not_reselect_a_later_expired_lot()
     {
         var database = Guid.NewGuid().ToString();
@@ -204,7 +263,7 @@ public sealed class StockReservationIntegrationTests
     }
 
     [Fact]
-    public async Task Automatically_selected_expired_lot_is_rejected_before_expired_reservations_are_released()
+    public async Task Automatically_selected_expired_lot_is_unavailable_before_expired_reservations_are_released()
     {
         var database = Guid.NewGuid().ToString();
         var tenant = "expired-auto-reserve-test";
@@ -215,7 +274,7 @@ public sealed class StockReservationIntegrationTests
             var action = () => CreateService(context, tenant).CreateReservationAsync(
                 new CreateStockReservationRequest(state.ItemId, state.LocationId, 1, "new-line"));
             await action.Should().ThrowAsync<StockAvailabilityConflictException>()
-                .WithMessage("An audit reason is required to use an expired stock lot.");
+                .WithMessage("No stock is available for the requested lot.");
         }
 
         await AssertExpiredLotStateUnchangedAsync(database, tenant, state);
@@ -438,13 +497,434 @@ public sealed class StockReservationIntegrationTests
         NullLogger<StockService>.Instance,
         new Repository<StockValuationBucket>(context),
         new Repository<StockValuationEntry>(context),
-        reservationRepo: new Repository<StockReservation>(context));
+        reservationRepo: new Repository<StockReservation>(context),
+        reservationAllocationRepo: new Repository<StockReservationAllocation>(context));
 }
 
 [Collection(PostgreSqlIntegrationCollection.Name)]
 [Trait("Category", "PostgreSQL")]
 public sealed class StockReservationPostgreSqlIntegrationTests(PostgreSqlIntegrationFixture fixture)
 {
+    [PostgreSqlFact]
+    public async Task Ordinary_fefo_reservation_skips_expired_lots_when_fresh_stock_is_sufficient()
+    {
+        fixture.EnsureEnabled();
+        var tenant = $"reservation-fefo-skip-expired-{Guid.NewGuid():N}";
+        var sourceLineReference = $"fefo-skip-expired-line-{Guid.NewGuid():N}";
+        var expiredDate = DateTime.SpecifyKind(DateTime.UtcNow.Date.AddDays(-2), DateTimeKind.Utc);
+        var freshDate = DateTime.SpecifyKind(DateTime.UtcNow.Date.AddDays(20), DateTimeKind.Utc);
+        int itemId;
+        int locationId;
+
+        await using (var setup = fixture.CreateContext(tenant))
+        {
+            var item = new Item
+            {
+                ItemCode = $"FEFO-SKIP-{Guid.NewGuid():N}"[..20],
+                Description = "FEFO skips expired stock by default"
+            };
+            var location = new Location { Name = $"FEFO skip expired {Guid.NewGuid():N}" };
+            setup.Items.Add(item);
+            setup.Locations.Add(location);
+            await setup.SaveChangesAsync();
+            itemId = item.Id;
+            locationId = location.Id;
+            setup.StockInHand.AddRange(
+                new StockInHand
+                {
+                    ItemId = itemId,
+                    LocationId = locationId,
+                    Quantity = 2,
+                    BatchNumber = "EXPIRED-FEFO",
+                    ExpiryDate = expiredDate
+                },
+                new StockInHand
+                {
+                    ItemId = itemId,
+                    LocationId = locationId,
+                    Quantity = 3,
+                    BatchNumber = "FRESH-FEFO",
+                    ExpiryDate = freshDate
+                });
+            await setup.SaveChangesAsync();
+        }
+
+        await using (var create = fixture.CreateContext(tenant))
+        {
+            await CreateService(create, tenant).CreateReservationAsync(
+                new CreateStockReservationRequest(itemId, locationId, 3, sourceLineReference));
+        }
+
+        await using var verify = fixture.CreateContext(tenant);
+        var reservation = await CreateService(verify, tenant).GetReservationAsync(sourceLineReference);
+        reservation.Should().NotBeNull();
+        reservation!.Allocations.Should().NotBeNull();
+        reservation.Allocations!.Should().ContainSingle().Which.Should().Be(
+            new StockReservationAllocationView("FRESH-FEFO", freshDate, 3, 0, 3, null));
+        var stock = await verify.StockInHand
+            .Where(row => row.ItemId == itemId && row.LocationId == locationId)
+            .OrderBy(row => row.ExpiryDate)
+            .ToListAsync();
+        stock.Select(row => row.ReservedQuantity).Should().Equal(0, 3);
+    }
+
+    [PostgreSqlFact]
+    public async Task Reservation_splits_by_fefo_consumes_across_allocations_and_releases_remaining_quantity_idempotently()
+    {
+        fixture.EnsureEnabled();
+        var tenant = $"reservation-fefo-split-{Guid.NewGuid():N}";
+        var sourceLineReference = $"fefo-split-line-{Guid.NewGuid():N}";
+        var firstExpiry = DateTime.SpecifyKind(DateTime.UtcNow.Date.AddDays(-2), DateTimeKind.Utc);
+        var secondExpiry = DateTime.SpecifyKind(DateTime.UtcNow.Date.AddDays(20), DateTimeKind.Utc);
+        var thirdExpiry = DateTime.SpecifyKind(DateTime.UtcNow.Date.AddDays(30), DateTimeKind.Utc);
+        int itemId;
+        int locationId;
+
+        await using (var setup = fixture.CreateContext(tenant))
+        {
+            var item = new Item
+            {
+                ItemCode = $"FEFO-SPLIT-{Guid.NewGuid():N}"[..20],
+                Description = "FEFO split reservation"
+            };
+            var location = new Location { Name = $"FEFO split {Guid.NewGuid():N}" };
+            setup.Items.Add(item);
+            setup.Locations.Add(location);
+            await setup.SaveChangesAsync();
+            itemId = item.Id;
+            locationId = location.Id;
+            setup.StockInHand.AddRange(
+                new StockInHand
+                {
+                    ItemId = itemId,
+                    LocationId = locationId,
+                    Quantity = 2,
+                    BatchNumber = "FEFO-001",
+                    ExpiryDate = firstExpiry
+                },
+                new StockInHand
+                {
+                    ItemId = itemId,
+                    LocationId = locationId,
+                    Quantity = 3,
+                    BatchNumber = "FEFO-002",
+                    ExpiryDate = secondExpiry
+                },
+                new StockInHand
+                {
+                    ItemId = itemId,
+                    LocationId = locationId,
+                    Quantity = 4,
+                    BatchNumber = "FEFO-003",
+                    ExpiryDate = thirdExpiry
+                });
+            setup.WebhookSubscriptions.AddRange(
+                new WebhookSubscription { EventType = "Stock.Sold", Url = "https://example.invalid/stock-sold" },
+                new WebhookSubscription
+                {
+                    EventType = "Stock.ReservationReleased",
+                    Url = "https://example.invalid/reservation-released"
+                });
+            await setup.SaveChangesAsync();
+        }
+
+        const string expiredLotReason = "Approved expired-lot reservation for test";
+        var request = new CreateStockReservationRequest(
+            itemId, locationId, 5, sourceLineReference, ExpiryExceptionReason: expiredLotReason);
+        var reservationScope = new StockMutationScope(
+            null,
+            () => Task.FromResult(true),
+            () => Task.FromResult(true));
+        await using (var create = fixture.CreateContext(tenant))
+            await CreateService(create, tenant).CreateReservationAsync(request, reservationScope);
+
+        // Replaying the same source-line request must not reserve the lots again.
+        await using (var replay = fixture.CreateContext(tenant))
+            await CreateService(replay, tenant).CreateReservationAsync(request, reservationScope);
+
+        await using (var verifyCreated = fixture.CreateContext(tenant))
+        {
+            var reservation = await CreateService(verifyCreated, tenant)
+                .GetReservationAsync(sourceLineReference);
+            reservation.Should().NotBeNull();
+            reservation!.SourceLineReference.Should().Be(sourceLineReference);
+            reservation.Quantity.Should().Be(5);
+            reservation.ConsumedQuantity.Should().Be(0);
+            reservation.RemainingQuantity.Should().Be(5);
+            reservation.Allocations.Should().NotBeNull();
+            reservation.Allocations!.Should().Equal(
+                new StockReservationAllocationView("FEFO-001", firstExpiry, 2, 0, 2, expiredLotReason),
+                new StockReservationAllocationView("FEFO-002", secondExpiry, 3, 0, 3, null));
+
+            var stock = await verifyCreated.StockInHand
+                .Where(row => row.ItemId == itemId && row.LocationId == locationId)
+                .OrderBy(row => row.ExpiryDate)
+                .ToListAsync();
+            stock.Select(row => row.ReservedQuantity).Should().Equal(2, 3, 0);
+            (await verifyCreated.StockReservations.CountAsync(row =>
+                row.SourceLineReference == sourceLineReference)).Should().Be(1);
+            (await verifyCreated.StockReservationAllocations.CountAsync()).Should().Be(2);
+        }
+
+        await using (var consume = fixture.CreateContext(tenant))
+        {
+            await CreateService(consume, tenant).ConsumeReservationAsync(
+                new ConsumeStockReservationRequest(
+                    sourceLineReference, 3, "partial FEFO consumption", expiredLotReason),
+                reservationScope);
+        }
+
+        // Replaying creation after consumption must not restore or duplicate allocations.
+        await using (var replayAfterConsumption = fixture.CreateContext(tenant))
+            await CreateService(replayAfterConsumption, tenant).CreateReservationAsync(request, reservationScope);
+
+        await using (var verifyConsumed = fixture.CreateContext(tenant))
+        {
+            var reservation = await CreateService(verifyConsumed, tenant)
+                .GetReservationAsync(sourceLineReference);
+            reservation.Should().NotBeNull();
+            reservation!.ConsumedQuantity.Should().Be(3);
+            reservation.RemainingQuantity.Should().Be(2);
+            reservation.Allocations.Should().NotBeNull();
+            reservation.Allocations!.Should().Equal(
+                new StockReservationAllocationView("FEFO-001", firstExpiry, 2, 2, 0, expiredLotReason),
+                new StockReservationAllocationView("FEFO-002", secondExpiry, 3, 1, 2, null));
+
+            var stock = await verifyConsumed.StockInHand
+                .Where(row => row.ItemId == itemId && row.LocationId == locationId)
+                .OrderBy(row => row.ExpiryDate)
+                .ToListAsync();
+            stock.Select(row => row.Quantity).Should().Equal(0, 2, 4);
+            stock.Select(row => row.ReservedQuantity).Should().Equal(0, 2, 0);
+
+            var movements = await verifyConsumed.StockTransactions
+                .Where(row => row.ItemId == itemId && row.TransactionType == TransactionType.Sell)
+                .OrderBy(row => row.ExpiryDate)
+                .ToListAsync();
+            movements.Should().HaveCount(2);
+            movements.Select(row => (row.BatchNumber, row.Quantity))
+                .Should().Equal(("FEFO-001", 2), ("FEFO-002", 1));
+            movements.Should().OnlyContain(row =>
+                !string.IsNullOrWhiteSpace(row.SourceLineReference) &&
+                row.SourceLineReference.StartsWith(sourceLineReference, StringComparison.Ordinal));
+            movements.Select(row => row.SourceLineReference).Should().OnlyHaveUniqueItems();
+
+            var saleDeliveries = await verifyConsumed.WebhookDeliveries
+                .Where(row => row.EventType == "Stock.Sold")
+                .OrderBy(row => row.Id)
+                .ToListAsync();
+            saleDeliveries.Should().HaveCount(2);
+            var salePayloads = saleDeliveries.Select(delivery =>
+            {
+                using var document = JsonDocument.Parse(delivery.Payload);
+                var payload = document.RootElement.GetProperty("Payload");
+                return (
+                    Reservation: payload.GetProperty("ReservationSourceLineReference").GetString(),
+                    Movement: payload.GetProperty("MovementSourceLineReference").GetString(),
+                    Batch: payload.GetProperty("BatchNumber").GetString(),
+                    Quantity: payload.GetProperty("Quantity").GetInt32());
+            }).ToArray();
+            salePayloads.Select(payload => (payload.Reservation, payload.Batch, payload.Quantity))
+                .Should().Equal(
+                    (sourceLineReference, "FEFO-001", 2),
+                    (sourceLineReference, "FEFO-002", 1));
+            salePayloads.Select(payload => payload.Movement)
+                .Should().Equal(movements.Select(row => row.SourceLineReference));
+
+            var reservationAudit = await verifyConsumed.AuditLogs
+                .Where(row => row.EntityName == nameof(StockReservation) && row.NewValues != null)
+                .ToListAsync();
+            reservationAudit.Should().Contain(entry =>
+                AuditValue(entry.NewValues!, nameof(StockReservation.SourceLineReference)) == sourceLineReference);
+
+            var allocationAudit = await verifyConsumed.AuditLogs
+                .Where(row => row.EntityName == nameof(StockReservationAllocation) &&
+                    row.Action == "Insert" && row.NewValues != null)
+                .OrderBy(row => row.Id)
+                .ToListAsync();
+            allocationAudit.Should().HaveCount(2);
+            allocationAudit.Select(entry => AuditValue(
+                    entry.NewValues!, nameof(StockReservationAllocation.BatchNumber)))
+                .Should().Equal("FEFO-001", "FEFO-002");
+
+            var movementAudit = await verifyConsumed.AuditLogs
+                .Where(row => row.EntityName == nameof(StockTransaction) && row.NewValues != null)
+                .ToListAsync();
+            movementAudit.Should().HaveCount(2);
+            foreach (var movement in movements)
+            {
+                movementAudit.Should().Contain(entry =>
+                    AuditValue(entry.NewValues!, nameof(StockTransaction.SourceLineReference)) ==
+                        movement.SourceLineReference &&
+                    AuditValue(entry.NewValues!, nameof(StockTransaction.BatchNumber)) == movement.BatchNumber);
+            }
+        }
+
+        // The expired allocation is now fully consumed, so another partial consume
+        // from the fresh lot must not require an expiry override.
+        await using (var consumeFresh = fixture.CreateContext(tenant))
+            await CreateService(consumeFresh, tenant).ConsumeReservationAsync(
+                new ConsumeStockReservationRequest(sourceLineReference, 1, "consume remaining fresh lot"));
+
+        await using (var release = fixture.CreateContext(tenant))
+            await CreateService(release, tenant).ReleaseReservationAsync(
+                sourceLineReference, "remaining quantity no longer needed");
+        int reservationAuditCountAfterRelease;
+        await using (var verifyRelease = fixture.CreateContext(tenant))
+        {
+            var reservation = await verifyRelease.StockReservations
+                .SingleAsync(row => row.SourceLineReference == sourceLineReference);
+            reservation.Status.Should().Be(StockReservationStatus.Released);
+            reservation.ResolutionReason.Should().Be("remaining quantity no longer needed");
+            reservationAuditCountAfterRelease = await verifyRelease.AuditLogs
+                .CountAsync(row => row.EntityName == nameof(StockReservation));
+        }
+
+        await using (var releaseReplay = fixture.CreateContext(tenant))
+            await CreateService(releaseReplay, tenant).ReleaseReservationAsync(
+                sourceLineReference, "remaining quantity no longer needed");
+
+        await using var verifyReleased = fixture.CreateContext(tenant);
+        var released = await CreateService(verifyReleased, tenant)
+            .GetReservationAsync(sourceLineReference);
+        released.Should().NotBeNull();
+        released!.Status.Should().Be(StockReservationStatus.Released);
+        released.ConsumedQuantity.Should().Be(4);
+        released.RemainingQuantity.Should().Be(1);
+        released.Allocations!.Sum(allocation => allocation.RemainingQuantity).Should().Be(1);
+
+        var releaseDelivery = await verifyReleased.WebhookDeliveries
+            .SingleAsync(row => row.EventType == "Stock.ReservationReleased");
+        using (var releaseDocument = JsonDocument.Parse(releaseDelivery.Payload))
+        {
+            var payload = releaseDocument.RootElement.GetProperty("Payload");
+            payload.GetProperty("SourceLineReference").GetString().Should().Be(sourceLineReference);
+            var releasedLots = payload.GetProperty("Allocations").EnumerateArray().ToArray();
+            releasedLots.Should().ContainSingle();
+            releasedLots[0].GetProperty("BatchNumber").GetString().Should().Be("FEFO-002");
+            releasedLots[0].GetProperty("ReleasedQuantity").GetInt32().Should().Be(1);
+        }
+
+        var finalStock = await verifyReleased.StockInHand
+            .Where(row => row.ItemId == itemId && row.LocationId == locationId)
+            .OrderBy(row => row.ExpiryDate)
+            .ToListAsync();
+        finalStock.Select(row => row.Quantity).Should().Equal(0, 1, 4);
+        finalStock.Select(row => row.ReservedQuantity).Should().Equal(0, 0, 0);
+        finalStock.Sum(row => row.Quantity).Should().Be(9 - released.ConsumedQuantity);
+        (await verifyReleased.StockReservations.CountAsync(row =>
+            row.SourceLineReference == sourceLineReference)).Should().Be(1);
+        (await verifyReleased.AuditLogs.CountAsync(row =>
+            row.EntityName == nameof(StockReservation))).Should().Be(reservationAuditCountAfterRelease);
+        (await verifyReleased.StockReservationAllocations.CountAsync()).Should().Be(2);
+        (await verifyReleased.StockTransactions.CountAsync(row => row.ItemId == itemId)).Should().Be(3);
+    }
+
+    [PostgreSqlFact]
+    public async Task Expired_split_reservation_webhook_identifies_every_released_lot()
+    {
+        fixture.EnsureEnabled();
+        var tenant = $"reservation-expired-split-{Guid.NewGuid():N}";
+        var expiry1 = DateTime.SpecifyKind(DateTime.UtcNow.Date.AddDays(20), DateTimeKind.Utc);
+        var expiry2 = DateTime.SpecifyKind(DateTime.UtcNow.Date.AddDays(40), DateTimeKind.Utc);
+        int itemId;
+        int locationId;
+
+        await using (var setup = fixture.CreateContext(tenant))
+        {
+            var item = new Item
+            {
+                ItemCode = $"EXPIRED-SPLIT-{Guid.NewGuid():N}"[..20],
+                Description = "Expired split reservation"
+            };
+            var location = new Location { Name = $"Expired split {Guid.NewGuid():N}" };
+            setup.Items.Add(item);
+            setup.Locations.Add(location);
+            await setup.SaveChangesAsync();
+            itemId = item.Id;
+            locationId = location.Id;
+            setup.StockInHand.AddRange(
+                new StockInHand
+                {
+                    ItemId = itemId,
+                    LocationId = locationId,
+                    Quantity = 3,
+                    ReservedQuantity = 1,
+                    BatchNumber = "EXPIRED-001",
+                    ExpiryDate = expiry1
+                },
+                new StockInHand
+                {
+                    ItemId = itemId,
+                    LocationId = locationId,
+                    Quantity = 3,
+                    ReservedQuantity = 2,
+                    BatchNumber = "EXPIRED-002",
+                    ExpiryDate = expiry2
+                });
+            var reservation = new StockReservation
+            {
+                ItemId = itemId,
+                LocationId = locationId,
+                SourceLineReference = "expired-split-source-line",
+                Quantity = 3,
+                ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(-1),
+                Allocations =
+                [
+                    new StockReservationAllocation
+                    {
+                        Ordinal = 0,
+                        BatchNumber = "EXPIRED-001",
+                        ExpiryDate = expiry1,
+                        Quantity = 1
+                    },
+                    new StockReservationAllocation
+                    {
+                        Ordinal = 1,
+                        BatchNumber = "EXPIRED-002",
+                        ExpiryDate = expiry2,
+                        Quantity = 2
+                    }
+                ]
+            };
+            setup.StockReservations.Add(reservation);
+            setup.WebhookSubscriptions.Add(new WebhookSubscription
+            {
+                EventType = "Stock.ReservationExpired",
+                Url = "https://example.invalid/reservation-expired"
+            });
+            await setup.SaveChangesAsync();
+        }
+
+        await using (var post = fixture.CreateContext(tenant))
+            await CreateService(post, tenant).SellStockAsync(
+                itemId, locationId, 1, "trigger reservation expiry cleanup", "EXPIRED-001", expiry1);
+
+        await using var verify = fixture.CreateContext(tenant);
+        var reservationAfterCleanup = await verify.StockReservations
+            .SingleAsync(row => row.SourceLineReference == "expired-split-source-line");
+        reservationAfterCleanup.Status.Should().Be(StockReservationStatus.Expired);
+        var stock = await verify.StockInHand
+            .Where(row => row.ItemId == itemId && row.LocationId == locationId)
+            .OrderBy(row => row.ExpiryDate)
+            .ToListAsync();
+        stock.Select(row => row.Quantity).Should().Equal(2, 3);
+        stock.Select(row => row.ReservedQuantity).Should().Equal(0, 0);
+
+        var delivery = await verify.WebhookDeliveries
+            .SingleAsync(row => row.EventType == "Stock.ReservationExpired");
+        using var document = JsonDocument.Parse(delivery.Payload);
+        var payload = document.RootElement.GetProperty("Payload");
+        payload.GetProperty("SourceLineReference").GetString().Should().Be("expired-split-source-line");
+        payload.GetProperty("ReleasedQuantity").GetInt32().Should().Be(3);
+        var allocations = payload.GetProperty("Allocations").EnumerateArray().ToArray();
+        allocations.Should().HaveCount(2);
+        allocations.Select(allocation => allocation.GetProperty("BatchNumber").GetString())
+            .Should().Equal("EXPIRED-001", "EXPIRED-002");
+        allocations.Select(allocation => allocation.GetProperty("ReleasedQuantity").GetInt32())
+            .Should().Equal(1, 2);
+    }
+
     [PostgreSqlFact]
     public async Task Date_only_lookup_finds_and_canonicalizes_a_legacy_non_midnight_lot()
     {
@@ -1464,7 +1944,8 @@ public sealed class StockReservationPostgreSqlIntegrationTests(PostgreSqlIntegra
         NullLogger<StockService>.Instance,
         new Repository<StockValuationBucket>(context),
         new Repository<StockValuationEntry>(context),
-        new Repository<StockReservation>(context));
+        new Repository<StockReservation>(context),
+        new Repository<StockReservationAllocation>(context));
 
     private static void AssertUtcCalendarDate(DateTime? actual, DateTime expected)
     {
