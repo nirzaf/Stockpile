@@ -529,9 +529,20 @@ public class StockService : IStockService
                     reservation.ClosedAt = DateTimeOffset.UtcNow;
                     reservation.ResolutionReason = "Consumed";
                 }
-                await _reservationRepo!.UpdateAsync(reservation);
+                var trackedReservation = await _reservationRepo!.GetByIdAsync(reservation.Id)
+                    ?? throw new StockAvailabilityConflictException("Reservation no longer exists.");
+                trackedReservation.ConsumedQuantity = reservation.ConsumedQuantity;
+                trackedReservation.Status = reservation.Status;
+                trackedReservation.ClosedAt = reservation.ClosedAt;
+                trackedReservation.ResolutionReason = reservation.ResolutionReason;
+                await _reservationRepo.UpdateAsync(trackedReservation);
                 if (loadedAllocations.Persisted)
-                    await _reservationAllocationRepo!.UpdateAsync(allocation);
+                {
+                    var trackedAllocation = await _reservationAllocationRepo!.GetByIdAsync(allocation.Id)
+                        ?? throw new StockAvailabilityConflictException("Reservation allocation no longer exists.");
+                    trackedAllocation.ConsumedQuantity = allocation.ConsumedQuantity;
+                    await _reservationAllocationRepo.UpdateAsync(trackedAllocation);
+                }
             }
             else
             {

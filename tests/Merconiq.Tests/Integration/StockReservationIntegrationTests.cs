@@ -618,33 +618,27 @@ public sealed class StockReservationPostgreSqlIntegrationTests(PostgreSqlIntegra
                     BatchNumber = "FEFO-003",
                     ExpiryDate = thirdExpiry
                 });
-            setup.WebhookSubscriptions.AddRange(
-                new WebhookSubscription { EventType = "Stock.Sold", Url = "https://example.invalid/stock-sold" },
-                new WebhookSubscription
-                {
-                    EventType = "Stock.ReservationReleased",
-                    Url = "https://example.invalid/reservation-released"
-                });
             await setup.SaveChangesAsync();
         }
 
         const string expiredLotReason = "Approved expired-lot reservation for test";
         var request = new CreateStockReservationRequest(
             itemId, locationId, 5, sourceLineReference, ExpiryExceptionReason: expiredLotReason);
+        var webhookDispatcher = new RecordingWebhookDispatcher();
         var reservationScope = new StockMutationScope(
             null,
             () => Task.FromResult(true),
             () => Task.FromResult(true));
         await using (var create = fixture.CreateContext(tenant))
-            await CreateService(create, tenant).CreateReservationAsync(request, reservationScope);
+            await CreateService(create, tenant, webhookDispatcher).CreateReservationAsync(request, reservationScope);
 
         // Replaying the same source-line request must not reserve the lots again.
         await using (var replay = fixture.CreateContext(tenant))
-            await CreateService(replay, tenant).CreateReservationAsync(request, reservationScope);
+            await CreateService(replay, tenant, webhookDispatcher).CreateReservationAsync(request, reservationScope);
 
         await using (var verifyCreated = fixture.CreateContext(tenant))
         {
-            var reservation = await CreateService(verifyCreated, tenant)
+            var reservation = await CreateService(verifyCreated, tenant, webhookDispatcher)
                 .GetReservationAsync(sourceLineReference);
             reservation.Should().NotBeNull();
             reservation!.SourceLineReference.Should().Be(sourceLineReference);
@@ -668,7 +662,7 @@ public sealed class StockReservationPostgreSqlIntegrationTests(PostgreSqlIntegra
 
         await using (var consume = fixture.CreateContext(tenant))
         {
-            await CreateService(consume, tenant).ConsumeReservationAsync(
+            await CreateService(consume, tenant, webhookDispatcher).ConsumeReservationAsync(
                 new ConsumeStockReservationRequest(
                     sourceLineReference, 3, "partial FEFO consumption", expiredLotReason),
                 reservationScope);
@@ -676,11 +670,12 @@ public sealed class StockReservationPostgreSqlIntegrationTests(PostgreSqlIntegra
 
         // Replaying creation after consumption must not restore or duplicate allocations.
         await using (var replayAfterConsumption = fixture.CreateContext(tenant))
-            await CreateService(replayAfterConsumption, tenant).CreateReservationAsync(request, reservationScope);
+            await CreateService(replayAfterConsumption, tenant, webhookDispatcher)
+                .CreateReservationAsync(request, reservationScope);
 
         await using (var verifyConsumed = fixture.CreateContext(tenant))
         {
-            var reservation = await CreateService(verifyConsumed, tenant)
+            var reservation = await CreateService(verifyConsumed, tenant, webhookDispatcher)
                 .GetReservationAsync(sourceLineReference);
             reservation.Should().NotBeNull();
             reservation!.ConsumedQuantity.Should().Be(3);
@@ -709,15 +704,13 @@ public sealed class StockReservationPostgreSqlIntegrationTests(PostgreSqlIntegra
                 row.SourceLineReference.StartsWith(sourceLineReference, StringComparison.Ordinal));
             movements.Select(row => row.SourceLineReference).Should().OnlyHaveUniqueItems();
 
-            var saleDeliveries = await verifyConsumed.WebhookDeliveries
-                .Where(row => row.EventType == "Stock.Sold")
-                .OrderBy(row => row.Id)
-                .ToListAsync();
+            var saleDeliveries = webhookDispatcher.Events
+                .Where(delivery => delivery.EventType == "Stock.Sold")
+                .ToArray();
             saleDeliveries.Should().HaveCount(2);
             var salePayloads = saleDeliveries.Select(delivery =>
             {
-                using var document = JsonDocument.Parse(delivery.Payload);
-                var payload = document.RootElement.GetProperty("Payload");
+                var payload = JsonSerializer.SerializeToElement(delivery.Payload);
                 return (
                     Reservation: payload.GetProperty("ReservationSourceLineReference").GetString(),
                     Movement: payload.GetProperty("MovementSourceLineReference").GetString(),
@@ -763,11 +756,11 @@ public sealed class StockReservationPostgreSqlIntegrationTests(PostgreSqlIntegra
         // The expired allocation is now fully consumed, so another partial consume
         // from the fresh lot must not require an expiry override.
         await using (var consumeFresh = fixture.CreateContext(tenant))
-            await CreateService(consumeFresh, tenant).ConsumeReservationAsync(
+            await CreateService(consumeFresh, tenant, webhookDispatcher).ConsumeReservationAsync(
                 new ConsumeStockReservationRequest(sourceLineReference, 1, "consume remaining fresh lot"));
 
         await using (var release = fixture.CreateContext(tenant))
-            await CreateService(release, tenant).ReleaseReservationAsync(
+            await CreateService(release, tenant, webhookDispatcher).ReleaseReservationAsync(
                 sourceLineReference, "remaining quantity no longer needed");
         int reservationAuditCountAfterRelease;
         await using (var verifyRelease = fixture.CreateContext(tenant))
@@ -781,11 +774,11 @@ public sealed class StockReservationPostgreSqlIntegrationTests(PostgreSqlIntegra
         }
 
         await using (var releaseReplay = fixture.CreateContext(tenant))
-            await CreateService(releaseReplay, tenant).ReleaseReservationAsync(
+            await CreateService(releaseReplay, tenant, webhookDispatcher).ReleaseReservationAsync(
                 sourceLineReference, "remaining quantity no longer needed");
 
         await using var verifyReleased = fixture.CreateContext(tenant);
-        var released = await CreateService(verifyReleased, tenant)
+        var released = await CreateService(verifyReleased, tenant, webhookDispatcher)
             .GetReservationAsync(sourceLineReference);
         released.Should().NotBeNull();
         released!.Status.Should().Be(StockReservationStatus.Released);
@@ -793,11 +786,11 @@ public sealed class StockReservationPostgreSqlIntegrationTests(PostgreSqlIntegra
         released.RemainingQuantity.Should().Be(1);
         released.Allocations!.Sum(allocation => allocation.RemainingQuantity).Should().Be(1);
 
-        var releaseDelivery = await verifyReleased.WebhookDeliveries
-            .SingleAsync(row => row.EventType == "Stock.ReservationReleased");
-        using (var releaseDocument = JsonDocument.Parse(releaseDelivery.Payload))
+        var releaseDelivery = webhookDispatcher.Events
+            .Single(delivery => delivery.EventType == "Stock.ReservationReleased");
+        var releasePayload = JsonSerializer.SerializeToElement(releaseDelivery.Payload);
         {
-            var payload = releaseDocument.RootElement.GetProperty("Payload");
+            var payload = releasePayload;
             payload.GetProperty("SourceLineReference").GetString().Should().Be(sourceLineReference);
             var releasedLots = payload.GetProperty("Allocations").EnumerateArray().ToArray();
             releasedLots.Should().ContainSingle();
@@ -888,16 +881,12 @@ public sealed class StockReservationPostgreSqlIntegrationTests(PostgreSqlIntegra
                 ]
             };
             setup.StockReservations.Add(reservation);
-            setup.WebhookSubscriptions.Add(new WebhookSubscription
-            {
-                EventType = "Stock.ReservationExpired",
-                Url = "https://example.invalid/reservation-expired"
-            });
             await setup.SaveChangesAsync();
         }
 
+        var webhookDispatcher = new RecordingWebhookDispatcher();
         await using (var post = fixture.CreateContext(tenant))
-            await CreateService(post, tenant).SellStockAsync(
+            await CreateService(post, tenant, webhookDispatcher).SellStockAsync(
                 itemId, locationId, 1, "trigger reservation expiry cleanup", "EXPIRED-001", expiry1);
 
         await using var verify = fixture.CreateContext(tenant);
@@ -911,10 +900,8 @@ public sealed class StockReservationPostgreSqlIntegrationTests(PostgreSqlIntegra
         stock.Select(row => row.Quantity).Should().Equal(2, 3);
         stock.Select(row => row.ReservedQuantity).Should().Equal(0, 0);
 
-        var delivery = await verify.WebhookDeliveries
-            .SingleAsync(row => row.EventType == "Stock.ReservationExpired");
-        using var document = JsonDocument.Parse(delivery.Payload);
-        var payload = document.RootElement.GetProperty("Payload");
+        var delivery = webhookDispatcher.Events.Single(item => item.EventType == "Stock.ReservationExpired");
+        var payload = JsonSerializer.SerializeToElement(delivery.Payload);
         payload.GetProperty("SourceLineReference").GetString().Should().Be("expired-split-source-line");
         payload.GetProperty("ReleasedQuantity").GetInt32().Should().Be(3);
         var allocations = payload.GetProperty("Allocations").EnumerateArray().ToArray();
@@ -1220,7 +1207,7 @@ public sealed class StockReservationPostgreSqlIntegrationTests(PostgreSqlIntegra
                 request with { ExpiryExceptionReason = null },
                 CreateOverrideScope(state.CompanyId, authorized: true));
             await action.Should().ThrowAsync<StockAvailabilityConflictException>()
-                .WithMessage("An audit reason is required to use an expired stock lot.");
+                .WithMessage("No stock is available for the requested lot.");
         }
         await AssertAutoExpiredLotUnchangedAsync(
             fixture, tenant, state, staleReservationReference, newReservationReference);
