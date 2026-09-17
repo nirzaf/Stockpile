@@ -306,11 +306,14 @@ public sealed class StockReservationPostgreSqlApiAcceptanceTests(PostgreSqlInteg
                                     row.BatchNumber == "LOT-EXPIRED");
             auditedAllocation.ExpiryExceptionReason.Should().Be(expiredExceptionReason);
             var allocationAudit = await verifyException.AuditLogs
-                .Where(row => row.EntityName == nameof(StockReservationAllocation) && row.NewValues != null)
+                .Where(row => row.EntityName == nameof(StockReservationAllocation) &&
+                              row.Action == "Insert" && row.NewValues != null)
                 .ToListAsync();
             allocationAudit.Should().Contain(row =>
-                AuditValue(row.NewValues!, nameof(StockReservationAllocation.BatchNumber)) == "LOT-EXPIRED" &&
-                AuditValue(row.NewValues!, nameof(StockReservationAllocation.ExpiryExceptionReason)) == expiredExceptionReason);
+                AuditIntValue(row.KeyValues, nameof(StockReservationAllocation.Id)) == auditedAllocation.Id &&
+                AuditStringValue(row.NewValues, nameof(StockReservationAllocation.BatchNumber)) == "LOT-EXPIRED" &&
+                AuditStringValue(row.NewValues, nameof(StockReservationAllocation.ExpiryExceptionReason)) == expiredExceptionReason,
+                "the audit record for this exact expired-lot allocation must preserve its lot and approval reason");
         }
 
         var consumeException = new
@@ -346,11 +349,15 @@ public sealed class StockReservationPostgreSqlApiAcceptanceTests(PostgreSqlInteg
             exceptionMovements.Where(row => row.BatchNumber != "LOT-EXPIRED")
                 .Should().OnlyContain(row => row.ExpiryExceptionReason == null);
             var movementAudit = await verifyMovements.AuditLogs
-                .Where(row => row.EntityName == nameof(StockTransaction) && row.NewValues != null)
+                .Where(row => row.EntityName == nameof(StockTransaction) &&
+                              row.Action == "Insert" && row.NewValues != null)
                 .ToListAsync();
+            var expiredMovement = exceptionMovements.Single(row => row.BatchNumber == "LOT-EXPIRED");
             movementAudit.Should().Contain(row =>
-                AuditValue(row.NewValues!, nameof(StockTransaction.BatchNumber)) == "LOT-EXPIRED" &&
-                AuditValue(row.NewValues!, nameof(StockTransaction.ExpiryExceptionReason)) == expiredExceptionReason);
+                AuditIntValue(row.KeyValues, nameof(StockTransaction.Id)) == expiredMovement.Id &&
+                AuditStringValue(row.NewValues, nameof(StockTransaction.BatchNumber)) == "LOT-EXPIRED" &&
+                AuditStringValue(row.NewValues, nameof(StockTransaction.ExpiryExceptionReason)) == expiredExceptionReason,
+                "the audit record for this exact expired-lot movement must preserve its lot and approval reason");
         }
 
         await AssertAvailabilityAsync(operatorA, seed.ItemId, companyALocations,
@@ -563,10 +570,28 @@ public sealed class StockReservationPostgreSqlApiAcceptanceTests(PostgreSqlInteg
             allocationCount, auditedEntityCount, idempotencyRecordCount);
     }
 
-    private static string? AuditValue(string newValues, string propertyName)
+    private static string? AuditStringValue(string? json, string propertyName)
     {
-        using var document = JsonDocument.Parse(newValues);
-        return document.RootElement.GetProperty(propertyName).GetString();
+        if (json is null)
+            return null;
+
+        using var document = JsonDocument.Parse(json);
+        return document.RootElement.TryGetProperty(propertyName, out var value) &&
+               value.ValueKind == JsonValueKind.String
+            ? value.GetString()
+            : null;
+    }
+
+    private static int? AuditIntValue(string? json, string propertyName)
+    {
+        if (json is null)
+            return null;
+
+        using var document = JsonDocument.Parse(json);
+        return document.RootElement.TryGetProperty(propertyName, out var value) &&
+               value.ValueKind == JsonValueKind.Number && value.TryGetInt32(out var result)
+            ? result
+            : null;
     }
 
     private static ExpectedLotBalance Lot(
