@@ -280,6 +280,9 @@ public sealed class PurchaseOrderApprovalPostgreSqlIntegrationTests(PostgreSqlIn
 
         commitInterceptor.CommitCallbacksAfterArm.Should().Be(2,
             "the first successful database commit reports a transient client-side error and must be retried");
+        order.Status.Should().Be(PurchaseOrderStatus.Approved);
+        order.ApprovedCommercialVersion.Should().Be(order.CommercialVersion);
+        order.ApprovedCommercialSnapshotJson.Should().NotBeNullOrWhiteSpace();
         await using var verification = fixture.CreateContext(tenantId);
         var persistedOrder = await verification.PurchaseOrders.AsNoTracking().SingleAsync(po => po.Id == order.Id);
         persistedOrder.Status.Should().Be(PurchaseOrderStatus.Approved);
@@ -351,6 +354,9 @@ public sealed class PurchaseOrderApprovalPostgreSqlIntegrationTests(PostgreSqlIn
         failure.Which.Message.Should().Contain("changed after approval started");
         commitInterceptor.CommitCallbacksAfterArm.Should().Be(1,
             "the retry must reject the newer version before it can commit another approval");
+        order.Status.Should().Be(PurchaseOrderStatus.Pending);
+        order.CommercialVersion.Should().Be(requestedCommercialVersion + 1);
+        order.ApprovedCommercialVersion.Should().Be(requestedCommercialVersion);
 
         await using var verification = fixture.CreateContext(tenantId);
         var persistedOrder = await verification.PurchaseOrders.AsNoTracking().SingleAsync(po => po.Id == order.Id);

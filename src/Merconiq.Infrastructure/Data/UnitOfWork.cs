@@ -200,47 +200,78 @@ public class UnitOfWork : IUnitOfWork
             state: 0,
             operation: async (_, _, transactionCancellationToken) =>
             {
-                // Do not let a preflight read or a prior failed attempt supply stale tracked
-                // entities to the repeatable-read callback. It must load its state from this
-                // attempt's database snapshot.
-                _context.ChangeTracker.Clear();
-
-                await using var transaction = await _context.Database.BeginTransactionAsync(
-                    IsolationLevel.RepeatableRead, transactionCancellationToken);
-                _currentTransaction = transaction;
                 try
                 {
-                    await operation();
-                    await transaction.CommitAsync(transactionCancellationToken);
+                    await using (var transaction = await _context.Database.BeginTransactionAsync(
+                        IsolationLevel.RepeatableRead, transactionCancellationToken))
+                    {
+                        _currentTransaction = transaction;
+                        try
+                        {
+                            // Refresh tracked instances inside this attempt's snapshot. This avoids
+                            // stale preflight/retry values without detaching entities that callers
+                            // still hold references to (for example, the purchase order being approved).
+                            await RefreshTrackedEntitiesAsync(transactionCancellationToken);
+                            await operation();
+                            await transaction.CommitAsync(transactionCancellationToken);
+                        }
+                        catch
+                        {
+                            try
+                            {
+                                await transaction.RollbackAsync(CancellationToken.None);
+                            }
+                            catch
+                            {
+                                // A commit can succeed in PostgreSQL and still surface a transient
+                                // connection error to the client. Preserve that original exception.
+                            }
+
+                            throw;
+                        }
+                        finally
+                        {
+                            _currentTransaction = null;
+                        }
+                    }
                 }
                 catch
                 {
+                    // Keep the scoped context usable after either an ordinary failure or a retryable
+                    // commit error. Refresh once the failed transaction has been disposed; if the
+                    // connection is unusable, clearing is the safe fallback and preserves the cause.
                     try
                     {
-                        await transaction.RollbackAsync(CancellationToken.None);
+                        await RefreshTrackedEntitiesAsync(CancellationToken.None);
                     }
                     catch
                     {
-                        // A commit can succeed in PostgreSQL and still surface a transient
-                        // connection error to the client. Preserve that original exception
-                        // so the execution strategy can retry from fresh database state.
+                        _context.ChangeTracker.Clear();
                     }
 
-                    // SaveChanges accepts tracked values before commit. If commit failed or
-                    // its result was ambiguous, replaying against those values can skip the
-                    // write after a rollback. Force the next attempt to reload from PostgreSQL.
-                    _context.ChangeTracker.Clear();
                     throw;
-                }
-                finally
-                {
-                    _currentTransaction = null;
                 }
 
                 return true;
             },
             verifySucceeded: null,
             cancellationToken: cancellationToken);
+    }
+
+    private async Task RefreshTrackedEntitiesAsync(CancellationToken cancellationToken)
+    {
+        foreach (var entry in _context.ChangeTracker.Entries().ToArray())
+        {
+            if (entry.State == EntityState.Added)
+            {
+                // Added rows from a failed attempt were rolled back. Detach them so the
+                // replay can add its own rows; ReloadAsync cannot find these yet.
+                entry.State = EntityState.Detached;
+                continue;
+            }
+
+            await entry.ReloadAsync(cancellationToken);
+        }
     }
 
     public async Task AcquireLocationLocksAsync(
