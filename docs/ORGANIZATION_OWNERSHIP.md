@@ -12,7 +12,7 @@ a company identifier.
 | Branch | Company-owned within a tenant | New `Branches` rows require a same-tenant company and a company-scoped unique code. |
 | Location | Branch-owned when mapped | Existing locations keep their IDs and receive nullable `BranchId` until an owner-approved mapping exists. |
 | Item, supplier, purchase order, stock | Existing tenant-scoped masters | No automatic legal-company inference is performed in this migration; mapping is a controlled follow-up. |
-| Currency metadata | Company base-currency field | The current foundation stores the ISO-style base-currency code; it may change during setup but is frozen after posted stock activity. A shared catalog is a later M01 issue. |
+| Currency metadata | Company base-currency field | A company requires an explicitly supplied three-letter currency code; there is no jurisdiction-specific default. It may change during setup but is frozen after posted stock activity. Currency-specific display and rounding metadata, and validation against a maintained ISO 4217 catalog, remain future M01 work; do not assume every currency has two fractional digits. |
 
 The migration creates `Companies` and `Branches`, then adds nullable
 `Locations.BranchId`. Composite foreign keys include `TenantId`, so a branch
