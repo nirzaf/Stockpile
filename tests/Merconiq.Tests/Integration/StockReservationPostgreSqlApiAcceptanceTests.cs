@@ -6,6 +6,7 @@ using Merconiq.Core.Entities;
 using Merconiq.Core.Models;
 using Merconiq.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
+using Npgsql;
 
 namespace Merconiq.Tests.Integration;
 
@@ -51,6 +52,19 @@ public sealed class StockReservationPostgreSqlApiAcceptanceTests(PostgreSqlInteg
             .StatusCode.Should().Be(HttpStatusCode.Forbidden,
                 "the signed operator persona has a grant for company A only");
 
+        var beforeCrossCompanyReservation = await ReadSnapshotAsync(seed);
+        var crossCompanyReservation = await operatorA.PostAsJsonAsync("/api/v1/stock/reservations", new
+        {
+            itemId = seed.ItemId,
+            locationId = seed.LocationBId,
+            quantity = 1,
+            sourceLineReference = $"issue-278-cross-company-{suffix}"
+        });
+        crossCompanyReservation.StatusCode.Should().Be(HttpStatusCode.Forbidden,
+            "read isolation alone is insufficient if an operator can reserve another company's stock");
+        (await ReadSnapshotAsync(seed)).Should().BeEquivalentTo(beforeCrossCompanyReservation,
+            "a denied cross-company reservation must not alter company B stock, reservations, audits, or outbox rows");
+
         // Give one line a short-lived reservation, then exercise its expiry through the
         // authenticated direct-sale route. The API operation also performs expired-reservation cleanup.
         var expiresAt = DateTimeOffset.UtcNow.AddMinutes(1);
@@ -84,6 +98,33 @@ public sealed class StockReservationPostgreSqlApiAcceptanceTests(PostgreSqlInteg
             reservation.ExpiresAt = DateTimeOffset.UtcNow.AddSeconds(-1);
             await expireReservation.SaveChangesAsync();
         }
+
+        var beforeUnavailableSales = await ReadSnapshotAsync(seed);
+        var expiredDirectSale = await operatorA.PostAsJsonAsync("/api/v1/stock/sell", new
+        {
+            itemId = seed.ItemId,
+            locationId = seed.LocationAId,
+            quantity = 1,
+            notes = "synthetic rejected expired-lot sale",
+            batchNumber = "LOT-EXPIRED",
+            expiryDate = seed.ExpiredDate
+        });
+        expiredDirectSale.StatusCode.Should().Be(HttpStatusCode.Conflict);
+        (await ReadSnapshotAsync(seed)).Should().BeEquivalentTo(beforeUnavailableSales,
+            "an expired-lot direct sale without an authorized reason must have no persisted side effects");
+
+        var negativeStockSale = await operatorA.PostAsJsonAsync("/api/v1/stock/sell", new
+        {
+            itemId = seed.ItemId,
+            locationId = seed.LocationAId,
+            quantity = 5,
+            notes = "synthetic rejected oversell",
+            batchNumber = "LOT-MIDDLE",
+            expiryDate = seed.MiddleDate
+        });
+        negativeStockSale.StatusCode.Should().Be(HttpStatusCode.Conflict);
+        (await ReadSnapshotAsync(seed)).Should().BeEquivalentTo(beforeUnavailableSales,
+            "an oversell must not drive a lot below zero or create audit, transaction, or outbox rows");
 
         var cleanupSale = await operatorA.PostAsJsonAsync("/api/v1/stock/sell", new
         {
@@ -119,9 +160,8 @@ public sealed class StockReservationPostgreSqlApiAcceptanceTests(PostgreSqlInteg
         var raceLineA = $"issue-278-race-a-{suffix}";
         var raceLineB = $"issue-278-race-b-{suffix}";
         var beforeRace = await ReadSnapshotAsync(seed);
-        var race = await Task.WhenAll(
-            CreateReservationAsync(operatorA, seed, raceLineA, 5),
-            CreateReservationAsync(operatorA, seed, raceLineB, 5));
+        var race = await CreateCompetingReservationsWithObservedLockContentionAsync(
+            operatorA, seed, raceLineA, raceLineB);
         race.Select(result => result.Response.StatusCode)
             .Count(status => status == HttpStatusCode.NoContent).Should().Be(1);
         race.Select(result => result.Response.StatusCode)
@@ -450,6 +490,98 @@ public sealed class StockReservationPostgreSqlApiAcceptanceTests(PostgreSqlInteg
         return new AcceptanceSeed(
             companyA.Id, companyB.Id, item.Id, locationA.Id, locationB.Id,
             expiredDate, earlyDate, middleDate, lateDate, companyBDate, subscription.Id);
+    }
+
+    private async Task<(string SourceLineReference, HttpResponseMessage Response)[]>
+        CreateCompetingReservationsWithObservedLockContentionAsync(
+            HttpClient client,
+            AcceptanceSeed seed,
+            string sourceLineReferenceA,
+            string sourceLineReferenceB)
+    {
+        await using var connection = new NpgsqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var transaction = await connection.BeginTransactionAsync();
+        var lockKey = $"stock-location:{TenantId}:{seed.LocationAId}";
+        await using (var acquireLock = new NpgsqlCommand(
+                         "SELECT pg_advisory_xact_lock(hashtextextended(@lock_key, 0))",
+                         connection,
+                         transaction))
+        {
+            acquireLock.Parameters.AddWithValue("lock_key", lockKey);
+            await acquireLock.ExecuteScalarAsync();
+        }
+
+        long lockClassId;
+        long lockObjectId;
+        int lockObjectSubId;
+        await using (var readLock = new NpgsqlCommand(
+                         "SELECT classid::bigint, objid::bigint, objsubid " +
+                         "FROM pg_locks WHERE pid = pg_backend_pid() AND locktype = 'advisory' " +
+                         "AND granted AND objsubid = 1",
+                         connection,
+                         transaction))
+        await using (var reader = await readLock.ExecuteReaderAsync())
+        {
+            (await reader.ReadAsync()).Should().BeTrue("the test backend must hold the targeted advisory lock");
+            lockClassId = reader.GetInt64(0);
+            lockObjectId = reader.GetInt64(1);
+            lockObjectSubId = Convert.ToInt32(reader.GetValue(2));
+        }
+
+        var firstRequest = CreateReservationAsync(client, seed, sourceLineReferenceA, 5);
+        var secondRequest = CreateReservationAsync(client, seed, sourceLineReferenceB, 5);
+        var observedBothRequestsWaiting = await WaitForAdvisoryLockWaitersAsync(
+            connection,
+            transaction,
+            lockClassId,
+            lockObjectId,
+            lockObjectSubId,
+            expectedWaiters: 2,
+            timeout: TimeSpan.FromSeconds(15));
+
+        await transaction.RollbackAsync();
+        var results = await Task.WhenAll(firstRequest, secondRequest);
+        if (!observedBothRequestsWaiting)
+        {
+            foreach (var result in results)
+                result.Response.Dispose();
+        }
+        observedBothRequestsWaiting.Should().BeTrue(
+            "both independent API requests must be observed waiting on this exact PostgreSQL location lock before release");
+        return results;
+    }
+
+    private static async Task<bool> WaitForAdvisoryLockWaitersAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        long lockClassId,
+        long lockObjectId,
+        int lockObjectSubId,
+        int expectedWaiters,
+        TimeSpan timeout)
+    {
+        var deadline = DateTime.UtcNow + timeout;
+        do
+        {
+            await using var command = new NpgsqlCommand(
+                "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' " +
+                "AND classid::bigint = @class_id AND objid::bigint = @object_id " +
+                "AND objsubid = @object_sub_id AND NOT granted",
+                connection,
+                transaction);
+            command.Parameters.AddWithValue("class_id", lockClassId);
+            command.Parameters.AddWithValue("object_id", lockObjectId);
+            command.Parameters.AddWithValue("object_sub_id", lockObjectSubId);
+            var waiters = Convert.ToInt32(await command.ExecuteScalarAsync());
+            if (waiters >= expectedWaiters)
+                return true;
+
+            await Task.Delay(TimeSpan.FromMilliseconds(25));
+        }
+        while (DateTime.UtcNow < deadline);
+
+        return false;
     }
 
     private static async Task<(string SourceLineReference, HttpResponseMessage Response)> CreateReservationAsync(
