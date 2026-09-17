@@ -28,28 +28,36 @@ public class SupplierService : ISupplierService
     public async Task<Supplier> CreateAsync(Supplier supplier)
     {
         _logger.LogInformation("Creating supplier {Name}", supplier.Name);
-        var created = await _repo.AddAsync(supplier);
-        await _unitOfWork.SaveChangesAsync();
-        return created;
+        Supplier? created = null;
+        await _unitOfWork.ExecuteMasterDataWriteAsync(async () =>
+        {
+            created = await _repo.AddAsync(supplier);
+            await _unitOfWork.SaveChangesAsync();
+        });
+        return created!;
     }
 
     /// <inheritdoc />
     public async Task UpdateAsync(Supplier supplier)
     {
         _logger.LogInformation("Updating supplier {Id}", supplier.Id);
-        await _repo.UpdateAsync(supplier);
-        await _unitOfWork.SaveChangesAsync();
+        await _unitOfWork.ExecuteMasterDataWriteAsync(async () =>
+        {
+            await _repo.UpdateAsync(supplier);
+            await _unitOfWork.SaveChangesAsync();
+        });
     }
 
     /// <inheritdoc />
     public async Task DeleteAsync(int id)
     {
-        var supplier = await _repo.GetByIdAsync(id);
-        if (supplier != null)
+        await _unitOfWork.ExecuteMasterDataWriteAsync(async () =>
         {
+            var supplier = await _repo.GetByIdAsync(id);
+            if (supplier == null) return;
             _logger.LogInformation("Deleting supplier {Id}", id);
             await _repo.DeleteAsync(supplier);
             await _unitOfWork.SaveChangesAsync();
-        }
+        });
     }
 }

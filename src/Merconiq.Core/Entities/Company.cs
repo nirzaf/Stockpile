@@ -4,6 +4,8 @@ namespace Merconiq.Core.Entities;
 public sealed class Company : AuditableEntity
 {
     public int Id { get; set; }
+    /// <summary>Stable identifier used by controlled master-data imports.</summary>
+    public string? ExternalId { get; set; }
     public string Code { get; set; } = string.Empty;
     public string LegalName { get; set; } = string.Empty;
     public string? TradingName { get; set; }

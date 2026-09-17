@@ -8,10 +8,10 @@ a company identifier.
 
 | Master | Ownership in M01 | Current transition |
 | --- | --- | --- |
-| Company | Tenant-owned | New `Companies` rows require a tenant-scoped unique code. |
-| Branch | Company-owned within a tenant | New `Branches` rows require a same-tenant company and a company-scoped unique code. |
-| Location | Branch-owned when mapped | Existing locations keep their IDs and receive nullable `BranchId` until an owner-approved mapping exists. |
-| Item, supplier, purchase order, stock | Existing tenant-scoped masters | No automatic legal-company inference is performed in this migration; mapping is a controlled follow-up. |
+| Company | Tenant-owned | New `Companies` rows require a tenant-scoped unique code; controlled imports also require a stable external ID. |
+| Branch | Company-owned within a tenant | New `Branches` rows require a same-tenant company and a company-scoped unique code; controlled imports use a stable external ID. |
+| Location | Branch-owned when mapped | Existing locations keep their IDs and receive nullable `BranchId` until an owner-approved mapping exists; controlled imports resolve a stable branch external ID. |
+| Item, supplier, purchase order, stock | Existing tenant-scoped masters | Items and suppliers remain shared tenant masters. Controlled imports use an explicit company authorization scope but do not infer legal-company ownership. |
 | Currency metadata | Company base-currency field | A company requires an explicitly supplied three-letter currency code and 0–4 decimal-place currency scale; there is no jurisdiction-specific default. Currency and scale may change during setup but are frozen after posted stock activity. Validation against a maintained ISO 4217 catalog remains future M01 work; do not assume every currency has two fractional digits. |
 
 The migration creates `Companies` and `Branches`, then adds nullable
@@ -28,8 +28,10 @@ the application does not invent a legal name or infer a company from a tenant
 ID.
 
 The API surface is under `/api/v1/organization`: company and branch list,
-search, create, update/deactivate, plus controlled location-to-branch
-assignment. Mutations require the existing Admin or Manager role.
+search, create, update/deactivate, controlled location-to-branch assignment,
+and dry-run/apply master-data imports. Imports use stable external IDs and
+return row-level summaries; mutations require the existing role and company
+capability appropriate to the resource.
 
 ## Currency and item quantity conventions
 
