@@ -585,7 +585,8 @@ public sealed class TransferOrderService(
 
             var existingSettlements = await _settlementRepositoryOrThrow().FindAsync(
                 settlement => settlement.TransferTransitEntryId == transitEntryId, cancellationToken);
-            var remaining = entry.Quantity - existingSettlements.Sum(settlement => settlement.Quantity);
+            var settledQuantity = existingSettlements.Sum(settlement => settlement.Quantity);
+            var remaining = entry.Quantity - settledQuantity;
             if (normalizedRequest.Quantity > remaining)
                 throw new StockAvailabilityConflictException(
                     $"Settlement quantity exceeds the remaining transit quantity of {Math.Max(0, remaining)}.");
@@ -598,6 +599,13 @@ public sealed class TransferOrderService(
             }
 
             var isReturn = normalizedRequest.SettlementType == TransferTransitSettlementType.Returned;
+            var remainingValue = entry.TotalValue - existingSettlements.Sum(settlement => settlement.TotalValue);
+            var settlementValue = normalizedRequest.Quantity == remaining
+                ? remainingValue
+                : Math.Min(
+                    Round(entry.TotalValue * normalizedRequest.Quantity / entry.Quantity),
+                    remainingValue);
+            var settlementUnitCost = Round(settlementValue / normalizedRequest.Quantity);
             var movement = await stockService.PostTransferTransitMovementAsync(
                 new TransferTransitStockMovementRequest(
                     entry.ItemId,
@@ -606,7 +614,8 @@ public sealed class TransferOrderService(
                     normalizedRequest.Quantity,
                     entry.BatchNumber,
                     entry.ExpiryDate,
-                    entry.UnitCost,
+                    settlementUnitCost,
+                    settlementValue,
                     CreateTransitMovementReference(entry.Id, idempotencyKey, normalizedRequest.SettlementType),
                     normalizedRequest.Notes ?? (isReturn ? "Transfer transit returned." : "Transfer transit received."),
                     isReturn ? TransactionType.TransferReturn : TransactionType.TransferReceipt,
@@ -642,13 +651,19 @@ public sealed class TransferOrderService(
             };
             await _settlementRepositoryOrThrow().AddAsync(settlement);
             var allTransit = await transitRepository.FindAsync(candidate => candidate.TransferOrderId == id, cancellationToken);
-            var allSettled = existingSettlements.Sum(candidate => candidate.Quantity) + settlement.Quantity;
+            var allSettlements = await _settlementRepositoryOrThrow().FindAsync(
+                candidate => candidate.TransferOrderId == id, cancellationToken);
+            var allSettled = allSettlements.Sum(candidate => candidate.Quantity) + settlement.Quantity;
+            var physicallyReceived = allSettlements
+                .Where(candidate => candidate.SettlementType != TransferTransitSettlementType.Returned)
+                .Sum(candidate => candidate.Quantity) +
+                (settlement.SettlementType == TransferTransitSettlementType.Returned ? 0 : settlement.Quantity);
             var totalDispatched = allTransit.Sum(candidate => candidate.Quantity);
             var totalOrdered = (await lineRepository.FindAsync(candidate => candidate.TransferOrderId == id, cancellationToken))
                 .Sum(candidate => candidate.Quantity);
-            order.Status = allSettled >= totalOrdered && totalDispatched >= totalOrdered
+            order.Status = allSettled >= totalDispatched && totalDispatched >= totalOrdered
                 ? TransferOrderStatus.Completed
-                : allSettled > 0 ? TransferOrderStatus.PartiallyReceived : TransferOrderStatus.InTransit;
+                : physicallyReceived > 0 ? TransferOrderStatus.PartiallyReceived : TransferOrderStatus.InTransit;
             await orderRepository.UpdateAsync(order);
             await webhookDispatcher.EnqueueAsync(WebhookEventFactory.Create(tenantContext,
                 "TransferOrder.TransitSettled",
@@ -841,6 +856,8 @@ public sealed class TransferOrderService(
 
     private static DateTimeOffset NormalizeDatabaseTimestamp(DateTimeOffset value) =>
         value.AddTicks(-(value.Ticks % TimeSpan.TicksPerMicrosecond));
+
+    private static decimal Round(decimal value) => decimal.Round(value, 6, MidpointRounding.AwayFromZero);
 
     private static void ValidateIdempotencyKey(string key)
     {

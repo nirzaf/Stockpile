@@ -720,6 +720,8 @@ public class StockService : IStockService
             throw new ArgumentOutOfRangeException(nameof(request.Quantity), "Quantity must be positive.");
         if (request.UnitCost < 0)
             throw new ArgumentOutOfRangeException(nameof(request.UnitCost), "Unit cost must be non-negative.");
+        if (request.TotalValue < 0)
+            throw new ArgumentOutOfRangeException(nameof(request.TotalValue), "Total value must be non-negative.");
         if (request.TransactionType is not (TransactionType.TransferReceipt or TransactionType.TransferReturn))
             throw new ArgumentException("Only transfer receipt and return movements are supported.", nameof(request));
         EnsureSourceLineReference(request.SourceLineReference);
@@ -799,7 +801,8 @@ public class StockService : IStockService
                 transaction,
                 request.TransactionType == TransactionType.TransferReturn
                     ? StockValuationEntryType.TransferReturn
-                    : StockValuationEntryType.TransferIn);
+                    : StockValuationEntryType.TransferIn,
+                request.TotalValue);
 
             var eventType = request.TransactionType == TransactionType.TransferReturn
                 ? "Stock.TransferReturned"
@@ -814,7 +817,7 @@ public class StockService : IStockService
                     BatchNumber = batchNumber,
                     ExpiryDate = expiryDate,
                     UnitCost = request.UnitCost,
-                    TotalValue = Round(request.UnitCost * request.Quantity),
+                    TotalValue = request.TotalValue,
                     SourceLineReference = sourceLineReference,
                     QuarantineReason = quarantineReason,
                     Notes = notes
@@ -826,7 +829,7 @@ public class StockService : IStockService
                 batchNumber,
                 expiryDate,
                 Round(request.UnitCost),
-                Round(request.UnitCost * request.Quantity));
+                request.TotalValue);
         }, () => VerifyTransactionCommitAsync(transaction), checkLowStock: false, cancellationToken);
 
         return movement ?? throw new InvalidOperationException(
@@ -1905,11 +1908,14 @@ public class StockService : IStockService
         int quantity,
         decimal unitCost,
         StockTransaction source,
-        StockValuationEntryType entryType = StockValuationEntryType.Receipt)
+        StockValuationEntryType entryType = StockValuationEntryType.Receipt,
+        decimal? totalValueOverride = null)
     {
         var existing = (await _valuationBucketRepo!.FindAsync(bucket =>
             bucket.ItemId == itemId && bucket.LocationId == locationId)).FirstOrDefault();
-        var totalValue = Round(quantity * unitCost);
+        var totalValue = totalValueOverride.HasValue
+            ? Round(totalValueOverride.Value)
+            : Round(quantity * unitCost);
 
         if (existing is null)
         {

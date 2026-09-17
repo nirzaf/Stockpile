@@ -193,6 +193,18 @@ namespace Merconiq.Infrastructure.Migrations
         protected override void Down(MigrationBuilder migrationBuilder)
         {
             migrationBuilder.Sql("""
+                LOCK TABLE "TransferTransitSettlements" IN ACCESS EXCLUSIVE MODE;
+                DO $migration$
+                BEGIN
+                    IF EXISTS (SELECT 1 FROM "TransferTransitSettlements") THEN
+                        RAISE EXCEPTION 'Cannot downgrade transfer transit settlements while settlement records are persisted.'
+                            USING ERRCODE = '55000';
+                    END IF;
+                END
+                $migration$;
+                """);
+
+            migrationBuilder.Sql("""
                 DROP TRIGGER IF EXISTS TR_TransferTransitSettlements_NoTruncate ON "TransferTransitSettlements";
                 DROP TRIGGER IF EXISTS TR_TransferTransitSettlements_AppendOnly ON "TransferTransitSettlements";
                 DROP FUNCTION IF EXISTS reject_transfer_transit_settlement_mutation();

@@ -20,6 +20,7 @@ public sealed record TransferTransitStockMovementRequest(
     string? BatchNumber,
     DateTime? ExpiryDate,
     decimal UnitCost,
+    decimal TotalValue,
     string SourceLineReference,
     string Notes,
     TransactionType TransactionType,

@@ -353,8 +353,15 @@ Content-Type: application/json
 
 Use the same route with `/quarantine` (a non-blank `reason` is required) or
 `/return`. Receipt and quarantine increase destination on-hand quantity; only
-quarantined quantity is unavailable for further stock operations. Returns move
-the captured transit value back to the source. Each settlement is append-only,
-lineage-linked, limited to the unsettled dispatched quantity, and idempotent;
-the order reports `PartiallyReceived` until every ordered unit is dispatched and
-settled, then `Completed`. Lot/expiry inputs must match the dispatched entry.
+quarantined quantity is unavailable for further stock operations. Quarantine
+is a custody step, not an approved write-off or final disposition; quarantined
+goods remain valued stock until the separately approved M03 disposition
+workflow is used. Returns move the captured transit value back to the source.
+Partial settlement allocates the transit entry's captured total value, with the
+final settlement receiving any rounding remainder so the ledger conserves the
+dispatched value. Each settlement is append-only, lineage-linked, limited to
+the unsettled dispatched quantity, and idempotent. The order reports
+`PartiallyReceived` only after destination receipt; it becomes `Completed` when
+all ordered quantity has been dispatched and every dispatched unit has been
+received, quarantined, or returned. Lot/expiry inputs must match the dispatched
+entry.

@@ -126,9 +126,14 @@ asynchronously after commit and cannot undo a committed movement.
 ## Transit settlement
 
 A receipt or quarantine creates a valued `TransferIn` entry at the destination
-using the dispatch-captured unit cost. A source-linked return creates a valued
-`TransferReturn` entry at the source with the same captured cost. Settlement rows
-are append-only and reference the transit entry, transfer-order line, source
-document line, and stock transaction. Partial settlement leaves the balance in
-transit; the current dispatch boundary still rejects lot/expiry and
-quantity-only stock until lot-level acquisition valuation is defined.
+from the dispatch-captured transit value. A source-linked return creates a
+valued `TransferReturn` entry at the source from that same captured value.
+Partial settlements allocate value from the captured total; the last settlement
+takes the exact remaining value so rounding cannot create or destroy transit
+value. Settlement rows are append-only and reference the transit entry,
+transfer-order line, source document line, and stock transaction. Partial
+settlement leaves the balance in transit. Quarantine is an interim custody
+state only; it does not authorize a write-off or disposition, which must use a
+separately approved M03 workflow. The current dispatch boundary still rejects
+lot/expiry and quantity-only stock until lot-level acquisition valuation is
+defined.
