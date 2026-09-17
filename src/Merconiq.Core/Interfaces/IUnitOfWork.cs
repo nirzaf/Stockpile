@@ -35,8 +35,11 @@ public interface IUnitOfWork
         CancellationToken cancellationToken = default,
         Func<Task<bool>>? verifySucceeded = null);
 
-    /// <summary>Executes read operations against one repeatable database snapshot.</summary>
-    /// <param name="operation">The read operation that must share one snapshot.</param>
+    /// <summary>
+    /// Executes an operation in its own repeatable-read transaction using the provider's execution strategy.
+    /// The callback may run more than once and must reload its state and make writes replay-safe.
+    /// </summary>
+    /// <param name="operation">The operation that must share one snapshot and may be retried.</param>
     /// <param name="cancellationToken">A token used while creating and completing the transaction.</param>
     Task ExecuteInReadSnapshotAsync(
         Func<Task> operation,

@@ -425,6 +425,38 @@ public class PurchaseOrderServiceTests
     }
 
     [Fact]
+    public async Task UpdateStatusAsync_WhenCommercialVersionChangesAfterApprovalStarts_RejectsStaleRequest()
+    {
+        var po = _fixture.Build<PurchaseOrder>()
+            .Without(p => p.DocumentIdentity)
+            .With(p => p.Status, PurchaseOrderStatus.Pending)
+            .With(p => p.CommercialVersion, 1)
+            .With(p => p.ApprovedCommercialVersion, (int?)null)
+            .With(p => p.ApprovedCommercialSnapshotJson, (string?)null)
+            .Create();
+        var reads = 0;
+        _poRepoMock.Setup(repository => repository.GetByIdAsync(po.Id))
+            .ReturnsAsync(() =>
+            {
+                if (Interlocked.Increment(ref reads) == 2)
+                {
+                    po.CommercialVersion++;
+                }
+
+                return po;
+            });
+
+        var act = () => _sut.UpdateStatusAsync(po.Id, nameof(PurchaseOrderStatus.Approved));
+
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("Purchase order changed after approval started; review the latest commercial version before approving.");
+        po.Status.Should().Be(PurchaseOrderStatus.Pending);
+        po.ApprovedCommercialSnapshotJson.Should().BeNull();
+        _uowMock.Verify(unitOfWork => unitOfWork.SaveChangesAsync(default), Times.Never);
+        _webhookDispatcherMock.Invocations.Should().BeEmpty();
+    }
+
+    [Fact]
     public async Task UpdateStatusAsync_WhenStatusChanges_QueuesNotification()
     {
         // Arrange

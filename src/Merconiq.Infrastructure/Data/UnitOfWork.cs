@@ -196,18 +196,14 @@ public class UnitOfWork : IUnitOfWork
         }
 
         var strategy = _context.Database.CreateExecutionStrategy();
-        var attempt = 0;
         await strategy.ExecuteAsync(
             state: 0,
             operation: async (_, _, transactionCancellationToken) =>
             {
-                if (attempt++ > 0)
-                {
-                    // BeginTransactionAsync can fail before the callback reaches its catch
-                    // block. A retry still needs a fresh view of any entities the previous
-                    // attempt may have materialized.
-                    _context.ChangeTracker.Clear();
-                }
+                // Do not let a preflight read or a prior failed attempt supply stale tracked
+                // entities to the repeatable-read callback. It must load its state from this
+                // attempt's database snapshot.
+                _context.ChangeTracker.Clear();
 
                 await using var transaction = await _context.Database.BeginTransactionAsync(
                     IsolationLevel.RepeatableRead, transactionCancellationToken);

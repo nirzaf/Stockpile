@@ -234,10 +234,25 @@ public class PurchaseOrderService : IPurchaseOrderService
         if (!Enum.TryParse<PurchaseOrderStatus>(status, ignoreCase: true, out var parsedStatus))
             throw new ArgumentException($"Invalid status: {status}");
 
+        int? approvalCommercialVersion = null;
+        if (parsedStatus == PurchaseOrderStatus.Approved)
+        {
+            var approvalRequestOrder = await _poRepo.GetByIdAsync(id)
+                ?? throw new InvalidOperationException("Purchase order not found");
+            approvalCommercialVersion = approvalRequestOrder.CommercialVersion;
+        }
+
         Func<Task> updateStatus = async () =>
         {
             var po = await _poRepo.GetByIdAsync(id);
             if (po == null) throw new InvalidOperationException("Purchase order not found");
+
+            if (approvalCommercialVersion.HasValue &&
+                po.CommercialVersion != approvalCommercialVersion.Value)
+            {
+                throw new InvalidOperationException(
+                    "Purchase order changed after approval started; review the latest commercial version before approving.");
+            }
 
             var previousStatus = po.Status;
             if (previousStatus != parsedStatus && !IsValidTransition(previousStatus, parsedStatus))
