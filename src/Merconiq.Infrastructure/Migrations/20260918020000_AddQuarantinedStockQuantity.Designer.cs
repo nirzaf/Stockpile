@@ -12,7 +12,7 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace Merconiq.Infrastructure.Migrations
 {
     [DbContext(typeof(InventoryDbContext))]
-    [Migration("20260918010000_AddQuarantinedStockQuantity")]
+    [Migration("20260918020000_AddQuarantinedStockQuantity")]
     partial class AddQuarantinedStockQuantity
     {
         /// <inheritdoc />
