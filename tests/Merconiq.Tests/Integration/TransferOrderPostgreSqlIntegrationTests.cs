@@ -57,21 +57,25 @@ public sealed class TransferOrderPostgreSqlIntegrationTests(PostgreSqlIntegratio
                 companyId,
                 sourceLocationId,
                 destinationLocationId,
-                [new TransferOrderLineRequest(itemId, 3)]), "transfer-create-1");
+                [new TransferOrderLineRequest(itemId, 3), new TransferOrderLineRequest(itemId, 2)]), "transfer-create-1");
             await orders.ApproveAsync(order.Id, new StockMutationScope(companyId));
 
             (await operation.StockTransactions.CountAsync()).Should().Be(0);
             (await operation.StockInHand.SingleAsync(stockRow =>
                     stockRow.ItemId == itemId && stockRow.LocationId == sourceLocationId))
-                .Should().Match<StockInHand>(stockRow => stockRow.Quantity == 10 && stockRow.ReservedQuantity == 3);
-            (await operation.StockReservations.SingleAsync()).Should().Match<StockReservation>(reservation =>
-                reservation.Quantity == 3 &&
+                .Should().Match<StockInHand>(stockRow => stockRow.Quantity == 10 && stockRow.ReservedQuantity == 5);
+            (await operation.StockReservations.CountAsync()).Should().Be(2);
+            (await operation.StockReservations.SumAsync(reservation => reservation.Quantity)).Should().Be(5);
+            (await operation.StockReservations.ToListAsync()).Should().OnlyContain(reservation =>
                 reservation.Status == StockReservationStatus.Active &&
                 reservation.ExpiresAt > DateTimeOffset.UtcNow.AddYears(50));
 
             await using var genericMutation = fixture.CreateContext(tenantId);
             var genericStock = CreateStockService(genericMutation, tenantId);
-            var sourceLineReference = (await genericMutation.StockReservations.SingleAsync()).SourceLineReference;
+            var sourceLineReference = await genericMutation.StockReservations
+                .OrderBy(reservation => reservation.Id)
+                .Select(reservation => reservation.SourceLineReference)
+                .FirstAsync();
             await FluentAssertions.FluentActions.Invoking(() => genericStock.ConsumeReservationAsync(
                     new ConsumeStockReservationRequest(sourceLineReference, 1),
                     new StockMutationScope(companyId)))
@@ -87,7 +91,8 @@ public sealed class TransferOrderPostgreSqlIntegrationTests(PostgreSqlIntegratio
             (await cancellation.StockInHand.SingleAsync(stockRow =>
                     stockRow.ItemId == itemId && stockRow.LocationId == sourceLocationId))
                 .ReservedQuantity.Should().Be(0);
-            (await cancellation.StockReservations.SingleAsync()).Status.Should().Be(StockReservationStatus.Released);
+            (await cancellation.StockReservations.ToListAsync()).Should().OnlyContain(reservation =>
+                reservation.Status == StockReservationStatus.Released);
             (await cancellation.TransferOrders.SingleAsync()).Status.Should().Be(TransferOrderStatus.Cancelled);
         }
     }

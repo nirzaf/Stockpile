@@ -140,6 +140,8 @@ public sealed class TransferOrderService(
             var requestedIds = lines.Select(line => line.LineId!.Value).OrderBy(lineId => lineId).ToArray();
             if (!requestedIds.SequenceEqual(existingLines.Select(line => line.Id).OrderBy(lineId => lineId)))
                 throw new InvalidOperationException("An amendment must retain every existing transfer-order line identity.");
+            if (order.Status == TransferOrderStatus.Draft && AmendmentMatches(order, existingLines, request, lines))
+                return;
 
             if (order.Status == TransferOrderStatus.Approved)
             {
@@ -387,18 +389,25 @@ public sealed class TransferOrderService(
         IReadOnlyCollection<TransferOrderLineRequest> lines)
     {
         var order = (await orderRepository.FindAsync(order => order.Id == id)).SingleOrDefault();
-        if (order is null || order.Status != TransferOrderStatus.Draft ||
-            order.Notes != NormalizeNotes(request.Notes))
+        if (order is null || order.Status != TransferOrderStatus.Draft)
             return false;
 
         var persistedLines = (await lineRepository.FindAsync(line => line.TransferOrderId == id))
             .ToDictionary(line => line.Id);
-        return lines.Count == persistedLines.Count && lines.All(input =>
-            input.LineId is int lineId && persistedLines.TryGetValue(lineId, out var line) &&
-            line.ItemId == input.ItemId && line.Quantity == input.Quantity &&
-            line.BatchNumber == NormalizeBatchNumber(input.BatchNumber) &&
-            line.ExpiryDate == StockLotExpiryDate.Normalize(input.ExpiryDate));
+        return AmendmentMatches(order, persistedLines.Values, request, lines);
     }
+
+    private static bool AmendmentMatches(
+        TransferOrder order,
+        IReadOnlyCollection<TransferOrderLine> existingLines,
+        CreateTransferOrderRequest request,
+        IReadOnlyCollection<TransferOrderLineRequest> lines) =>
+        order.Notes == NormalizeNotes(request.Notes) &&
+        lines.Count == existingLines.Count && lines.All(input =>
+            input.LineId is int lineId && existingLines.Any(line =>
+                line.Id == lineId && line.ItemId == input.ItemId && line.Quantity == input.Quantity &&
+                line.BatchNumber == NormalizeBatchNumber(input.BatchNumber) &&
+                line.ExpiryDate == StockLotExpiryDate.Normalize(input.ExpiryDate)));
 
     private static string HashRequest(CreateTransferOrderRequest request, IEnumerable<TransferOrderLineRequest> lines)
     {
