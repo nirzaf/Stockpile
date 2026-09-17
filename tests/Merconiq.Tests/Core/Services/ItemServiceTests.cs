@@ -23,6 +23,10 @@ public class ItemServiceTests
 
     public ItemServiceTests()
     {
+        _uowMock.Setup(uow => uow.ExecuteInTransactionAsync(
+                It.IsAny<Func<Task>>(), It.IsAny<CancellationToken>(), It.IsAny<Func<Task<bool>>?>()))
+            .Returns((Func<Func<Task>, CancellationToken, Func<Task<bool>>?, Task>)
+                ((operation, _, _) => operation()));
         _sut = new ItemService(
             _repoMock.Object,
             _uowMock.Object,

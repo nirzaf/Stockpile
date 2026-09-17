@@ -316,7 +316,8 @@ public sealed class MasterDataImportService(
         return await RunAsync(request.DryRun, async () =>
         {
             var companyId = RequireCompanyScope(request.CompanyId);
-            await unitOfWork.AcquireTenantOperationLockAsync("organization-state", cancellationToken);
+            if (!request.DryRun)
+                await unitOfWork.AcquireTenantOperationLockAsync("organization-state", cancellationToken);
             await EnsureCompanyScopeAsync(companyId, cancellationToken);
             var rows = ParseBranches(request.Csv);
             var results = new List<ImportRowResult>(rows.Count);
@@ -385,7 +386,8 @@ public sealed class MasterDataImportService(
         return await RunAsync(request.DryRun, async () =>
         {
             var companyId = RequireCompanyScope(request.CompanyId);
-            await unitOfWork.AcquireTenantOperationLockAsync("organization-state", cancellationToken);
+            if (!request.DryRun)
+                await unitOfWork.AcquireTenantOperationLockAsync("organization-state", cancellationToken);
             await EnsureCompanyScopeAsync(companyId, cancellationToken);
             var rows = ParseLocations(request.Csv);
             var results = new List<ImportRowResult>(rows.Count);
@@ -593,9 +595,7 @@ public sealed class MasterDataImportService(
     private static List<Row> Parse(string? csv)
     {
         if (string.IsNullOrWhiteSpace(csv)) throw new ArgumentException("CSV content is required.", nameof(csv));
-        var records = ParseCsvRecords(csv.TrimStart('\uFEFF'));
-        if (records.Count < 2)
-            throw new ArgumentException("CSV must include at least one data row.", nameof(csv));
+        var records = Records(csv);
         if (records[0].Error is not null
             || records[0].Fields.Count != 5
             || !records[0].Fields.Select(value => value.Trim()).SequenceEqual(
@@ -745,6 +745,16 @@ public sealed class MasterDataImportService(
         return records;
     }
 
+    private static List<CsvRecord> Records(string? csv)
+    {
+        if (string.IsNullOrWhiteSpace(csv))
+            throw new ArgumentException("CSV content is required.", nameof(csv));
+        var records = ParseCsvRecords(csv.TrimStart('\uFEFF'));
+        if (records.Count < 2)
+            throw new ArgumentException("CSV must include at least one data row.", nameof(csv));
+        return records;
+    }
+
     private static ImportUnitsResult SummarizeUnits(bool dryRun, IReadOnlyList<ImportRowResult> rows) =>
         new(dryRun, rows.Count(row => row.Status == "created"), rows.Count(row => row.Status == "unchanged"),
             rows.Count(row => row.Status == "rejected"), rows);
@@ -776,6 +786,7 @@ public sealed class MasterDataImportService(
     private static string? Validate(
         CompanyRow row, HashSet<string> externalIds, HashSet<string> codes)
     {
+        if (!row.HasCorrectFieldCount) return "CSV row must contain exactly 10 fields.";
         var error = ValidateExternalId(row.ExternalId, externalIds);
         if (error is not null) return error;
         if (string.IsNullOrWhiteSpace(row.Code) || row.Code.Length > 32)
@@ -800,6 +811,7 @@ public sealed class MasterDataImportService(
     private static string? Validate(
         BranchRow row, HashSet<string> externalIds, HashSet<string> codes)
     {
+        if (!row.HasCorrectFieldCount) return "CSV row must contain exactly 6 fields.";
         var error = ValidateExternalId(row.ExternalId, externalIds);
         if (error is not null) return error;
         if (string.IsNullOrWhiteSpace(row.Code) || row.Code.Length > 32)
@@ -891,19 +903,9 @@ public sealed class MasterDataImportService(
         return matches[0].Id;
     }
 
-    private static List<string> Lines(string? csv)
-    {
-        if (string.IsNullOrWhiteSpace(csv))
-            throw new ArgumentException("CSV content is required.", nameof(csv));
-        var lines = csv.Split(new[] { "\r\n", "\n" }, StringSplitOptions.RemoveEmptyEntries).ToList();
-        if (lines.Count < 2)
-            throw new ArgumentException("CSV must include at least one data row.", nameof(csv));
-        return lines;
-    }
-
     private static List<ItemRow> ParseItems(string? csv)
     {
-        var lines = Lines(csv);
+        var records = Records(csv);
         var legacyHeader = new[]
         {
             "external_id", "item_code", "description", "rate", "base_unit_external_id",
@@ -911,7 +913,7 @@ public sealed class MasterDataImportService(
             "sales_to_base_factor", "quantity_precision", "whole_unit_only"
         };
         var supplierHeader = legacyHeader.Append("supplier_external_id").ToArray();
-        var header = ParseCsvLine(lines[0]);
+        var header = records[0].Fields;
         var hasSupplier = HeaderEquals(header, supplierHeader);
         if (!hasSupplier && !HeaderEquals(header, legacyHeader))
             throw new ArgumentException(
@@ -919,12 +921,12 @@ public sealed class MasterDataImportService(
                 nameof(csv));
 
         var rows = new List<ItemRow>();
-        for (var index = 1; index < lines.Count; index++)
+        foreach (var record in records.Skip(1))
         {
-            var values = ParseCsvLine(lines[index]);
-            if (values is null || values.Count != (hasSupplier ? 12 : 11))
+            var values = record.Fields;
+            if (record.Error is not null || values.Count != (hasSupplier ? 12 : 11))
             {
-                rows.Add(new(index + 1));
+                rows.Add(new(record.RowNumber));
                 continue;
             }
             var rateParsed = decimal.TryParse(values[3].Trim(), NumberStyles.Number,
@@ -936,7 +938,7 @@ public sealed class MasterDataImportService(
             var precisionParsed = int.TryParse(values[9].Trim(), NumberStyles.Integer,
                 CultureInfo.InvariantCulture, out var precision);
             var wholeParsed = bool.TryParse(values[10].Trim(), out var wholeUnitOnly);
-            rows.Add(new(index + 1, values[0].Trim(), values[1].Trim(), values[2].Trim(), rate, rateParsed,
+            rows.Add(new(record.RowNumber, values[0].Trim(), values[1].Trim(), values[2].Trim(), rate, rateParsed,
                 NullIfEmpty(values[4]), NullIfEmpty(values[5]), NullIfEmpty(values[6]), purchaseFactor,
                 purchaseParsed, salesFactor, salesParsed, precision, precisionParsed, wholeUnitOnly,
                 wholeParsed, hasSupplier ? NullIfEmpty(values[11]) : null, true));
@@ -946,19 +948,19 @@ public sealed class MasterDataImportService(
 
     private static List<CompanyRow> ParseCompanies(string? csv)
     {
-        var lines = Lines(csv);
+        var records = Records(csv);
         var header = new[] { "external_id", "code", "legal_name", "trading_name", "registration_number",
             "tax_identifier", "base_currency", "country_code", "currency_scale", "is_active" };
-        if (!HeaderEquals(ParseCsvLine(lines[0]), header))
+        if (!HeaderEquals(records[0].Fields, header))
             throw new ArgumentException("CSV header must be external_id,code,legal_name,trading_name,registration_number,tax_identifier,base_currency,country_code,currency_scale,is_active.", nameof(csv));
         var rows = new List<CompanyRow>();
-        for (var index = 1; index < lines.Count; index++)
+        foreach (var record in records.Skip(1))
         {
-            var values = ParseCsvLine(lines[index]);
-            if (values is null || values.Count != header.Length) { rows.Add(new(index + 1)); continue; }
+            var values = record.Fields;
+            if (record.Error is not null || values.Count != header.Length) { rows.Add(new(record.RowNumber)); continue; }
             var scaleParsed = int.TryParse(values[8].Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var scale);
             var activeParsed = bool.TryParse(values[9].Trim(), out var active);
-            rows.Add(new(index + 1, values[0].Trim(), values[1].Trim(), values[2].Trim(), NullIfEmpty(values[3]),
+            rows.Add(new(record.RowNumber, values[0].Trim(), values[1].Trim(), values[2].Trim(), NullIfEmpty(values[3]),
                 NullIfEmpty(values[4]), NullIfEmpty(values[5]), values[6].Trim().ToUpperInvariant(),
                 NullIfEmpty(values[7])?.ToUpperInvariant(), scale, scaleParsed, active, activeParsed, true));
         }
@@ -967,17 +969,17 @@ public sealed class MasterDataImportService(
 
     private static List<BranchRow> ParseBranches(string? csv)
     {
-        var lines = Lines(csv);
+        var records = Records(csv);
         var header = new[] { "external_id", "code", "name", "address", "time_zone_id", "is_active" };
-        if (!HeaderEquals(ParseCsvLine(lines[0]), header))
+        if (!HeaderEquals(records[0].Fields, header))
             throw new ArgumentException("CSV header must be external_id,code,name,address,time_zone_id,is_active.", nameof(csv));
         var rows = new List<BranchRow>();
-        for (var index = 1; index < lines.Count; index++)
+        foreach (var record in records.Skip(1))
         {
-            var values = ParseCsvLine(lines[index]);
-            if (values is null || values.Count != header.Length) { rows.Add(new(index + 1)); continue; }
+            var values = record.Fields;
+            if (record.Error is not null || values.Count != header.Length) { rows.Add(new(record.RowNumber)); continue; }
             var activeParsed = bool.TryParse(values[5].Trim(), out var active);
-            rows.Add(new(index + 1, values[0].Trim(), values[1].Trim(), values[2].Trim(), NullIfEmpty(values[3]),
+            rows.Add(new(record.RowNumber, values[0].Trim(), values[1].Trim(), values[2].Trim(), NullIfEmpty(values[3]),
                 values[4].Trim(), active, activeParsed, true));
         }
         return rows;
@@ -985,34 +987,34 @@ public sealed class MasterDataImportService(
 
     private static List<LocationRow> ParseLocations(string? csv)
     {
-        var lines = Lines(csv);
+        var records = Records(csv);
         var header = new[] { "external_id", "branch_external_id", "name", "address" };
-        if (!HeaderEquals(ParseCsvLine(lines[0]), header))
+        if (!HeaderEquals(records[0].Fields, header))
             throw new ArgumentException("CSV header must be external_id,branch_external_id,name,address.", nameof(csv));
         var rows = new List<LocationRow>();
-        for (var index = 1; index < lines.Count; index++)
+        foreach (var record in records.Skip(1))
         {
-            var values = ParseCsvLine(lines[index]);
-            rows.Add(values is null || values.Count != header.Length
-                ? new(index + 1)
-                : new(index + 1, values[0].Trim(), values[1].Trim(), values[2].Trim(), NullIfEmpty(values[3]), true));
+            var values = record.Fields;
+            rows.Add(record.Error is not null || values.Count != header.Length
+                ? new(record.RowNumber)
+                : new(record.RowNumber, values[0].Trim(), values[1].Trim(), values[2].Trim(), NullIfEmpty(values[3]), true));
         }
         return rows;
     }
 
     private static List<SupplierRow> ParseSuppliers(string? csv)
     {
-        var lines = Lines(csv);
+        var records = Records(csv);
         var header = new[] { "external_id", "name", "contact_person", "phone", "email", "address" };
-        if (!HeaderEquals(ParseCsvLine(lines[0]), header))
+        if (!HeaderEquals(records[0].Fields, header))
             throw new ArgumentException("CSV header must be external_id,name,contact_person,phone,email,address.", nameof(csv));
         var rows = new List<SupplierRow>();
-        for (var index = 1; index < lines.Count; index++)
+        foreach (var record in records.Skip(1))
         {
-            var values = ParseCsvLine(lines[index]);
-            rows.Add(values is null || values.Count != header.Length
-                ? new(index + 1)
-                : new(index + 1, values[0].Trim(), values[1].Trim(), NullIfEmpty(values[2]),
+            var values = record.Fields;
+            rows.Add(record.Error is not null || values.Count != header.Length
+                ? new(record.RowNumber)
+                : new(record.RowNumber, values[0].Trim(), values[1].Trim(), NullIfEmpty(values[2]),
                     NullIfEmpty(values[3]), NullIfEmpty(values[4]), NullIfEmpty(values[5]), true));
         }
         return rows;
@@ -1021,41 +1023,6 @@ public sealed class MasterDataImportService(
     private static bool HeaderEquals(IReadOnlyList<string>? actual, IReadOnlyList<string> expected) =>
         actual is not null && actual.Count == expected.Count &&
         actual.Select(value => value.Trim()).SequenceEqual(expected, StringComparer.OrdinalIgnoreCase);
-
-    private static List<string>? ParseCsvLine(string line)
-    {
-        var values = new List<string>();
-        var value = new System.Text.StringBuilder();
-        var quoted = false;
-        for (var index = 0; index < line.Length; index++)
-        {
-            var character = line[index];
-            if (character == '"')
-            {
-                if (quoted && index + 1 < line.Length && line[index + 1] == '"')
-                {
-                    value.Append('"');
-                    index++;
-                }
-                else
-                {
-                    quoted = !quoted;
-                }
-            }
-            else if (character == ',' && !quoted)
-            {
-                values.Add(value.ToString());
-                value.Clear();
-            }
-            else
-            {
-                value.Append(character);
-            }
-        }
-        if (quoted) return null;
-        values.Add(value.ToString());
-        return values;
-    }
 
     private static string? NullIfEmpty(string value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 

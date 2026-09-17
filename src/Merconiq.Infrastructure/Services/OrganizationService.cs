@@ -1,6 +1,7 @@
 using Merconiq.Core.Entities;
 using Merconiq.Core.Interfaces;
 using Merconiq.Core.Models;
+using Merconiq.Core.Services;
 using Merconiq.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 
@@ -48,26 +49,29 @@ public sealed class OrganizationService(
     public async Task<Company> CreateCompanyAsync(CreateCompanyRequest request)
     {
         EnsureTenantResolved();
-        var code = NormalizeRequired(request.Code, "Company code", 32);
-        var legalName = NormalizeRequired(request.LegalName, "Legal name", 200);
-        var currency = NormalizeCurrency(request.BaseCurrency);
-        var currencyScale = NormalizeCurrencyScale(request.CurrencyScale);
-        if (await companies.Query().AnyAsync(c => c.Code == code))
-            throw new InvalidOperationException("A company with this code already exists in the tenant.");
-
-        var company = await companies.AddAsync(new Company
+        Company? company = null;
+        await ExecuteOrganizationWriteAsync(async () =>
         {
-            Code = code,
-            LegalName = legalName,
-            TradingName = NormalizeOptional(request.TradingName, 200),
-            RegistrationNumber = NormalizeOptional(request.RegistrationNumber, 100),
-            TaxIdentifier = NormalizeOptional(request.TaxIdentifier, 100),
-            BaseCurrency = currency,
-            CurrencyScale = currencyScale,
-            CountryCode = NormalizeOptional(request.CountryCode, 2)?.ToUpperInvariant()
+            var code = NormalizeRequired(request.Code, "Company code", 32);
+            var legalName = NormalizeRequired(request.LegalName, "Legal name", 200);
+            var currency = NormalizeCurrency(request.BaseCurrency);
+            var currencyScale = NormalizeCurrencyScale(request.CurrencyScale);
+            if (await companies.Query().AnyAsync(c => c.Code == code))
+                throw new InvalidOperationException("A company with this code already exists in the tenant.");
+
+            company = await companies.AddAsync(new Company
+            {
+                Code = code,
+                LegalName = legalName,
+                TradingName = NormalizeOptional(request.TradingName, 200),
+                RegistrationNumber = NormalizeOptional(request.RegistrationNumber, 100),
+                TaxIdentifier = NormalizeOptional(request.TaxIdentifier, 100),
+                BaseCurrency = currency,
+                CurrencyScale = currencyScale,
+                CountryCode = NormalizeOptional(request.CountryCode, 2)?.ToUpperInvariant()
+            });
         });
-        await unitOfWork.SaveChangesAsync();
-        return company;
+        return company!;
     }
 
     public async Task UpdateCompanyAsync(int id, UpdateCompanyRequest request)
@@ -242,7 +246,7 @@ public sealed class OrganizationService(
     }
 
     private Task ExecuteOrganizationWriteAsync(Func<Task> operation) =>
-        unitOfWork.ExecuteInTransactionAsync(async () =>
+        unitOfWork.ExecuteMasterDataWriteAsync(async () =>
         {
             if (context.Database.ProviderName == "Npgsql.EntityFrameworkCore.PostgreSQL")
             {

@@ -40,28 +40,36 @@ public class LocationService : ILocationService
     public async Task<Location> CreateAsync(Location location)
     {
         _logger.LogInformation("Creating location {Name}", location.Name);
-        var created = await _repo.AddAsync(location);
-        await _unitOfWork.SaveChangesAsync();
-        return created;
+        Location? created = null;
+        await _unitOfWork.ExecuteMasterDataWriteAsync(async () =>
+        {
+            created = await _repo.AddAsync(location);
+            await _unitOfWork.SaveChangesAsync();
+        });
+        return created!;
     }
 
     /// <inheritdoc />
     public async Task UpdateAsync(Location location)
     {
         _logger.LogInformation("Updating location {Id}", location.Id);
-        await _repo.UpdateAsync(location);
-        await _unitOfWork.SaveChangesAsync();
+        await _unitOfWork.ExecuteMasterDataWriteAsync(async () =>
+        {
+            await _repo.UpdateAsync(location);
+            await _unitOfWork.SaveChangesAsync();
+        });
     }
 
     /// <inheritdoc />
     public async Task DeleteAsync(int id)
     {
-        var location = await _repo.GetByIdAsync(id);
-        if (location != null)
+        await _unitOfWork.ExecuteMasterDataWriteAsync(async () =>
         {
+            var location = await _repo.GetByIdAsync(id);
+            if (location == null) return;
             _logger.LogInformation("Deleting location {Id}", id);
             await _repo.DeleteAsync(location);
             await _unitOfWork.SaveChangesAsync();
-        }
+        });
     }
 }

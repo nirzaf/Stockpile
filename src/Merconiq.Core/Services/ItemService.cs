@@ -59,46 +59,55 @@ public class ItemService : IItemService
     public async Task<Item> CreateAsync(Item item)
     {
         _logger.LogInformation("Creating item {ItemCode}", item.ItemCode);
-        await ValidateAndNormalizeAsync(item);
-        await ValidateUnitReferencesAsync(item);
-        var existing = await _repo.FindAsync(candidate => candidate.ItemCode == item.ItemCode);
-        if (existing.Any())
+        Item? created = null;
+        await _unitOfWork.ExecuteMasterDataWriteAsync(async () =>
         {
-            throw new InvalidOperationException("An item with this code already exists for this tenant.");
-        }
+            await ValidateAndNormalizeAsync(item);
+            await ValidateUnitReferencesAsync(item);
+            var existing = await _repo.FindAsync(candidate => candidate.ItemCode == item.ItemCode);
+            if (existing.Any())
+                throw new InvalidOperationException("An item with this code already exists for this tenant.");
 
-        var created = await _repo.AddAsync(item);
-        await _unitOfWork.SaveChangesAsync();
+            created = await _repo.AddAsync(item);
+            await _unitOfWork.SaveChangesAsync();
+        });
         _cache.Remove(TenantCacheKeys.AllItems(_tenantContext.TenantId));
-        return created;
+        return created!;
     }
 
     /// <inheritdoc />
     public async Task UpdateAsync(Item item)
     {
         _logger.LogInformation("Updating item {Id}", item.Id);
-        await ValidateAndNormalizeAsync(item);
-        await ValidateUnitReferencesAsync(item);
-        var duplicateCode = await _repo.FindAsync(candidate =>
-            candidate.Id != item.Id && candidate.ItemCode == item.ItemCode);
-        if (duplicateCode.Any())
-            throw new InvalidOperationException("An item with this code already exists for this tenant.");
-        await _repo.UpdateAsync(item);
-        await _unitOfWork.SaveChangesAsync();
+        await _unitOfWork.ExecuteMasterDataWriteAsync(async () =>
+        {
+            await ValidateAndNormalizeAsync(item);
+            await ValidateUnitReferencesAsync(item);
+            var duplicateCode = await _repo.FindAsync(candidate =>
+                candidate.Id != item.Id && candidate.ItemCode == item.ItemCode);
+            if (duplicateCode.Any())
+                throw new InvalidOperationException("An item with this code already exists for this tenant.");
+            await _repo.UpdateAsync(item);
+            await _unitOfWork.SaveChangesAsync();
+        });
         _cache.Remove(TenantCacheKeys.AllItems(_tenantContext.TenantId));
     }
 
     /// <inheritdoc />
     public async Task DeleteAsync(int id)
     {
-        var item = await _repo.GetByIdAsync(id);
-        if (item != null)
+        var deleted = false;
+        await _unitOfWork.ExecuteMasterDataWriteAsync(async () =>
         {
+            var item = await _repo.GetByIdAsync(id);
+            if (item == null) return;
             _logger.LogInformation("Deleting item {Id}", id);
             await _repo.DeleteAsync(item);
             await _unitOfWork.SaveChangesAsync();
+            deleted = true;
+        });
+        if (deleted)
             _cache.Remove(TenantCacheKeys.AllItems(_tenantContext.TenantId));
-        }
     }
 
     /// <inheritdoc />
