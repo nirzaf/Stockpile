@@ -96,7 +96,6 @@ else
         @if (_po.Status == PurchaseOrderStatus.Approved)
         {
             <MudButton Variant="Variant.Outlined" Color="Color.Warning" Href="@($"/PurchaseOrders/Amend/{_po.Id}")">Amend commercial terms</MudButton>
-            <MudButton Variant="Variant.Filled" Color="Color.Info" OnClick="@(() => UpdateStatus(PurchaseOrderStatus.Received))">Mark as Received</MudButton>
         }
         @if (_po.Status is PurchaseOrderStatus.Submitted or PurchaseOrderStatus.Approved)
         {

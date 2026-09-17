@@ -43,10 +43,14 @@ public interface IPurchaseOrderService
         string idempotencyKey,
         CancellationToken cancellationToken = default);
 
-    /// <summary>Transitions a purchase order to a new status.</summary>
+    /// <summary>
+    /// Applies a permitted generic purchase-order status transition. A purchase order can be
+    /// marked received only from a posted goods-receipt source, which this method does not create.
+    /// </summary>
     /// <param name="id">The purchase order identifier.</param>
-    /// <param name="status">The new status. See <see cref="PurchaseOrderStatus"/> for valid values.</param>
+    /// <param name="status">The requested status. Receipt status must come from a posted goods receipt.</param>
     /// <exception cref="ArgumentException">Thrown when <paramref name="status"/> is not a known purchase order status.</exception>
+    /// <exception cref="InvalidOperationException">Thrown when the requested status transition is not allowed.</exception>
     Task UpdateStatusAsync(int id, string status);
 
     /// <summary>

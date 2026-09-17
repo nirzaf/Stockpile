@@ -99,6 +99,8 @@ public class PurchaseOrderService : IPurchaseOrderService
         ArgumentNullException.ThrowIfNull(purchaseOrder);
         ArgumentNullException.ThrowIfNull(details);
         ArgumentException.ThrowIfNullOrWhiteSpace(idempotencyKey);
+        if (details.Any(detail => detail.Quantity == 0))
+            throw new InvalidOperationException("Purchase-order line quantity must be greater than zero.");
 
         purchaseOrder.OrderDate = DateTime.UtcNow;
         purchaseOrder.Status = PurchaseOrderStatus.Pending;
@@ -523,7 +525,7 @@ public class PurchaseOrderService : IPurchaseOrderService
             PurchaseOrderStatus.Draft => next is PurchaseOrderStatus.Pending or PurchaseOrderStatus.Cancelled,
             PurchaseOrderStatus.Pending => next is PurchaseOrderStatus.Submitted or PurchaseOrderStatus.Approved or PurchaseOrderStatus.Cancelled,
             PurchaseOrderStatus.Submitted => next is PurchaseOrderStatus.Approved or PurchaseOrderStatus.Cancelled or PurchaseOrderStatus.Voided,
-            PurchaseOrderStatus.Approved => next is PurchaseOrderStatus.Received or PurchaseOrderStatus.Cancelled or PurchaseOrderStatus.Voided,
+            PurchaseOrderStatus.Approved => next is PurchaseOrderStatus.Cancelled or PurchaseOrderStatus.Voided,
             PurchaseOrderStatus.Received or PurchaseOrderStatus.Cancelled or PurchaseOrderStatus.Voided => false,
             _ => false
         };
