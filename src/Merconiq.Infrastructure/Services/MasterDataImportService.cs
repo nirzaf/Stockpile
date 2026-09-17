@@ -577,6 +577,8 @@ public sealed class MasterDataImportService(
         if (!row.HasCorrectFieldCount) return "CSV row must contain exactly 5 fields.";
         var error = ValidateExternalId(row.ExternalId, externalIds);
         if (error is not null) return error;
+        if (row.ExternalId.StartsWith(LegacyUnitExternalId.ReservedPrefix, StringComparison.OrdinalIgnoreCase))
+            return "External IDs beginning with the reserved legacy unit prefix are not allowed.";
         if (string.IsNullOrWhiteSpace(row.Code) || row.Code.Length > 32)
             return "Code is required and must be at most 32 characters.";
         if (!codes.Add(row.Code)) return "Code is duplicated in the import.";

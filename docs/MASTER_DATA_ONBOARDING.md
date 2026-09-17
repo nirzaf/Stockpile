@@ -14,6 +14,13 @@ remain tenant-shared in the current ownership model. Their required `CompanyId` 
 operator's active company permission and onboarding scope; it must not be treated as a
 company ownership column.
 
+During upgrade, a legacy unit with no source-system external ID receives a reserved
+placeholder beginning with `__merconiq_legacy_unmapped_unit__:`. This value records
+that the source identity is unknown; it is not a source-system ID and the importer
+rejects that reserved prefix. Do not infer a mapping from a unit code or name. Keep
+such units unchanged until an owner-approved mapping workflow is completed; that
+broader mapping remains tracked by issue #271.
+
 ## Endpoints and CSV headers
 
 All paths are under `/api/v1/organization`.

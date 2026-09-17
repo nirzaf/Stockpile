@@ -4,7 +4,11 @@ using Merconiq.Core.Models;
 using Merconiq.Infrastructure.Data;
 using Merconiq.Infrastructure.Repositories;
 using Merconiq.Infrastructure.Services;
+using Merconiq.Tests.Infrastructure;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
+using Npgsql;
 
 namespace Merconiq.Tests.Integration;
 
@@ -110,6 +114,294 @@ public sealed class MasterDataImportPostgreSqlIntegrationTests(PostgreSqlIntegra
             item.ExternalId.Should().Be("item-1");
             item.BaseUnitId.Should().Be(await replayContext.UnitsOfMeasure.Select(unit => unit.Id).SingleAsync());
         }
+    }
+
+    [PostgreSqlFact]
+    public async Task Legacy_units_are_backfilled_with_provenance_and_downgrade_cannot_race_with_mapping()
+    {
+        fixture.EnsureEnabled();
+        const string legacyPrefix = "__merconiq_legacy_unmapped_unit__:";
+        var (schema, connectionString) = await CreateMigrationSchemaAsync();
+
+        try
+        {
+            await using var context = CreateMigrationContext(connectionString, "legacy-a");
+            var migrator = context.GetService<IMigrator>();
+            await migrator.MigrateAsync("20260916170000_AddItemQuantityConventions");
+
+            await using (var seed = new NpgsqlConnection(connectionString))
+            {
+                await seed.OpenAsync();
+                await using var command = new NpgsqlCommand(
+                    """
+                    INSERT INTO "UnitsOfMeasure"
+                        ("TenantId", "Code", "Name", "DecimalPlaces", "IsWholeUnitOnly", "IsDeleted", "CreatedAt")
+                    VALUES
+                        ('legacy-a', 'EA', 'Each', 0, false, false, now()),
+                        ('legacy-a', 'BOX', 'Box', 0, false, false, now()),
+                        ('legacy-b', 'KG', 'Kilogram', 3, false, false, now())
+                    """, seed);
+                await command.ExecuteNonQueryAsync();
+            }
+
+            // Apply only the migration under test; unrelated later migrations are not needed here.
+            await migrator.MigrateAsync("20260916180000_AddUnitExternalId");
+            context.ChangeTracker.Clear();
+            var units = await context.UnitsOfMeasure.IgnoreQueryFilters().AsNoTracking()
+                .OrderBy(unit => unit.Id).ToListAsync();
+
+            units.Should().HaveCount(3);
+            units.Should().OnlyContain(unit => unit.ExternalId == $"{legacyPrefix}{unit.Id}");
+            units.Where(unit => unit.TenantId == "legacy-a")
+                .Select(unit => unit.ExternalId).Distinct(StringComparer.OrdinalIgnoreCase).Should().HaveCount(2);
+
+            await using (var verify = new NpgsqlConnection(connectionString))
+            {
+                await verify.OpenAsync();
+                await using var command = new NpgsqlCommand(
+                    "SELECT count(*) FROM \"UnitExternalIdBackfillProvenance\" WHERE \"MigrationId\" = @migrationId AND \"PreviousExternalId\" = ''",
+                    verify);
+                command.Parameters.AddWithValue("migrationId", "20260916180000_AddUnitExternalId");
+                ((long)(await command.ExecuteScalarAsync())!).Should().Be(3);
+            }
+
+            var unitToMap = units.Single(unit => unit.TenantId == "legacy-a" && unit.Code == "EA");
+            var mappedExternalId = "owner-approved-source-unit-42";
+            var applicationName = $"unit-id-downgrade-{Guid.NewGuid():N}";
+
+            await using var writer = new NpgsqlConnection(connectionString);
+            await writer.OpenAsync();
+            await using var writerTransaction = await writer.BeginTransactionAsync();
+            await using (var update = new NpgsqlCommand(
+                "UPDATE \"UnitsOfMeasure\" SET \"ExternalId\" = @externalId WHERE \"Id\" = @id",
+                writer,
+                writerTransaction))
+            {
+                update.Parameters.AddWithValue("externalId", mappedExternalId);
+                update.Parameters.AddWithValue("id", unitToMap.Id);
+                (await update.ExecuteNonQueryAsync()).Should().Be(1);
+            }
+
+            var migrationConnection = new NpgsqlConnectionStringBuilder(connectionString)
+            {
+                ApplicationName = applicationName
+            }.ConnectionString;
+            await using var downgradeContext = CreateMigrationContext(migrationConnection, "legacy-a");
+            var downgradeTask = downgradeContext.GetService<IMigrator>()
+                .MigrateAsync("20260916170000_AddItemQuantityConventions");
+
+            Exception? lockWaitFailure = null;
+            try
+            {
+                await WaitForMigrationLockAsync(connectionString, applicationName);
+            }
+            catch (Exception exception)
+            {
+                lockWaitFailure = exception;
+            }
+
+            await writerTransaction.CommitAsync();
+            var downgradeFailure = await FluentActions.Invoking(() => downgradeTask)
+                .Should().ThrowAsync<PostgresException>();
+            lockWaitFailure.Should().BeNull("the downgrade must wait for the concurrent unit mapping transaction");
+            downgradeFailure.Which.Message.Should().Contain("Cannot safely downgrade unit external IDs");
+
+            await using var verifyMapping = new NpgsqlConnection(connectionString);
+            await verifyMapping.OpenAsync();
+            await using var verifyCommand = new NpgsqlCommand(
+                "SELECT \"ExternalId\" FROM \"UnitsOfMeasure\" WHERE \"Id\" = @id",
+                verifyMapping);
+            verifyCommand.Parameters.AddWithValue("id", unitToMap.Id);
+            (await verifyCommand.ExecuteScalarAsync()).Should().Be(mappedExternalId);
+        }
+        finally
+        {
+            await DropMigrationSchemaAsync(schema);
+        }
+    }
+
+    [PostgreSqlFact]
+    public async Task Forward_migration_backfills_only_blank_ids_and_restores_them_on_downgrade()
+    {
+        fixture.EnsureEnabled();
+        const string legacyPrefix = "__merconiq_legacy_unmapped_unit__:";
+        var (schema, connectionString) = await CreateMigrationSchemaAsync();
+
+        try
+        {
+            await using var context = CreateMigrationContext(connectionString, "preserved");
+            var migrator = context.GetService<IMigrator>();
+            await migrator.MigrateAsync("20260916170000_AddItemQuantityConventions");
+
+            await using (var seed = new NpgsqlConnection(connectionString))
+            {
+                await seed.OpenAsync();
+                await using var command = new NpgsqlCommand(
+                    """
+                    INSERT INTO "UnitsOfMeasure"
+                        ("TenantId", "Code", "Name", "DecimalPlaces", "IsWholeUnitOnly", "IsDeleted", "CreatedAt")
+                    VALUES
+                        ('preserved', 'EA', 'Each', 0, false, false, now()),
+                        ('unmapped', 'BOX', 'Box', 0, false, false, now())
+                    """, seed);
+                await command.ExecuteNonQueryAsync();
+
+                await using var legacyMigration = new NpgsqlCommand(
+                    """
+                    ALTER TABLE "UnitsOfMeasure"
+                        ADD COLUMN "ExternalId" character varying(128) NOT NULL DEFAULT '';
+                    CREATE UNIQUE INDEX "IX_UnitsOfMeasure_TenantId_ExternalId"
+                        ON "UnitsOfMeasure" ("TenantId", "ExternalId");
+                    UPDATE "UnitsOfMeasure" SET "ExternalId" = 'owner-mapped-unit-1' WHERE "Code" = 'EA';
+                    INSERT INTO "__EFMigrationsHistory" ("MigrationId", "ProductVersion")
+                    VALUES ('20260916180000_AddUnitExternalId', '10.0.9');
+                    """, seed);
+                await legacyMigration.ExecuteNonQueryAsync();
+            }
+
+            await migrator.MigrateAsync();
+            context.ChangeTracker.Clear();
+            var upgraded = await context.UnitsOfMeasure.IgnoreQueryFilters().AsNoTracking()
+                .ToDictionaryAsync(unit => unit.Code);
+            upgraded["EA"].ExternalId.Should().Be("owner-mapped-unit-1");
+            upgraded["BOX"].ExternalId.Should().Be($"{legacyPrefix}{upgraded["BOX"].Id}");
+
+            await migrator.MigrateAsync("20260918000000_AddMasterDataExternalIds");
+            context.ChangeTracker.Clear();
+            var downgraded = await context.UnitsOfMeasure.IgnoreQueryFilters().AsNoTracking()
+                .ToDictionaryAsync(unit => unit.Code);
+            downgraded["EA"].ExternalId.Should().Be("owner-mapped-unit-1");
+            downgraded["BOX"].ExternalId.Should().BeEmpty();
+
+            await migrator.MigrateAsync();
+            context.ChangeTracker.Clear();
+            var replayed = await context.UnitsOfMeasure.IgnoreQueryFilters().AsNoTracking()
+                .SingleAsync(unit => unit.Code == "BOX");
+            replayed.ExternalId.Should().Be($"{legacyPrefix}{replayed.Id}");
+        }
+        finally
+        {
+            await DropMigrationSchemaAsync(schema);
+        }
+    }
+
+    [PostgreSqlFact]
+    public async Task Forward_migration_rejects_case_insensitive_placeholder_collisions_atomically()
+    {
+        fixture.EnsureEnabled();
+        const string legacyPrefix = "__merconiq_legacy_unmapped_unit__:";
+        var (schema, connectionString) = await CreateMigrationSchemaAsync();
+
+        try
+        {
+            await using var context = CreateMigrationContext(connectionString, "collision");
+            var migrator = context.GetService<IMigrator>();
+            await migrator.MigrateAsync("20260916170000_AddItemQuantityConventions");
+
+            await using (var seed = new NpgsqlConnection(connectionString))
+            {
+                await seed.OpenAsync();
+                await using var command = new NpgsqlCommand(
+                    """
+                    INSERT INTO "UnitsOfMeasure"
+                        ("TenantId", "Code", "Name", "DecimalPlaces", "IsWholeUnitOnly", "IsDeleted", "CreatedAt")
+                    VALUES ('collision', 'EA', 'Each', 0, false, false, now());
+                    ALTER TABLE "UnitsOfMeasure"
+                        ADD COLUMN "ExternalId" character varying(128) NOT NULL DEFAULT '';
+                    CREATE UNIQUE INDEX "IX_UnitsOfMeasure_TenantId_ExternalId"
+                        ON "UnitsOfMeasure" ("TenantId", "ExternalId");
+                    """, seed);
+                await command.ExecuteNonQueryAsync();
+
+                int legacyUnitId;
+                await using (var getId = new NpgsqlCommand(
+                    "SELECT \"Id\" FROM \"UnitsOfMeasure\" WHERE \"Code\" = 'EA'", seed))
+                {
+                    legacyUnitId = (int)(await getId.ExecuteScalarAsync())!;
+                }
+
+                await using var addCollision = new NpgsqlCommand(
+                    """
+                    INSERT INTO "UnitsOfMeasure"
+                        ("TenantId", "Code", "Name", "DecimalPlaces", "IsWholeUnitOnly", "IsDeleted", "CreatedAt", "ExternalId")
+                    VALUES ('collision', 'EA-ALT', 'Alternate each', 0, false, false, now(), @externalId);
+                    INSERT INTO "__EFMigrationsHistory" ("MigrationId", "ProductVersion")
+                    VALUES ('20260916180000_AddUnitExternalId', '10.0.9');
+                    """, seed);
+                addCollision.Parameters.AddWithValue("externalId", $"{legacyPrefix.ToUpperInvariant()}{legacyUnitId}");
+                await addCollision.ExecuteNonQueryAsync();
+            }
+
+            var failure = await FluentActions.Invoking(() => migrator.MigrateAsync())
+                .Should().ThrowAsync<PostgresException>();
+            failure.Which.Message.Should().Contain("existing external ID would collide");
+
+            await using var verify = new NpgsqlConnection(connectionString);
+            await verify.OpenAsync();
+            await using var read = new NpgsqlCommand(
+                "SELECT \"ExternalId\" FROM \"UnitsOfMeasure\" WHERE \"Code\" = 'EA'", verify);
+            ((string)(await read.ExecuteScalarAsync())!).Should().BeEmpty();
+            await using var provenance = new NpgsqlCommand(
+                "SELECT to_regclass(@tableName) IS NOT NULL", verify);
+            provenance.Parameters.AddWithValue("tableName", "\"UnitExternalIdBackfillProvenance\"");
+            (await provenance.ExecuteScalarAsync()).Should().Be(false);
+        }
+        finally
+        {
+            await DropMigrationSchemaAsync(schema);
+        }
+    }
+
+    private async Task<(string Schema, string ConnectionString)> CreateMigrationSchemaAsync()
+    {
+        var schema = $"master_data_migration_{Guid.NewGuid():N}";
+        await using var connection = new NpgsqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using (var command = new NpgsqlCommand($"CREATE SCHEMA \"{schema}\"", connection))
+        {
+            await command.ExecuteNonQueryAsync();
+        }
+
+        var connectionString = new NpgsqlConnectionStringBuilder(fixture.ConnectionString)
+        {
+            SearchPath = schema
+        }.ConnectionString;
+        return (schema, connectionString);
+    }
+
+    private async Task DropMigrationSchemaAsync(string schema)
+    {
+        await using var connection = new NpgsqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new NpgsqlCommand($"DROP SCHEMA IF EXISTS \"{schema}\" CASCADE", connection);
+        await command.ExecuteNonQueryAsync();
+    }
+
+    private static InventoryDbContext CreateMigrationContext(string connectionString, string tenantId)
+    {
+        var options = new DbContextOptionsBuilder<InventoryDbContext>()
+            .UseNpgsql(connectionString)
+            .Options;
+        return new InventoryDbContext(options, new TestTenantContext(tenantId));
+    }
+
+    private static async Task WaitForMigrationLockAsync(string connectionString, string applicationName)
+    {
+        await using var observer = new NpgsqlConnection(connectionString);
+        await observer.OpenAsync();
+        await using var command = new NpgsqlCommand(
+            "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE application_name = @applicationName AND wait_event_type = 'Lock' AND state = 'active')",
+            observer);
+        command.Parameters.AddWithValue("applicationName", applicationName);
+
+        for (var attempt = 0; attempt < 100; attempt++)
+        {
+            if ((bool)(await command.ExecuteScalarAsync())!)
+                return;
+            await Task.Delay(TimeSpan.FromMilliseconds(50));
+        }
+
+        throw new TimeoutException("The downgrade did not wait for the concurrent unit update lock.");
     }
 
     private static MasterDataImportService CreateService(InventoryDbContext context) => new(

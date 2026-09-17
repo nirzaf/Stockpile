@@ -167,6 +167,22 @@ public sealed class MasterDataImportServiceTests
     }
 
     [Fact]
+    public async Task ImportUnits_rejects_reserved_legacy_external_ids_without_mutation()
+    {
+        await using var context = CreateContext(Guid.NewGuid().ToString(), "tenant-a");
+        const string csv = "external_id,code,name,decimal_places,whole_unit_only\n"
+            + "__MERCONIQ_LEGACY_UNMAPPED_UNIT__:42,EA,Each,0,false";
+
+        var result = await CreateService(context).ImportUnitsAsync(new ImportUnitsRequest(csv, DryRun: false));
+
+        result.Created.Should().Be(0);
+        result.Rejected.Should().Be(1);
+        result.Rows.Single().Error.Should().Be(
+            "External IDs beginning with the reserved legacy unit prefix are not allowed.");
+        context.UnitsOfMeasure.Should().BeEmpty();
+    }
+
+    [Fact]
     public async Task ImportUnits_rejects_fractional_precision_for_whole_only_units()
     {
         await using var context = CreateContext(Guid.NewGuid().ToString(), "tenant-a");
