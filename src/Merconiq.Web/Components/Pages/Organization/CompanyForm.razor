@@ -82,6 +82,12 @@ else
                                   HelperText="Enter the approved three-letter currency code; no country default is assumed." />
                 </MudItem>
                 <MudItem xs="12" md="6">
+                    <MudNumericField T="int?" Label="Currency decimal places" @bind-Value="_model.CurrencyScale"
+                                     Min="0" Max="4" Required="true"
+                                     RequiredError="Currency decimal places are required."
+                                     HelperText="Enter the approved 0–4 decimal places used for display and rounding; no jurisdiction default is assumed." />
+                </MudItem>
+                <MudItem xs="12" md="6">
                     <MudTextField T="string" Label="Country code (optional)" @bind-Value="_model.CountryCode"
                                   MaxLength="2" Counter="2" HelperText="Optional two-letter country code." />
                 </MudItem>
@@ -177,6 +183,7 @@ else
                 RegistrationNumber = company.RegistrationNumber,
                 TaxIdentifier = company.TaxIdentifier,
                 BaseCurrency = company.BaseCurrency,
+                CurrencyScale = company.CurrencyScale,
                 CountryCode = company.CountryCode,
                 IsActive = company.IsActive
             };
@@ -224,14 +231,15 @@ else
             {
                 await OrganizationService.UpdateCompanyAsync(id, new UpdateCompanyRequest(
                     _model.LegalName, _model.TradingName, _model.RegistrationNumber,
-                    _model.TaxIdentifier, _model.BaseCurrency, _model.CountryCode, _model.IsActive));
+                    _model.TaxIdentifier, _model.BaseCurrency, _model.CountryCode, _model.IsActive,
+                    _model.CurrencyScale));
                 Snackbar.Add("Company updated.", Severity.Success);
             }
             else
             {
                 await OrganizationService.CreateCompanyAsync(new CreateCompanyRequest(
                     _model.Code, _model.LegalName, _model.TradingName, _model.RegistrationNumber,
-                    _model.TaxIdentifier, _model.BaseCurrency, _model.CountryCode));
+                    _model.TaxIdentifier, _model.BaseCurrency, _model.CountryCode, _model.CurrencyScale));
                 Snackbar.Add("Company created.", Severity.Success);
             }
 
@@ -259,6 +267,7 @@ else
         public string? RegistrationNumber { get; set; }
         public string? TaxIdentifier { get; set; }
         public string BaseCurrency { get; set; } = string.Empty;
+        public int? CurrencyScale { get; set; }
         public string? CountryCode { get; set; }
         public bool IsActive { get; set; } = true;
     }

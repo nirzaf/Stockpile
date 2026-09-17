@@ -7,7 +7,8 @@ public sealed record CreateCompanyRequest(
     string? RegistrationNumber,
     string? TaxIdentifier,
     string BaseCurrency,
-    string? CountryCode);
+    string? CountryCode,
+    int? CurrencyScale = null);
 
 public sealed record UpdateCompanyRequest(
     string LegalName,
@@ -16,7 +17,8 @@ public sealed record UpdateCompanyRequest(
     string? TaxIdentifier,
     string BaseCurrency,
     string? CountryCode,
-    bool IsActive);
+    bool IsActive,
+    int? CurrencyScale = null);
 
 public sealed record CreateBranchRequest(
     int CompanyId,

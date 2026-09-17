@@ -10,6 +10,7 @@ public sealed class CreateItemCommandValidator : AbstractValidator<CreateItemCom
     {
         RuleFor(command => command.ItemCode).NotEmpty().MaximumLength(50);
         RuleFor(command => command.Description).MaximumLength(500);
+        RuleFor(command => command.Barcode).MaximumLength(100);
         RuleFor(command => command.Rate).GreaterThan(0);
         RuleFor(command => command.SupplierId).GreaterThan(0).When(command => command.SupplierId.HasValue);
         RuleFor(command => command.BaseUnitId).GreaterThan(0).When(command => command.BaseUnitId.HasValue);
@@ -27,6 +28,7 @@ public sealed class UpdateItemCommandValidator : AbstractValidator<UpdateItemCom
     {
         RuleFor(command => command.Id).GreaterThan(0);
         RuleFor(command => command.Description).MaximumLength(500);
+        RuleFor(command => command.Barcode).MaximumLength(100);
         RuleFor(command => command.Rate).GreaterThan(0);
         RuleFor(command => command.SupplierId).GreaterThan(0).When(command => command.SupplierId.HasValue);
         RuleFor(command => command.BaseUnitId).GreaterThan(0).When(command => command.BaseUnitId.HasValue);

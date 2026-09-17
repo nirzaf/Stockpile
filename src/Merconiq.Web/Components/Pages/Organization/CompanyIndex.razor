@@ -83,7 +83,7 @@ else
                         <MudGrid Spacing="1">
                             <MudItem xs="6">
                                 <MudText Typo="Typo.caption" Color="Color.Secondary">Base currency</MudText>
-                                <MudText Typo="Typo.body1">@company.BaseCurrency</MudText>
+                                <MudText Typo="Typo.body1">@company.BaseCurrency (@(company.CurrencyScale?.ToString() ?? "not configured") decimals)</MudText>
                             </MudItem>
                             <MudItem xs="6">
                                 <MudText Typo="Typo.caption" Color="Color.Secondary">Country</MudText>

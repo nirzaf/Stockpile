@@ -77,7 +77,7 @@ public sealed class OrganizationPostgreSqlIntegrationTests(PostgreSqlIntegration
 
         await using (var setup = fixture.CreateContext(tenantId))
         {
-            var company = new Company { Code = "CURRENCY", LegalName = "Currency company", BaseCurrency = "QAR" };
+            var company = new Company { Code = "CURRENCY", LegalName = "Currency company", BaseCurrency = "QAR", CurrencyScale = 2 };
             var branch = new Branch { Company = company, Code = "BRANCH", Name = "Branch" };
             var location = new Location { Branch = branch, Name = "Warehouse" };
             var item = new Item { ItemCode = "CURRENCY-ITEM", Description = "Currency fixture", Rate = 1m };
@@ -100,11 +100,53 @@ public sealed class OrganizationPostgreSqlIntegrationTests(PostgreSqlIntegration
         await using var context = fixture.CreateContext(tenantId);
         var service = CreateService(context, tenantId);
         var act = () => service.UpdateCompanyAsync(companyId,
-            new UpdateCompanyRequest("Currency company", null, null, null, "USD", null, true));
+            new UpdateCompanyRequest("Currency company", null, null, null, "USD", null, true, CurrencyScale: 2));
 
         await act.Should().ThrowAsync<InvalidOperationException>()
             .WithMessage("A company's base currency cannot change after posted stock activity.");
         (await context.Companies.SingleAsync()).BaseCurrency.Should().Be("QAR");
+    }
+
+    [PostgreSqlFact]
+    public async Task Company_currency_scale_is_frozen_after_posted_stock_activity()
+    {
+        fixture.EnsureEnabled();
+        var tenantId = $"currency-scale-freeze-{Guid.NewGuid():N}";
+        int companyId;
+
+        await using (var setup = fixture.CreateContext(tenantId))
+        {
+            var company = new Company
+            {
+                Code = "SCALE",
+                LegalName = "Scale company",
+                BaseCurrency = "USD",
+                CurrencyScale = 2
+            };
+            var branch = new Branch { Company = company, Code = "BRANCH", Name = "Branch" };
+            var location = new Location { Branch = branch, Name = "Warehouse" };
+            var item = new Item { ItemCode = "SCALE-ITEM", Description = "Scale fixture", Rate = 1m };
+            setup.AddRange(company, branch, location, item);
+            await setup.SaveChangesAsync();
+            setup.StockTransactions.Add(new StockTransaction
+            {
+                ItemId = item.Id,
+                FromLocationId = location.Id,
+                Quantity = 1,
+                TransactionType = TransactionType.Receive
+            });
+            await setup.SaveChangesAsync();
+            companyId = company.Id;
+        }
+
+        await using var context = fixture.CreateContext(tenantId);
+        var service = CreateService(context, tenantId);
+        var act = () => service.UpdateCompanyAsync(companyId,
+            new UpdateCompanyRequest("Scale company", null, null, null, "USD", null, true, CurrencyScale: 3));
+
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("A company's currency scale cannot change after posted stock activity.");
+        (await context.Companies.SingleAsync()).CurrencyScale.Should().Be(2);
     }
 
     private static async Task RunCompanyUpdateAsync(
@@ -117,7 +159,7 @@ public sealed class OrganizationPostgreSqlIntegrationTests(PostgreSqlIntegration
         await using var context = fixture.CreateContext(tenantId, applicationName);
         var service = CreateService(context, tenantId);
         await service.UpdateCompanyAsync(companyId,
-            new UpdateCompanyRequest("Concurrent company", null, null, null, "QAR", null, isActive));
+            new UpdateCompanyRequest("Concurrent company", null, null, null, "QAR", null, isActive, CurrencyScale: 2));
     }
 
     private static async Task RunBranchUpdateAsync(

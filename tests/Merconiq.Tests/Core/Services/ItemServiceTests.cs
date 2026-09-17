@@ -1,5 +1,6 @@
 using AutoFixture;
 using FluentAssertions;
+using System.Linq.Expressions;
 using Merconiq.Core.Entities;
 using Merconiq.Core.Interfaces;
 using Merconiq.Core.Services;
@@ -135,7 +136,7 @@ public class ItemServiceTests
     public async Task CreateAsync_WhenItemIsValid_AddsItemToRepository()
     {
         // Arrange
-        var item = _fixture.Create<Item>();
+        var item = new Item { ItemCode = "SKU-VALID", Description = "Valid widget", Rate = 10m };
         _repoMock.Setup(r => r.AddAsync(item)).ReturnsAsync(item);
 
         // Act
@@ -149,7 +150,7 @@ public class ItemServiceTests
     [Fact]
     public async Task CreateAsync_rejects_unit_not_visible_to_current_tenant()
     {
-        var item = new Item { ItemCode = "SKU-1", Rate = 10m, BaseUnitId = 42 };
+        var item = new Item { ItemCode = "SKU-1", Description = "Widget", Rate = 10m, BaseUnitId = 42 };
         _unitRepoMock.Setup(r => r.FindAsync(It.IsAny<System.Linq.Expressions.Expression<Func<UnitOfMeasure, bool>>>()))
             .ReturnsAsync(Array.Empty<UnitOfMeasure>());
 
@@ -161,10 +162,109 @@ public class ItemServiceTests
     }
 
     [Fact]
+    public async Task CreateAsync_rejects_invalid_conversion_factor()
+    {
+        var item = new Item { ItemCode = "SKU-1", Description = "Widget", Rate = 10m, PurchaseToBaseFactor = 0m };
+
+        var act = () => _sut.CreateAsync(item);
+
+        await act.Should().ThrowAsync<ArgumentException>()
+            .WithMessage("Purchase-to-base factor must be positive.*");
+        _repoMock.Verify(r => r.AddAsync(It.IsAny<Item>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task CreateAsync_normalizes_and_persists_a_barcode()
+    {
+        _repoMock.Setup(r => r.FindAsync(It.IsAny<Expression<Func<Item, bool>>>()))
+            .ReturnsAsync(Array.Empty<Item>());
+        var item = new Item { ItemCode = " SKU-1 ", Description = " Widget ", Rate = 10m, Barcode = " 012345 " };
+        _repoMock.Setup(r => r.AddAsync(item)).ReturnsAsync(item);
+
+        await _sut.CreateAsync(item);
+
+        item.ItemCode.Should().Be("SKU-1");
+        item.Description.Should().Be("Widget");
+        item.Barcode.Should().Be("012345");
+        _repoMock.Verify(r => r.AddAsync(item), Times.Once);
+    }
+
+    [Fact]
+    public async Task CreateAsync_rejects_duplicate_barcode()
+    {
+        _repoMock.Setup(r => r.FindAsync(It.IsAny<Expression<Func<Item, bool>>>()))
+            .ReturnsAsync(new[] { new Item { Id = 2, Barcode = "012345" } });
+        var item = new Item { ItemCode = "SKU-1", Description = "Widget", Rate = 10m, Barcode = "012345" };
+
+        var act = () => _sut.CreateAsync(item);
+
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("An item with this barcode already exists for this tenant.");
+        _repoMock.Verify(r => r.AddAsync(It.IsAny<Item>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task CreateAsync_rejects_conversion_unit_without_base_unit()
+    {
+        var item = new Item
+        {
+            ItemCode = "SKU-1",
+            Description = "Widget",
+            Rate = 10m,
+            PurchaseUnitId = 7,
+            PurchaseToBaseFactor = 12m
+        };
+
+        var act = () => _sut.CreateAsync(item);
+
+        await act.Should().ThrowAsync<ArgumentException>()
+            .WithMessage("A base unit is required when a purchase or sales unit is configured.");
+    }
+
+    [Fact]
+    public async Task CreateAsync_rejects_fractional_precision_for_whole_only_unit()
+    {
+        _unitRepoMock.Setup(r => r.FindAsync(It.IsAny<Expression<Func<UnitOfMeasure, bool>>>()))
+            .ReturnsAsync(new[] { new UnitOfMeasure { Id = 7, IsWholeUnitOnly = true } });
+        var item = new Item
+        {
+            ItemCode = "SKU-1",
+            Description = "Widget",
+            Rate = 10m,
+            BaseUnitId = 7,
+            QuantityPrecision = 2
+        };
+
+        var act = () => _sut.CreateAsync(item);
+
+        await act.Should().ThrowAsync<ArgumentException>()
+            .WithMessage("Items using a whole-unit-only unit must use zero quantity precision.");
+    }
+
+    [Fact]
+    public async Task CreateAsync_rejects_deleted_unit()
+    {
+        _unitRepoMock.Setup(r => r.FindAsync(It.IsAny<Expression<Func<UnitOfMeasure, bool>>>()))
+            .ReturnsAsync(new[] { new UnitOfMeasure { Id = 7, IsDeleted = true } });
+        var item = new Item
+        {
+            ItemCode = "SKU-1",
+            Description = "Widget",
+            Rate = 10m,
+            BaseUnitId = 7
+        };
+
+        var act = () => _sut.CreateAsync(item);
+
+        await act.Should().ThrowAsync<ArgumentException>()
+            .WithMessage("Each item unit must exist and belong to the current tenant.");
+    }
+
+    [Fact]
     public async Task UpdateAsync_WhenItemExists_UpdatesItemInRepository()
     {
         // Arrange
-        var item = _fixture.Create<Item>();
+        var item = new Item { ItemCode = "SKU-VALID", Description = "Valid widget", Rate = 10m };
 
         // Act
         await _sut.UpdateAsync(item);
@@ -177,7 +277,7 @@ public class ItemServiceTests
     public async Task DeleteAsync_WhenItemExists_DeletesItemFromRepository()
     {
         // Arrange
-        var item = _fixture.Create<Item>();
+        var item = new Item { Id = 1, ItemCode = "SKU-VALID", Description = "Valid widget", Rate = 10m };
         _repoMock.Setup(r => r.GetByIdAsync(item.Id)).ReturnsAsync(item);
 
         // Act

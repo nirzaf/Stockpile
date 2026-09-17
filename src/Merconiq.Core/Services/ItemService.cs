@@ -59,6 +59,7 @@ public class ItemService : IItemService
     public async Task<Item> CreateAsync(Item item)
     {
         _logger.LogInformation("Creating item {ItemCode}", item.ItemCode);
+        await ValidateAndNormalizeAsync(item);
         await ValidateUnitReferencesAsync(item);
         var existing = await _repo.FindAsync(candidate => candidate.ItemCode == item.ItemCode);
         if (existing.Any())
@@ -76,7 +77,12 @@ public class ItemService : IItemService
     public async Task UpdateAsync(Item item)
     {
         _logger.LogInformation("Updating item {Id}", item.Id);
+        await ValidateAndNormalizeAsync(item);
         await ValidateUnitReferencesAsync(item);
+        var duplicateCode = await _repo.FindAsync(candidate =>
+            candidate.Id != item.Id && candidate.ItemCode == item.ItemCode);
+        if (duplicateCode.Any())
+            throw new InvalidOperationException("An item with this code already exists for this tenant.");
         await _repo.UpdateAsync(item);
         await _unitOfWork.SaveChangesAsync();
         _cache.Remove(TenantCacheKeys.AllItems(_tenantContext.TenantId));
@@ -113,19 +119,63 @@ public class ItemService : IItemService
         return await _repo.SearchAsync(term);
     }
 
+    private async Task ValidateAndNormalizeAsync(Item item)
+    {
+        item.ItemCode = NormalizeRequired(item.ItemCode, "Item code", 50);
+        item.Description = NormalizeRequired(item.Description, "Description", 500);
+        item.Barcode = NormalizeOptional(item.Barcode, 100);
+        if (item.Rate <= 0)
+            throw new ArgumentException("Rate must be positive.", nameof(item));
+        ItemQuantityConventions.Validate(item);
+
+        if (item.Barcode is not null)
+        {
+            var duplicateBarcode = await _repo.FindAsync(candidate =>
+                candidate.Id != item.Id && candidate.Barcode == item.Barcode);
+            if (duplicateBarcode.Any())
+                throw new InvalidOperationException("An item with this barcode already exists for this tenant.");
+        }
+    }
+
     private async Task ValidateUnitReferencesAsync(Item item)
     {
+        if (item.BaseUnitId is null && (item.PurchaseUnitId.HasValue || item.SalesUnitId.HasValue))
+            throw new ArgumentException("A base unit is required when a purchase or sales unit is configured.");
+        if (!item.PurchaseUnitId.HasValue && item.PurchaseToBaseFactor != 1m)
+            throw new ArgumentException("Purchase-to-base factor must be 1 when no purchase unit is configured.");
+        if (!item.SalesUnitId.HasValue && item.SalesToBaseFactor != 1m)
+            throw new ArgumentException("Sales-to-base factor must be 1 when no sales unit is configured.");
+
         var ids = new[] { item.BaseUnitId, item.PurchaseUnitId, item.SalesUnitId }
             .Where(id => id.HasValue)
             .Select(id => id!.Value)
             .Distinct()
             .ToArray();
-        if (ids.Length == 0) return;
+        if (ids.Length == 0)
+            return;
 
-        var validIds = (await _unitRepository.FindAsync(unit => ids.Contains(unit.Id)))
-            .Select(unit => unit.Id)
-            .ToHashSet();
-        if (validIds.Count != ids.Length)
+        var units = (await _unitRepository.FindAsync(unit => ids.Contains(unit.Id))).ToArray();
+        if (units.Length != ids.Length || units.Any(unit => unit.IsDeleted))
             throw new ArgumentException("Each item unit must exist and belong to the current tenant.");
+        if (units.Any(unit => unit.IsWholeUnitOnly) && item.QuantityPrecision != 0)
+            throw new ArgumentException("Items using a whole-unit-only unit must use zero quantity precision.");
+    }
+
+    private static string NormalizeRequired(string? value, string name, int maxLength)
+    {
+        var normalized = value?.Trim();
+        if (string.IsNullOrWhiteSpace(normalized) || normalized.Length > maxLength)
+            throw new ArgumentException($"{name} is required and must be {maxLength} characters or fewer.", name);
+        return normalized;
+    }
+
+    private static string? NormalizeOptional(string? value, int maxLength)
+    {
+        var normalized = value?.Trim();
+        return string.IsNullOrWhiteSpace(normalized)
+            ? null
+            : normalized.Length <= maxLength
+                ? normalized
+                : throw new ArgumentException($"Barcode must be {maxLength} characters or fewer.", nameof(value));
     }
 }

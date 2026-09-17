@@ -74,6 +74,18 @@ public sealed class MasterDataImportServiceTests
         context.Items.Should().BeEmpty();
     }
 
+    [Fact]
+    public async Task ImportUnits_rejects_fractional_precision_for_whole_only_units()
+    {
+        await using var context = CreateContext(Guid.NewGuid().ToString(), "tenant-a");
+        var result = await CreateService(context).ImportUnitsAsync(new ImportUnitsRequest(
+            "external_id,code,name,decimal_places,whole_unit_only\nbox,BOX,Box,2,true", DryRun: false));
+
+        result.Rejected.Should().Be(1);
+        result.Rows.Single().Error.Should().Be("Whole-unit-only units must use zero decimal places.");
+        context.UnitsOfMeasure.Should().BeEmpty();
+    }
+
     private static MasterDataImportService CreateService(InventoryDbContext context) => new(
         new Repository<UnitOfMeasure>(context),
         new Repository<Item>(context),

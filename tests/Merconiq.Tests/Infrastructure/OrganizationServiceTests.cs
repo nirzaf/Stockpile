@@ -14,6 +14,41 @@ public sealed class OrganizationServiceTests
     public void Company_does_not_assume_a_jurisdiction_specific_base_currency()
     {
         new Company().BaseCurrency.Should().BeEmpty();
+        new Company().CurrencyScale.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task CreateCompany_requires_explicit_currency_scale_and_accepts_zero()
+    {
+        await using var context = CreateContext(Guid.NewGuid().ToString(), "tenant-a");
+        var service = CreateService(context, "tenant-a");
+
+        var missing = () => service.CreateCompanyAsync(new CreateCompanyRequest(
+            "COMPANY", "Company", null, null, null, "USD", null));
+
+        await missing.Should().ThrowAsync<ArgumentException>()
+            .WithMessage("Currency scale must be supplied and must be between 0 and 4.");
+
+        var company = await service.CreateCompanyAsync(new CreateCompanyRequest(
+            "COMPANY", "Company", null, null, null, "JPY", null, CurrencyScale: 0));
+
+        company.CurrencyScale.Should().Be(0);
+        company.BaseCurrency.Should().Be("JPY");
+    }
+
+    [Theory]
+    [InlineData(-1)]
+    [InlineData(5)]
+    public async Task CreateCompany_rejects_currency_scale_outside_supported_range(int scale)
+    {
+        await using var context = CreateContext(Guid.NewGuid().ToString(), "tenant-a");
+        var service = CreateService(context, "tenant-a");
+
+        var act = () => service.CreateCompanyAsync(new CreateCompanyRequest(
+            "COMPANY", "Company", null, null, null, "USD", null, scale));
+
+        await act.Should().ThrowAsync<ArgumentException>()
+            .WithMessage("Currency scale must be supplied and must be between 0 and 4.");
     }
 
     [Fact]
@@ -115,7 +150,7 @@ public sealed class OrganizationServiceTests
     public async Task Company_base_currency_cannot_change_after_stock_activity()
     {
         await using var context = CreateContext(Guid.NewGuid().ToString(), "tenant-a");
-        var company = new Company { Code = "COMPANY", LegalName = "Company", BaseCurrency = "QAR" };
+        var company = new Company { Code = "COMPANY", LegalName = "Company", BaseCurrency = "QAR", CurrencyScale = 2 };
         var branch = new Branch { Company = company, Code = "BRANCH", Name = "Branch" };
         var location = new Location { Branch = branch, Name = "Warehouse" };
         context.StockTransactions.Add(new StockTransaction { FromLocation = location, Quantity = 1 });
@@ -123,7 +158,7 @@ public sealed class OrganizationServiceTests
         var service = CreateService(context, "tenant-a");
 
         var act = () => service.UpdateCompanyAsync(company.Id,
-            new UpdateCompanyRequest(company.LegalName, null, null, null, "USD", null, true));
+            new UpdateCompanyRequest(company.LegalName, null, null, null, "USD", null, true, CurrencyScale: 2));
 
         await act.Should().ThrowAsync<InvalidOperationException>()
             .WithMessage("A company's base currency cannot change after posted stock activity.");
@@ -134,15 +169,36 @@ public sealed class OrganizationServiceTests
     public async Task Company_base_currency_can_change_before_stock_activity()
     {
         await using var context = CreateContext(Guid.NewGuid().ToString(), "tenant-a");
-        var company = new Company { Code = "COMPANY", LegalName = "Company", BaseCurrency = "QAR" };
+        var company = new Company { Code = "COMPANY", LegalName = "Company", BaseCurrency = "QAR", CurrencyScale = 2 };
         context.Companies.Add(company);
         await context.SaveChangesAsync();
         var service = CreateService(context, "tenant-a");
 
         await service.UpdateCompanyAsync(company.Id,
-            new UpdateCompanyRequest(company.LegalName, null, null, null, "USD", null, true));
+            new UpdateCompanyRequest(company.LegalName, null, null, null, "USD", null, true, CurrencyScale: 0));
 
-        (await context.Companies.SingleAsync()).BaseCurrency.Should().Be("USD");
+        var updated = await context.Companies.SingleAsync();
+        updated.BaseCurrency.Should().Be("USD");
+        updated.CurrencyScale.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task Company_currency_scale_cannot_change_after_stock_activity()
+    {
+        await using var context = CreateContext(Guid.NewGuid().ToString(), "tenant-a");
+        var company = new Company { Code = "COMPANY", LegalName = "Company", BaseCurrency = "USD", CurrencyScale = 2 };
+        var branch = new Branch { Company = company, Code = "BRANCH", Name = "Branch" };
+        var location = new Location { Branch = branch, Name = "Warehouse" };
+        context.StockTransactions.Add(new StockTransaction { FromLocation = location, Quantity = 1 });
+        await context.SaveChangesAsync();
+        var service = CreateService(context, "tenant-a");
+
+        var act = () => service.UpdateCompanyAsync(company.Id,
+            new UpdateCompanyRequest(company.LegalName, null, null, null, "USD", null, true, CurrencyScale: 3));
+
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("A company's currency scale cannot change after posted stock activity.");
+        (await context.Companies.SingleAsync()).CurrencyScale.Should().Be(2);
     }
 
     private static OrganizationService CreateService(InventoryDbContext context, string tenantId) => new(

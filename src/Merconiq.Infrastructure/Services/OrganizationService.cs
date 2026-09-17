@@ -52,6 +52,7 @@ public sealed class OrganizationService(
         var code = NormalizeRequired(request.Code, "Company code", 32);
         var legalName = NormalizeRequired(request.LegalName, "Legal name", 200);
         var currency = NormalizeCurrency(request.BaseCurrency);
+        var currencyScale = NormalizeCurrencyScale(request.CurrencyScale);
         if (await companies.Query().AnyAsync(c => c.Code == code))
             throw new InvalidOperationException("A company with this code already exists in the tenant.");
 
@@ -63,6 +64,7 @@ public sealed class OrganizationService(
             RegistrationNumber = NormalizeOptional(request.RegistrationNumber, 100),
             TaxIdentifier = NormalizeOptional(request.TaxIdentifier, 100),
             BaseCurrency = currency,
+            CurrencyScale = currencyScale,
             CountryCode = NormalizeOptional(request.CountryCode, 2)?.ToUpperInvariant()
         });
         await unitOfWork.SaveChangesAsync();
@@ -80,14 +82,21 @@ public sealed class OrganizationService(
                 await branches.Query().AnyAsync(b => b.CompanyId == id && b.IsActive))
                 throw new InvalidOperationException("Deactivate or reassign active branches before deactivating the company.");
             var baseCurrency = NormalizeCurrency(request.BaseCurrency);
-            if (!string.Equals(company.BaseCurrency, baseCurrency, StringComparison.Ordinal) &&
-                await HasPostedStockActivityAsync(id))
-                throw new InvalidOperationException("A company's base currency cannot change after posted stock activity.");
+            var currencyScale = NormalizeCurrencyScale(request.CurrencyScale);
+            var currencyChanged = !string.Equals(company.BaseCurrency, baseCurrency, StringComparison.Ordinal);
+            var currencyScaleChanged = company.CurrencyScale != currencyScale;
+            if ((currencyChanged || currencyScaleChanged) && await HasPostedStockActivityAsync(id))
+            {
+                if (currencyChanged)
+                    throw new InvalidOperationException("A company's base currency cannot change after posted stock activity.");
+                throw new InvalidOperationException("A company's currency scale cannot change after posted stock activity.");
+            }
             company.LegalName = NormalizeRequired(request.LegalName, "Legal name", 200);
             company.TradingName = NormalizeOptional(request.TradingName, 200);
             company.RegistrationNumber = NormalizeOptional(request.RegistrationNumber, 100);
             company.TaxIdentifier = NormalizeOptional(request.TaxIdentifier, 100);
             company.BaseCurrency = baseCurrency;
+            company.CurrencyScale = currencyScale;
             company.CountryCode = NormalizeOptional(request.CountryCode, 2)?.ToUpperInvariant();
             company.IsActive = request.IsActive;
             await companies.UpdateAsync(company);
@@ -269,5 +278,12 @@ public sealed class OrganizationService(
         if (currency.Length != 3 || currency.Any(c => c is < 'A' or > 'Z'))
             throw new ArgumentException("Base currency must be a three-letter ISO-style code.");
         return currency;
+    }
+
+    private static int NormalizeCurrencyScale(int? value)
+    {
+        if (!value.HasValue || value.Value is < 0 or > 4)
+            throw new ArgumentException("Currency scale must be supplied and must be between 0 and 4.");
+        return value.Value;
     }
 }

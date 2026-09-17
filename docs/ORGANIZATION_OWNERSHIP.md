@@ -12,7 +12,7 @@ a company identifier.
 | Branch | Company-owned within a tenant | New `Branches` rows require a same-tenant company and a company-scoped unique code. |
 | Location | Branch-owned when mapped | Existing locations keep their IDs and receive nullable `BranchId` until an owner-approved mapping exists. |
 | Item, supplier, purchase order, stock | Existing tenant-scoped masters | No automatic legal-company inference is performed in this migration; mapping is a controlled follow-up. |
-| Currency metadata | Company base-currency field | A company requires an explicitly supplied three-letter currency code; there is no jurisdiction-specific default. It may change during setup but is frozen after posted stock activity. Currency-specific display and rounding metadata, and validation against a maintained ISO 4217 catalog, remain future M01 work; do not assume every currency has two fractional digits. |
+| Currency metadata | Company base-currency field | A company requires an explicitly supplied three-letter currency code and 0–4 decimal-place currency scale; there is no jurisdiction-specific default. Currency and scale may change during setup but are frozen after posted stock activity. Validation against a maintained ISO 4217 catalog remains future M01 work; do not assume every currency has two fractional digits. |
 
 The migration creates `Companies` and `Branches`, then adds nullable
 `Locations.BranchId`. Composite foreign keys include `TenantId`, so a branch
@@ -30,6 +30,29 @@ ID.
 The API surface is under `/api/v1/organization`: company and branch list,
 search, create, update/deactivate, plus controlled location-to-branch
 assignment. Mutations require the existing Admin or Manager role.
+
+## Currency and item quantity conventions
+
+Company `CurrencyScale` is the explicit number of fractional decimal places used
+for money display and rounding. New company writes must supply it from the
+approved business configuration; values from 0 through 4 are supported. Legacy
+rows may remain unconfigured until an owner supplies the value. Neither the
+country field nor the currency code selects a scale, and the application does
+not claim a maintained ISO 4217 catalog.
+
+Items keep `Rate` as the current selling price. Acquisition cost is supplied by
+costed stock postings and moving-average valuation; it is never inferred from
+`Rate`. A base unit may have separate purchasing and sales units with positive
+conversion factors. The server validates those references in the current tenant,
+rejects deleted units, rejects inconsistent factors and precision, and rejects
+fractional quantities for whole-unit-only items. Barcodes are trimmed, limited to
+100 characters and unique within a tenant.
+
+The existing receive, transfer, sale and reservation contracts remain positive
+integer quantities. The tested carton-to-base conversion helper is available for
+future adapters, but no decimal stock API is implied here. Weighted goods and
+other fractional stock require an explicitly versioned additive quantity contract
+before they can be posted; callers must not silently round them.
 
 Stock receive, sell, and transfer operations resolve every location through
 the current tenant scope. Transfers between two branch-owned locations are

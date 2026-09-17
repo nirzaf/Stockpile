@@ -1,5 +1,7 @@
 using FluentAssertions;
+using Merconiq.Core.Entities;
 using Merconiq.Core.Features.Items.Commands;
+using Merconiq.Core.Services;
 using Merconiq.Core.Validators;
 using FluentValidation.TestHelper;
 
@@ -54,5 +56,47 @@ public sealed class ItemQuantityConventionTests
             .ShouldHaveValidationErrorFor(command => command.SalesToBaseFactor);
         validator.TestValidate(new UpdateItemCommand(1, "Widget", 10m, null, QuantityPrecision: 7))
             .ShouldHaveValidationErrorFor(command => command.QuantityPrecision);
+    }
+
+    [Fact]
+    public void Purchase_quantity_converts_to_base_without_rounding()
+    {
+        var item = new Item
+        {
+            PurchaseUnitId = 10,
+            PurchaseToBaseFactor = 12m,
+            QuantityPrecision = 0,
+            WholeUnitOnly = true
+        };
+
+        ItemQuantityConventions.ToBaseQuantity(item, 2m, ItemQuantityUnit.Purchase)
+            .Should().Be(24m);
+    }
+
+    [Fact]
+    public void Whole_unit_only_item_rejects_fractional_quantity()
+    {
+        var item = new Item { QuantityPrecision = 0, WholeUnitOnly = true };
+
+        var act = () => ItemQuantityConventions.ToBaseQuantity(item, 1.5m, ItemQuantityUnit.Base);
+
+        act.Should().Throw<ArgumentException>()
+            .WithMessage("Fractional quantities are not supported for whole-unit-only items.*");
+    }
+
+    [Fact]
+    public void Conversion_rejects_a_result_that_would_need_silent_rounding()
+    {
+        var item = new Item
+        {
+            PurchaseUnitId = 10,
+            PurchaseToBaseFactor = 1.333333m,
+            QuantityPrecision = 2
+        };
+
+        var act = () => ItemQuantityConventions.ToBaseQuantity(item, 0.01m, ItemQuantityUnit.Purchase);
+
+        act.Should().Throw<ArgumentException>()
+            .WithMessage("Converted quantity must have no more than 2 decimal places.*");
     }
 }
