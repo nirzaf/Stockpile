@@ -706,6 +706,112 @@ public class StockService : IStockService
     }
 
     /// <inheritdoc />
+    public async Task<StockTransaction> ReceiveTransferTransitAsync(
+        int itemId,
+        int fromLocationId,
+        int toLocationId,
+        int quantity,
+        decimal unitCost,
+        decimal totalValue,
+        string sourceLineReference,
+        string notes,
+        StockMutationScope mutationScope,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (itemId <= 0 || fromLocationId <= 0 || toLocationId <= 0)
+            throw new ArgumentOutOfRangeException(nameof(itemId));
+        if (fromLocationId == toLocationId)
+            throw new ArgumentException("Transfer source and destination must be different.");
+        if (quantity <= 0)
+            throw new ArgumentOutOfRangeException(nameof(quantity), "Receipt quantity must be positive.");
+        if (unitCost < 0 || totalValue < 0)
+            throw new ArgumentOutOfRangeException(nameof(unitCost), "Transfer receipt valuation cannot be negative.");
+        ArgumentException.ThrowIfNullOrWhiteSpace(sourceLineReference);
+        if (sourceLineReference.Length > 128)
+            throw new ArgumentOutOfRangeException(nameof(sourceLineReference));
+        EnsureReservationFields(null, notes);
+        if (!_unitOfWork.HasActiveTransaction)
+            throw new InvalidOperationException("Transfer receipt must run inside its transfer-order transaction.");
+
+        await _unitOfWork.AcquireTenantOperationLockAsync("organization-state", cancellationToken);
+        await _unitOfWork.AcquireLocationLocksAsync([fromLocationId, toLocationId], cancellationToken);
+        var source = await EnsureLocationUsableAsync(fromLocationId, cancellationToken);
+        var destination = await EnsureLocationUsableAsync(toLocationId, cancellationToken);
+        await EnsureSameCompanyTransferAsync(source, destination);
+        await EnsureAuthorizedCompanyScopeAsync(source, mutationScope);
+        await EnsureAuthorizedCompanyScopeAsync(destination, mutationScope);
+        var item = await _itemRepo.GetByIdAsync(itemId, cancellationToken);
+        if (item is not null && !item.IsActive)
+            throw new InvalidOperationException("Inactive items cannot be used in stock operations.");
+
+        var destinationStock = await GetByItemAndLocationAsync(
+            itemId, toLocationId, batchNumber: null, expiryDate: null, cancellationToken: cancellationToken);
+        if (destinationStock is null)
+        {
+            await _stockRepo.AddAsync(new StockInHand
+            {
+                ItemId = itemId,
+                LocationId = toLocationId,
+                Quantity = quantity
+            });
+        }
+        else
+        {
+            destinationStock.Quantity = checked(destinationStock.Quantity + quantity);
+            await _stockRepo.UpdateAsync(destinationStock);
+        }
+
+        var transaction = new StockTransaction
+        {
+            ItemId = itemId,
+            FromLocationId = fromLocationId,
+            ToLocationId = toLocationId,
+            Quantity = quantity,
+            TransactionType = TransactionType.TransferReceipt,
+            SourceLineReference = sourceLineReference,
+            UnitCost = unitCost,
+            TransactionDate = DateTime.UtcNow,
+            Notes = notes
+        };
+        await _txRepo.AddAsync(transaction);
+
+        var existingBucket = (await _valuationBucketRepo.FindAsync(bucket =>
+            bucket.ItemId == itemId && bucket.LocationId == toLocationId)).FirstOrDefault();
+        if (existingBucket is null)
+        {
+            await _valuationBucketRepo.AddAsync(new StockValuationBucket
+            {
+                ItemId = itemId,
+                LocationId = toLocationId,
+                Quantity = quantity,
+                Value = totalValue
+            });
+        }
+        else
+        {
+            var bucket = await _valuationBucketRepo.GetByIdAsync(existingBucket.Id)
+                ?? throw new InvalidOperationException("Destination valuation bucket disappeared during receipt.");
+            bucket.Quantity = checked(bucket.Quantity + quantity);
+            bucket.Value = Round(bucket.Value + totalValue);
+            await _valuationBucketRepo.UpdateAsync(bucket);
+        }
+
+        await _valuationEntryRepo.AddAsync(new StockValuationEntry
+        {
+            StockTransaction = transaction,
+            ItemId = itemId,
+            LocationId = toLocationId,
+            EntryType = StockValuationEntryType.TransferIn,
+            Quantity = quantity,
+            UnitCost = Round(unitCost),
+            TotalValue = Round(totalValue)
+        });
+
+        return transaction;
+    }
+
+    /// <inheritdoc />
     public async Task ReturnStockAsync(
         CreateStockReturnRequest request,
         StockMutationScope? mutationScope = null)

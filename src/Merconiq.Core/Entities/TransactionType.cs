@@ -27,5 +27,8 @@ public enum TransactionType
     QuarantineRelease,
 
     /// <summary>Approved reserved stock dispatched from a warehouse into transit.</summary>
-    TransferDispatch
+    TransferDispatch,
+
+    /// <summary>Previously dispatched stock accepted into its destination warehouse.</summary>
+    TransferReceipt
 }

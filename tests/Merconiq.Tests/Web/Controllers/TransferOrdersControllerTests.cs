@@ -178,6 +178,84 @@ public sealed class TransferOrdersControllerTests
     }
 
     [Fact]
+    public async Task ReceiveTransit_requires_post_access_and_uses_the_authenticated_receiver_and_idempotency_key()
+    {
+        var order = new TransferOrderView(
+            7, Guid.NewGuid(), "TO-2026-00001", 41, 3, 4, DateTime.UtcNow,
+            TransferOrderStatus.Approved, null, []);
+        var transfers = new Mock<ITransferOrderService>();
+        transfers.Setup(service => service.GetByIdAsync(7, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(order);
+        var authorization = new Mock<ICurrentUserAuthorization>();
+        authorization.Setup(service => service.CanAccessTransferAsync(
+                It.IsAny<ClaimsPrincipal>(), 3, 4, CompanyCapability.Post))
+            .ReturnsAsync(true);
+        var expected = new TransferTransitReceiptView(
+            5, 7, 12, 90, Guid.NewGuid(), 41, 6, 3, 4, 120, 20, 10,
+            null, null, 10m, 200m, 100m, "receive-1", "warehouse-user", DateTimeOffset.UtcNow);
+        transfers.Setup(service => service.ReceiveTransitAsync(
+                7, 90, 20, "receive-1", "warehouse-user",
+                It.IsAny<StockMutationScope>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(expected);
+        var idempotency = new Mock<IIdempotencyKeyStore>();
+        idempotency.Setup(store => store.ExecuteAsync(
+                It.IsAny<string>(),
+                It.IsAny<string>(),
+                It.IsAny<string>(),
+                It.IsAny<Func<Task>>(),
+                It.IsAny<CancellationToken>()))
+            .Returns((string scope, string key, string hash, Func<Task> operation, CancellationToken cancellationToken) => operation());
+        var controller = CreateController(transfers.Object, authorization.Object, idempotency.Object);
+        controller.Request.Headers["Idempotency-Key"] = "receive-1";
+        controller.ControllerContext.HttpContext.User = new ClaimsPrincipal(new ClaimsIdentity(
+            [new Claim(ClaimTypes.NameIdentifier, "warehouse-user")], "test"));
+
+        var result = await controller.ReceiveTransit(
+            7, 90, new ReceiveTransferTransitRequest(20), CancellationToken.None);
+
+        result.Should().BeOfType<OkObjectResult>();
+        transfers.Verify(service => service.ReceiveTransitAsync(
+            7, 90, 20, "receive-1", "warehouse-user",
+            It.IsAny<StockMutationScope>(), It.IsAny<CancellationToken>()), Times.Once);
+        idempotency.Verify(store => store.ExecuteAsync(
+            It.IsAny<string>(), "receive-1", It.IsAny<string>(), It.IsAny<Func<Task>>(), It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task ReceiveTransit_denies_users_without_post_access_before_receiving()
+    {
+        var order = new TransferOrderView(
+            7, Guid.NewGuid(), "TO-2026-00001", 41, 3, 4, DateTime.UtcNow,
+            TransferOrderStatus.Approved, null, []);
+        var transfers = new Mock<ITransferOrderService>();
+        transfers.Setup(service => service.GetByIdAsync(7, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(order);
+        var authorization = new Mock<ICurrentUserAuthorization>();
+        authorization.Setup(service => service.CanAccessTransferAsync(
+                It.IsAny<ClaimsPrincipal>(), 3, 4, CompanyCapability.Post))
+            .ReturnsAsync(false);
+        var idempotency = new Mock<IIdempotencyKeyStore>();
+        var controller = CreateController(transfers.Object, authorization.Object, idempotency.Object);
+        controller.Request.Headers["Idempotency-Key"] = "receive-1";
+        controller.ControllerContext.HttpContext.User = new ClaimsPrincipal(new ClaimsIdentity(
+            [new Claim(ClaimTypes.NameIdentifier, "warehouse-user")], "test"));
+
+        var result = await controller.ReceiveTransit(
+            7, 90, new ReceiveTransferTransitRequest(20), CancellationToken.None);
+
+        result.Should().BeOfType<ForbidResult>();
+        authorization.Verify(service => service.CanAccessTransferAsync(
+            It.IsAny<ClaimsPrincipal>(), 3, 4, CompanyCapability.Post), Times.Once);
+        idempotency.Verify(store => store.ExecuteAsync(
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<Func<Task>>(),
+            It.IsAny<CancellationToken>()), Times.Never);
+        transfers.Verify(service => service.ReceiveTransitAsync(
+            It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string>(),
+            It.IsAny<StockMutationScope>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
     public async Task GetById_requires_view_access_to_the_stored_company()
     {
         var order = new TransferOrderView(

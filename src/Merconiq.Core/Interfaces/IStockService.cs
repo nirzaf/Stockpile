@@ -155,6 +155,19 @@ public interface IStockService
         StockMutationScope mutationScope,
         CancellationToken cancellationToken = default);
 
+    /// <summary>Adds a valued receipt from existing in-transit stock inside its owning transfer transaction.</summary>
+    Task<StockTransaction> ReceiveTransferTransitAsync(
+        int itemId,
+        int fromLocationId,
+        int toLocationId,
+        int quantity,
+        decimal unitCost,
+        decimal totalValue,
+        string sourceLineReference,
+        string notes,
+        StockMutationScope mutationScope,
+        CancellationToken cancellationToken = default);
+
     /// <summary>Gets one reservation by its stable source-line reference.</summary>
     Task<StockReservationView?> GetReservationAsync(string sourceLineReference);
 

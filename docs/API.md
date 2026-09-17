@@ -338,5 +338,32 @@ transfer order cannot be amended or cancelled.
 
 This increment accepts only valued, unbatched source stock. Lot/expiry and
 quantity-only stock are rejected because current M03 valuation does not provide
-lot-level or historical acquisition-cost evidence. Partial receipts, returns,
-and transit reconciliation remain in issue #282 and #283.
+lot-level or historical acquisition-cost evidence.
+
+## Transfer-order transit receipt
+
+Receive part or all of a valued dispatch into its destination location with
+company-scoped `Post` permission and a required `Idempotency-Key`:
+
+```http
+POST /api/v1/transfer-orders/123/transit/789/receipts
+Host: tenant.example
+Authorization: Bearer <jwt>
+Idempotency-Key: receive-2026-09-17-001
+Content-Type: application/json
+
+{"quantity":20}
+```
+
+The `200` response records the receipt quantity and value, captured unit cost,
+source document-line identity, destination stock transaction, receiver, and the
+remaining transit quantity/value. Receipt creation, destination on-hand stock,
+moving-average valuation, the append-only receipt ledger, and the
+`TransferOrder.Received` outbox event commit atomically. A replay with the same
+key and request returns the original receipt without applying the stock change
+again; over-receipt is rejected without persisted side effects. A changed
+request must use a new key.
+
+This first receipt slice accepts only valued, unbatched transit entries. Lot-aware
+receipts, rejection/damage dispositions, returns from transit, and full transfer
+completion/reconciliation remain open in issues #282 and #283.

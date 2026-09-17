@@ -146,6 +146,62 @@ public sealed class TransferOrdersController(
             : Ok(ApiResponse<TransferDispatchView>.CreateSuccess(result));
     }
 
+    [HttpPost("{id:int}/transit/{transitEntryId:int}/receipts")]
+    [Authorize(Policy = CapabilityPolicies.Post)]
+    [ValidateAntiForgeryToken]
+    [IgnoreAntiforgeryToken]
+    public async Task<IActionResult> ReceiveTransit(
+        int id,
+        int transitEntryId,
+        [FromBody] ReceiveTransferTransitRequest request,
+        CancellationToken cancellationToken)
+    {
+        var receivedBy = User.FindFirstValue(ClaimTypes.NameIdentifier) ??
+                         User.FindFirstValue("sub") ??
+                         User.Identity?.Name;
+        if (string.IsNullOrWhiteSpace(receivedBy))
+            return Unauthorized(ApiResponse<object>.CreateFailure("An authenticated receiver identity is required."));
+
+        var order = await transferOrders.GetByIdAsync(id, cancellationToken);
+        if (order is null)
+            return NotFound(ApiResponse<object>.CreateFailure("Transfer order not found."));
+        if (!await authorization.CanAccessTransferAsync(
+                User, order.FromLocationId, order.ToLocationId, CompanyCapability.Post))
+            return Forbid();
+        if (request is null || request.Quantity <= 0)
+            return BadRequest(ApiResponse<object>.CreateFailure("Receipt quantity must be positive."));
+
+        var idempotencyKey = Request.Headers["Idempotency-Key"].ToString();
+        if (string.IsNullOrWhiteSpace(idempotencyKey))
+            return BadRequest(ApiResponse<object>.CreateFailure("Idempotency-Key is required for receipt."));
+        if (idempotencyKey.Length > 200)
+            return BadRequest(ApiResponse<object>.CreateFailure("Idempotency-Key must be 200 characters or fewer."));
+
+        var scope = CreateMutationScope(
+            order.CompanyId, order.FromLocationId, order.ToLocationId, CompanyCapability.Post);
+        TransferTransitReceiptView? result = null;
+        await idempotencyKeyStore.ExecuteAsync(
+            $"{tenantContext.TenantId}:{Request.Method}:{Request.Path}",
+            idempotencyKey,
+            IdempotencyRequestHasher.Compute(request),
+            async () => result = await transferOrders.ReceiveTransitAsync(
+                id,
+                transitEntryId,
+                request.Quantity,
+                idempotencyKey,
+                receivedBy.Trim(),
+                scope,
+                cancellationToken),
+            cancellationToken);
+
+        result ??= await transferOrders.GetReceiptByKeyAsync(
+            id, transitEntryId, idempotencyKey, cancellationToken);
+        return result is null
+            ? StatusCode(StatusCodes.Status500InternalServerError,
+                ApiResponse<object>.CreateFailure("The receipt result could not be recovered."))
+            : Ok(ApiResponse<TransferTransitReceiptView>.CreateSuccess(result));
+    }
+
     [HttpPost("{id:int}/cancel")]
     [Authorize(Policy = CapabilityPolicies.Edit)]
     [ValidateAntiForgeryToken]

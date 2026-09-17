@@ -19,6 +19,210 @@ namespace Merconiq.Tests.Integration;
 public sealed class TransferOrderPostgreSqlIntegrationTests(PostgreSqlIntegrationFixture fixture)
 {
     [PostgreSqlFact]
+    public async Task Transit_receipt_is_partial_idempotent_valued_and_rejects_over_receipt_without_mutation()
+    {
+        fixture.EnsureEnabled();
+        var tenantId = $"transfer-receipt-{Guid.NewGuid():N}";
+        var seeded = await CreateApprovedTransferAsync(tenantId, 30, unitCost: 10m);
+        await using (var setup = fixture.CreateContext(tenantId))
+        {
+            setup.WebhookSubscriptions.Add(new WebhookSubscription
+            {
+                EventType = "TransferOrder.Received",
+                Url = "https://example.invalid/transfer-received"
+            });
+            await setup.SaveChangesAsync();
+        }
+
+        await using var operation = fixture.CreateContext(tenantId);
+        var dispatcher = new WebhookDispatcher(
+            Mock.Of<IServiceProvider>(),
+            Mock.Of<IHttpClientFactory>(),
+            NullLogger<WebhookDispatcher>.Instance,
+            operation);
+        var orders = CreateService(operation, tenantId, dispatcher);
+        var scope = new StockMutationScope(seeded.CompanyId, () => Task.FromResult(true));
+        var dispatch = await orders.DispatchAsync(
+            seeded.OrderId, seeded.LineId, 30, "receipt-dispatch-30", "warehouse-user-42", scope);
+        dispatch.Quantity.Should().Be(30);
+        dispatch.TotalValue.Should().Be(300m);
+
+        var receipt = await orders.ReceiveTransitAsync(
+            seeded.OrderId, dispatch.Id, 20, "receive-first-20", "receiver-user-7", scope);
+
+        receipt.Should().Match<TransferTransitReceiptView>(view =>
+            view.TransferTransitEntryId == dispatch.Id && view.Quantity == 20 &&
+            view.RemainingQuantity == 10 && view.UnitCost == 10m &&
+            view.TotalValue == 200m && view.RemainingValue == 100m &&
+            view.SourceDocumentLineId == seeded.DocumentLineId &&
+            view.FromLocationId == seeded.SourceLocationId &&
+            view.ToLocationId == seeded.DestinationLocationId && view.ReceivedBy == "receiver-user-7");
+        receipt.StockTransactionId.Should().BeGreaterThan(0);
+
+        var replay = await orders.ReceiveTransitAsync(
+            seeded.OrderId, dispatch.Id, 20, "receive-first-20", "another-receiver", scope);
+        replay.Should().Be(receipt);
+
+        (await operation.StockInHand.SingleAsync(stock =>
+                stock.ItemId == seeded.ItemId && stock.LocationId == seeded.DestinationLocationId))
+            .Should().Match<StockInHand>(stock => stock.Quantity == 20);
+        (await operation.StockValuationBuckets.SingleAsync(bucket =>
+                bucket.ItemId == seeded.ItemId && bucket.LocationId == seeded.DestinationLocationId))
+            .Should().Match<StockValuationBucket>(bucket => bucket.Quantity == 20 && bucket.Value == 200m);
+        (await operation.TransferTransitEntries.SingleAsync(entry => entry.Id == dispatch.Id))
+            .Should().Match<TransferTransitEntry>(entry => entry.Quantity == 30 && entry.TotalValue == 300m);
+        (await operation.TransferTransitReceipts.SingleAsync())
+            .Should().Match<TransferTransitReceipt>(entry =>
+                entry.Quantity == 20 && entry.RemainingQuantity == 10 && entry.TotalValue == 200m &&
+                entry.RemainingValue == 100m && entry.StockTransactionId == receipt.StockTransactionId);
+        (await operation.StockTransactions.SingleAsync(transaction =>
+                transaction.Id == receipt.StockTransactionId))
+            .Should().Match<StockTransaction>(transaction =>
+                transaction.TransactionType == TransactionType.TransferReceipt && transaction.Quantity == 20 &&
+                transaction.UnitCost == 10m && transaction.SourceLineReference!.StartsWith(
+                    $"TransitReceipt:{dispatch.Id}:", StringComparison.Ordinal));
+        (await operation.StockValuationEntries.SingleAsync(entry =>
+                entry.StockTransactionId == receipt.StockTransactionId))
+            .Should().Match<StockValuationEntry>(entry =>
+                entry.EntryType == StockValuationEntryType.TransferIn && entry.Quantity == 20 &&
+                entry.UnitCost == 10m && entry.TotalValue == 200m);
+        (await operation.WebhookDeliveries.CountAsync(delivery =>
+            delivery.EventType == "TransferOrder.Received")).Should().Be(1);
+
+        var beforeOverReceipt = new
+        {
+            DestinationQuantity = await operation.StockInHand
+                .Where(stock => stock.ItemId == seeded.ItemId && stock.LocationId == seeded.DestinationLocationId)
+                .SumAsync(stock => stock.Quantity),
+            DestinationValue = await operation.StockValuationBuckets
+                .Where(bucket => bucket.ItemId == seeded.ItemId && bucket.LocationId == seeded.DestinationLocationId)
+                .SumAsync(bucket => bucket.Value),
+            Receipts = await operation.TransferTransitReceipts.CountAsync(),
+            ReceiptTransactions = await operation.StockTransactions.CountAsync(transaction =>
+                transaction.TransactionType == TransactionType.TransferReceipt),
+            TransferInEntries = await operation.StockValuationEntries.CountAsync(entry =>
+                entry.EntryType == StockValuationEntryType.TransferIn),
+            ReceiptOutbox = await operation.WebhookDeliveries.CountAsync(delivery =>
+                delivery.EventType == "TransferOrder.Received")
+        };
+
+        await FluentAssertions.FluentActions.Invoking(() => orders.ReceiveTransitAsync(
+                seeded.OrderId, dispatch.Id, 11, "receive-over-10", "receiver-user-7", scope))
+            .Should().ThrowAsync<StockAvailabilityConflictException>()
+            .WithMessage("Receipt exceeds the outstanding transfer transit quantity.");
+
+        await using var verify = fixture.CreateContext(tenantId);
+        (await verify.StockInHand
+                .Where(stock => stock.ItemId == seeded.ItemId && stock.LocationId == seeded.DestinationLocationId)
+                .SumAsync(stock => stock.Quantity)).Should().Be(beforeOverReceipt.DestinationQuantity);
+        (await verify.StockValuationBuckets
+                .Where(bucket => bucket.ItemId == seeded.ItemId && bucket.LocationId == seeded.DestinationLocationId)
+                .SumAsync(bucket => bucket.Value)).Should().Be(beforeOverReceipt.DestinationValue);
+        (await verify.TransferTransitReceipts.CountAsync()).Should().Be(beforeOverReceipt.Receipts);
+        (await verify.StockTransactions.CountAsync(transaction =>
+            transaction.TransactionType == TransactionType.TransferReceipt)).Should().Be(beforeOverReceipt.ReceiptTransactions);
+        (await verify.StockValuationEntries.CountAsync(entry =>
+            entry.EntryType == StockValuationEntryType.TransferIn)).Should().Be(beforeOverReceipt.TransferInEntries);
+        (await verify.WebhookDeliveries.CountAsync(delivery =>
+            delivery.EventType == "TransferOrder.Received")).Should().Be(beforeOverReceipt.ReceiptOutbox);
+
+        var sourceValue = await verify.StockValuationBuckets
+            .Where(bucket => bucket.ItemId == seeded.ItemId && bucket.LocationId == seeded.SourceLocationId)
+            .SumAsync(bucket => bucket.Value);
+        (sourceValue + receipt.RemainingValue + beforeOverReceipt.DestinationValue).Should().Be(1000m);
+    }
+
+    [PostgreSqlFact]
+    public async Task Concurrent_receipts_cannot_accept_the_same_remaining_transit_twice()
+    {
+        fixture.EnsureEnabled();
+        var tenantId = $"transfer-receipt-race-{Guid.NewGuid():N}";
+        var seeded = await CreateApprovedTransferAsync(tenantId, 30, unitCost: 10m);
+        int transitEntryId;
+        await using (var dispatchContext = fixture.CreateContext(tenantId))
+        {
+            var orders = CreateService(dispatchContext, tenantId);
+            var dispatch = await orders.DispatchAsync(
+                seeded.OrderId, seeded.LineId, 30, "race-dispatch-30", "warehouse-user-42",
+                new StockMutationScope(seeded.CompanyId));
+            transitEntryId = dispatch.Id;
+        }
+
+        async Task<(bool Succeeded, Exception? Error)> TryReceiveAsync(string key)
+        {
+            await using var context = fixture.CreateContext(tenantId);
+            var orders = CreateService(context, tenantId);
+            try
+            {
+                await orders.ReceiveTransitAsync(
+                    seeded.OrderId, transitEntryId, 20, key, "receiver-user-7",
+                    new StockMutationScope(seeded.CompanyId));
+                return (true, null);
+            }
+            catch (Exception exception)
+            {
+                return (false, exception);
+            }
+        }
+
+        var attempts = await Task.WhenAll(
+            TryReceiveAsync("race-receipt-a"),
+            TryReceiveAsync("race-receipt-b"));
+
+        attempts.Count(attempt => attempt.Succeeded).Should().Be(1);
+        attempts.Single(attempt => !attempt.Succeeded).Error
+            .Should().BeOfType<StockAvailabilityConflictException>();
+        await using var verify = fixture.CreateContext(tenantId);
+        (await verify.TransferTransitReceipts.SumAsync(receipt => receipt.Quantity)).Should().Be(20);
+        (await verify.TransferTransitReceipts.SumAsync(receipt => receipt.TotalValue)).Should().Be(200m);
+        (await verify.StockInHand.SingleAsync(stock =>
+                stock.ItemId == seeded.ItemId && stock.LocationId == seeded.DestinationLocationId))
+            .Quantity.Should().Be(20);
+        (await verify.StockValuationBuckets.SingleAsync(bucket =>
+                bucket.ItemId == seeded.ItemId && bucket.LocationId == seeded.DestinationLocationId))
+            .Should().Match<StockValuationBucket>(bucket => bucket.Quantity == 20 && bucket.Value == 200m);
+    }
+
+    [PostgreSqlFact]
+    public async Task Failed_receipt_outbox_enqueue_rolls_back_destination_stock_valuation_and_receipt()
+    {
+        fixture.EnsureEnabled();
+        var tenantId = $"transfer-receipt-rollback-{Guid.NewGuid():N}";
+        var seeded = await CreateApprovedTransferAsync(tenantId, 30, unitCost: 10m);
+        int transitEntryId;
+        await using (var dispatchContext = fixture.CreateContext(tenantId))
+        {
+            var dispatch = await CreateService(dispatchContext, tenantId).DispatchAsync(
+                seeded.OrderId, seeded.LineId, 30, "rollback-dispatch-30", "warehouse-user-42",
+                new StockMutationScope(seeded.CompanyId));
+            transitEntryId = dispatch.Id;
+        }
+
+        await using (var operation = fixture.CreateContext(tenantId))
+        {
+            var orders = CreateService(operation, tenantId, new ThrowingWebhookDispatcher());
+            await FluentAssertions.FluentActions.Invoking(() => orders.ReceiveTransitAsync(
+                    seeded.OrderId, transitEntryId, 20, "rollback-receipt-20", "receiver-user-7",
+                    new StockMutationScope(seeded.CompanyId)))
+                .Should().ThrowAsync<InvalidOperationException>()
+                .WithMessage("Webhook enqueue failed.");
+        }
+
+        await using var verify = fixture.CreateContext(tenantId);
+        (await verify.StockInHand.CountAsync(stock =>
+            stock.ItemId == seeded.ItemId && stock.LocationId == seeded.DestinationLocationId)).Should().Be(0);
+        (await verify.StockValuationBuckets.CountAsync(bucket =>
+            bucket.ItemId == seeded.ItemId && bucket.LocationId == seeded.DestinationLocationId)).Should().Be(0);
+        (await verify.TransferTransitReceipts.CountAsync()).Should().Be(0);
+        (await verify.StockTransactions.CountAsync(transaction =>
+            transaction.TransactionType == TransactionType.TransferReceipt)).Should().Be(0);
+        (await verify.StockValuationEntries.CountAsync(entry =>
+            entry.EntryType == StockValuationEntryType.TransferIn)).Should().Be(0);
+        (await verify.TransferTransitEntries.SingleAsync(entry => entry.Id == transitEntryId))
+            .Should().Match<TransferTransitEntry>(entry => entry.Quantity == 30 && entry.TotalValue == 300m);
+    }
+
+    [PostgreSqlFact]
     public async Task Dispatch_is_partial_idempotent_and_conserves_source_value_in_transit()
     {
         fixture.EnsureEnabled();
@@ -337,6 +541,7 @@ public sealed class TransferOrderPostgreSqlIntegrationTests(PostgreSqlIntegratio
             new Repository<TransferOrder>(context),
             new Repository<TransferOrderLine>(context),
             new Repository<TransferTransitEntry>(context),
+            new Repository<TransferTransitReceipt>(context),
             new Repository<DocumentIdentity>(context),
             new Repository<DocumentLineIdentity>(context),
             new Repository<Company>(context),

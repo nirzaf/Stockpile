@@ -14,6 +14,7 @@ public sealed class TransferOrderService(
     IRepository<TransferOrder> orderRepository,
     IRepository<TransferOrderLine> lineRepository,
     IRepository<TransferTransitEntry> transitRepository,
+    IRepository<TransferTransitReceipt> receiptRepository,
     IRepository<DocumentIdentity> documentRepository,
     IRepository<DocumentLineIdentity> lineIdentityRepository,
     IRepository<Company> companyRepository,
@@ -487,6 +488,189 @@ public sealed class TransferOrderService(
             .SingleOrDefault();
     }
 
+    public async Task<TransferTransitReceiptView> ReceiveTransitAsync(
+        int id,
+        int transitEntryId,
+        int quantity,
+        string idempotencyKey,
+        string receivedBy,
+        StockMutationScope mutationScope,
+        CancellationToken cancellationToken = default)
+    {
+        if (id <= 0 || transitEntryId <= 0)
+            throw new ArgumentOutOfRangeException(nameof(id));
+        if (quantity <= 0)
+            throw new ArgumentOutOfRangeException(nameof(quantity), "Receipt quantity must be positive.");
+        ValidateIdempotencyKey(idempotencyKey);
+        ArgumentException.ThrowIfNullOrWhiteSpace(receivedBy);
+        if (receivedBy.Length > 256)
+            throw new ArgumentOutOfRangeException(nameof(receivedBy), "Receiver identity cannot exceed 256 characters.");
+        var requestHash = HashReceiptRequest(id, transitEntryId, quantity);
+        TransferTransitReceiptView? result = null;
+
+        await unitOfWork.ExecuteInTransactionAsync(async () =>
+        {
+            await unitOfWork.AcquireTenantOperationLockAsync("organization-state", cancellationToken);
+            var transit = transitRepository.Query().SingleOrDefault(entry =>
+                    entry.Id == transitEntryId && entry.TransferOrderId == id)
+                ?? throw new KeyNotFoundException("Transfer transit entry not found.");
+            await unitOfWork.AcquireLocationLocksAsync(
+                [transit.FromLocationId, transit.ToLocationId], cancellationToken);
+
+            var order = orderRepository.Query().SingleOrDefault(candidate => candidate.Id == id)
+                ?? throw new KeyNotFoundException("Transfer order not found.");
+            var line = lineRepository.Query().SingleOrDefault(candidate =>
+                    candidate.Id == transit.TransferOrderLineId && candidate.TransferOrderId == id)
+                ?? throw new KeyNotFoundException("Transfer-order line not found.");
+            if (order.Status != TransferOrderStatus.Approved)
+                throw new InvalidOperationException("Only an approved transfer order can receive dispatched transit.");
+            if (line.DocumentLineId.Value != transit.SourceDocumentLineId.Value ||
+                line.ItemId != transit.ItemId || order.CompanyId != transit.CompanyId ||
+                order.FromLocationId != transit.FromLocationId || order.ToLocationId != transit.ToLocationId)
+                throw new InvalidOperationException("Transfer transit source lineage does not match its order.");
+            if (mutationScope.CompanyId != transit.CompanyId)
+                throw new UnauthorizedAccessException("The receipt scope does not match the transfer-order company.");
+            if (mutationScope.Reauthorize is not null && !await mutationScope.Reauthorize())
+                throw new UnauthorizedAccessException("Company posting access changed before receipt.");
+
+            var previous = (await receiptRepository.FindAsync(receipt =>
+                    receipt.TransferTransitEntryId == transitEntryId &&
+                    receipt.IdempotencyKey == idempotencyKey,
+                    cancellationToken))
+                .SingleOrDefault();
+            if (previous is not null)
+            {
+                if (!string.Equals(previous.RequestHash, requestHash, StringComparison.Ordinal))
+                    throw new InvalidOperationException("The receipt idempotency key was already used with a different request.");
+                result = ToReceiptView(previous, transit);
+                return;
+            }
+
+            if (transit.BatchNumber is not null || transit.ExpiryDate.HasValue)
+                throw new StockAvailabilityConflictException(
+                    "Transfer receipt is limited to unbatched stock until lot valuation is implemented.");
+
+            var orderLines = lineRepository.Query()
+                .Where(candidate => candidate.TransferOrderId == id)
+                .Select(candidate => new TransferOrderLineRequest(
+                    candidate.ItemId, candidate.Quantity, candidate.BatchNumber, candidate.ExpiryDate))
+                .ToArray();
+            await ValidateReferencesAsync(new CreateTransferOrderRequest(
+                order.CompanyId,
+                order.FromLocationId,
+                order.ToLocationId,
+                orderLines,
+                order.Notes));
+
+            var priorReceipts = (await receiptRepository.FindAsync(
+                    receipt => receipt.TransferTransitEntryId == transitEntryId,
+                    cancellationToken))
+                .ToArray();
+            var receivedQuantity = priorReceipts.Sum(receipt => receipt.Quantity);
+            var receivedValue = priorReceipts.Sum(receipt => receipt.TotalValue);
+            if (receivedQuantity > transit.Quantity || receivedValue > transit.TotalValue)
+                throw new StockAvailabilityConflictException("Transfer transit receipt history exceeds its dispatched quantity or value.");
+
+            var outstandingQuantity = transit.Quantity - receivedQuantity;
+            if (quantity > outstandingQuantity)
+                throw new StockAvailabilityConflictException("Receipt exceeds the outstanding transfer transit quantity.");
+
+            var cumulativeQuantity = checked(receivedQuantity + quantity);
+            var cumulativeValue = cumulativeQuantity == transit.Quantity
+                ? transit.TotalValue
+                : Round(transit.TotalValue * cumulativeQuantity / transit.Quantity);
+            var receiptValue = Round(cumulativeValue - receivedValue);
+            var remainingQuantity = transit.Quantity - cumulativeQuantity;
+            var remainingValue = Round(transit.TotalValue - cumulativeValue);
+            var receivedAt = DateTimeOffset.UtcNow;
+            var transaction = await stockService.ReceiveTransferTransitAsync(
+                transit.ItemId,
+                transit.FromLocationId,
+                transit.ToLocationId,
+                quantity,
+                transit.UnitCost,
+                receiptValue,
+                CreateReceiptSourceLineReference(transit.Id, idempotencyKey),
+                $"Transfer order {order.DocumentId.Value:N} receipt from transit entry {transit.Id}.",
+                mutationScope,
+                cancellationToken);
+            var receipt = new TransferTransitReceipt
+            {
+                TransferTransitEntryId = transit.Id,
+                StockTransaction = transaction,
+                Quantity = quantity,
+                RemainingQuantity = remainingQuantity,
+                UnitCost = transit.UnitCost,
+                TotalValue = receiptValue,
+                RemainingValue = remainingValue,
+                IdempotencyKey = idempotencyKey,
+                RequestHash = requestHash,
+                ReceivedBy = receivedBy.Trim(),
+                ReceivedAt = receivedAt,
+                TenantId = tenantContext.TenantId
+            };
+            await receiptRepository.AddAsync(receipt);
+            await webhookDispatcher.EnqueueAsync(WebhookEventFactory.Create(tenantContext,
+                "TransferOrder.Received",
+                new
+                {
+                    TransferOrderId = order.Id,
+                    order.DocumentId,
+                    TransitEntryId = transit.Id,
+                    TransferOrderLineId = line.Id,
+                    SourceDocumentLineId = transit.SourceDocumentLineId.Value,
+                    transit.CompanyId,
+                    transit.ItemId,
+                    transit.FromLocationId,
+                    transit.ToLocationId,
+                    Quantity = quantity,
+                    UnitCost = transit.UnitCost,
+                    TotalValue = receiptValue,
+                    RemainingQuantity = remainingQuantity,
+                    RemainingValue = remainingValue,
+                    ReceivedBy = receipt.ReceivedBy,
+                    ReceivedAt = receivedAt
+                }));
+            await unitOfWork.SaveChangesAsync(cancellationToken);
+            result = ToReceiptView(receipt, transit);
+        }, cancellationToken, async () =>
+        {
+            var committed = (await receiptRepository.FindAsync(receipt =>
+                    receipt.TransferTransitEntryId == transitEntryId &&
+                    receipt.IdempotencyKey == idempotencyKey,
+                    cancellationToken))
+                .SingleOrDefault();
+            return committed is not null && committed.RequestHash == requestHash;
+        });
+
+        return await GetReceiptByKeyAsync(id, transitEntryId, idempotencyKey, cancellationToken)
+            ?? result
+            ?? throw new InvalidOperationException("The committed transfer receipt could not be read back.");
+    }
+
+    public async Task<TransferTransitReceiptView?> GetReceiptByKeyAsync(
+        int id,
+        int transitEntryId,
+        string idempotencyKey,
+        CancellationToken cancellationToken = default)
+    {
+        if (id <= 0 || transitEntryId <= 0)
+            throw new ArgumentOutOfRangeException(nameof(id));
+        ValidateIdempotencyKey(idempotencyKey);
+        var transit = (await transitRepository.FindAsync(entry =>
+                entry.Id == transitEntryId && entry.TransferOrderId == id,
+                cancellationToken))
+            .SingleOrDefault();
+        if (transit is null)
+            return null;
+        return (await receiptRepository.FindAsync(receipt =>
+                receipt.TransferTransitEntryId == transitEntryId &&
+                receipt.IdempotencyKey == idempotencyKey,
+                cancellationToken))
+            .Select(receipt => ToReceiptView(receipt, transit))
+            .SingleOrDefault();
+    }
+
     private async Task<TransferOrderView> ToViewAsync(TransferOrder order, CancellationToken cancellationToken)
     {
         var identity = (await documentRepository.FindAsync(document => document.Id == order.DocumentId))
@@ -661,6 +845,23 @@ public sealed class TransferOrderService(
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(payload.ToString())));
     }
 
+    private static string HashReceiptRequest(int orderId, int transitEntryId, int quantity)
+    {
+        var payload = new StringBuilder();
+        AppendField(payload, orderId.ToString(CultureInfo.InvariantCulture));
+        AppendField(payload, transitEntryId.ToString(CultureInfo.InvariantCulture));
+        AppendField(payload, quantity.ToString(CultureInfo.InvariantCulture));
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(payload.ToString())));
+    }
+
+    private static string CreateReceiptSourceLineReference(int transitEntryId, string idempotencyKey)
+    {
+        var keyHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(idempotencyKey)));
+        return $"TransitReceipt:{transitEntryId.ToString(CultureInfo.InvariantCulture)}:{keyHash}";
+    }
+
+    private static decimal Round(decimal value) => decimal.Round(value, 6, MidpointRounding.AwayFromZero);
+
     private static TransferDispatchView ToDispatchView(TransferTransitEntry entry) => new(
         entry.Id,
         entry.TransferOrderId,
@@ -679,6 +880,30 @@ public sealed class TransferOrderService(
         entry.IdempotencyKey,
         entry.DispatchedBy,
         entry.DispatchedAt);
+
+    private static TransferTransitReceiptView ToReceiptView(
+        TransferTransitReceipt receipt,
+        TransferTransitEntry transit) => new(
+        receipt.Id,
+        transit.TransferOrderId,
+        transit.TransferOrderLineId,
+        transit.Id,
+        transit.SourceDocumentLineId.Value,
+        transit.CompanyId,
+        transit.ItemId,
+        transit.FromLocationId,
+        transit.ToLocationId,
+        receipt.StockTransactionId,
+        receipt.Quantity,
+        receipt.RemainingQuantity,
+        transit.BatchNumber,
+        StockLotExpiryDate.Normalize(transit.ExpiryDate),
+        receipt.UnitCost,
+        receipt.TotalValue,
+        receipt.RemainingValue,
+        receipt.IdempotencyKey,
+        receipt.ReceivedBy,
+        receipt.ReceivedAt);
 
     private static void AppendField(StringBuilder payload, string? value)
     {

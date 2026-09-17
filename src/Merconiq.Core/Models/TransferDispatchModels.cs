@@ -28,3 +28,27 @@ public sealed record TransferDispatchView(
     string IdempotencyKey,
     string DispatchedBy,
     DateTimeOffset DispatchedAt);
+
+public sealed record ReceiveTransferTransitRequest(int Quantity);
+
+public sealed record TransferTransitReceiptView(
+    int Id,
+    int TransferOrderId,
+    int TransferOrderLineId,
+    int TransferTransitEntryId,
+    Guid SourceDocumentLineId,
+    int CompanyId,
+    int ItemId,
+    int FromLocationId,
+    int ToLocationId,
+    int StockTransactionId,
+    int Quantity,
+    int RemainingQuantity,
+    string? BatchNumber,
+    DateTime? ExpiryDate,
+    decimal UnitCost,
+    decimal TotalValue,
+    decimal RemainingValue,
+    string IdempotencyKey,
+    string ReceivedBy,
+    DateTimeOffset ReceivedAt);

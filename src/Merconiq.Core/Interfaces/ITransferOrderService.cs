@@ -47,4 +47,21 @@ public interface ITransferOrderService
         int lineId,
         string idempotencyKey,
         CancellationToken cancellationToken = default);
+
+    /// <summary>Accepts part or all of one valued, unbatched dispatch into its destination.</summary>
+    Task<TransferTransitReceiptView> ReceiveTransitAsync(
+        int id,
+        int transitEntryId,
+        int quantity,
+        string idempotencyKey,
+        string receivedBy,
+        StockMutationScope mutationScope,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>Reads a previously committed receipt for idempotent API replay recovery.</summary>
+    Task<TransferTransitReceiptView?> GetReceiptByKeyAsync(
+        int id,
+        int transitEntryId,
+        string idempotencyKey,
+        CancellationToken cancellationToken = default);
 }
