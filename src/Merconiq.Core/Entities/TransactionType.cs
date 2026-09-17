@@ -24,5 +24,8 @@ public enum TransactionType
     Quarantine,
 
     /// <summary>Previously quarantined stock made available again.</summary>
-    QuarantineRelease
+    QuarantineRelease,
+
+    /// <summary>Approved reserved stock dispatched from a warehouse into transit.</summary>
+    TransferDispatch
 }

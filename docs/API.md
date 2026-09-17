@@ -347,3 +347,31 @@ and `tests/Merconiq.Tests/Web/Services/RateLimitPartitionKeyTests.cs`.
 The integration test factory uses an in-memory database and synthetic signed
 JWTs; it does not represent an external identity provider or a production rate
 limit measurement.
+
+## Transfer-order dispatch
+
+Dispatch an approved transfer-order line with company-scoped `Post` permission
+and a required `Idempotency-Key`:
+
+```http
+POST /api/v1/transfer-orders/123/lines/456/dispatch
+Host: tenant.example
+Authorization: Bearer <jwt>
+Idempotency-Key: dispatch-2026-09-17-001
+Content-Type: application/json
+
+{"quantity":30}
+```
+
+The response identifies the transfer line, source/destination, stock movement,
+captured unit cost/value, dispatcher, and dispatch time. Replaying the same key
+and command returns the original dispatch record; using that key with a different
+quantity is rejected. Dispatch consumes only the approved outstanding
+reservation, moves the source carrying value into the company transit ledger,
+and does not increase destination stock. Once any quantity is dispatched, the
+transfer order cannot be amended or cancelled.
+
+This increment accepts only valued, unbatched source stock. Lot/expiry and
+quantity-only stock are rejected because current M03 valuation does not provide
+lot-level or historical acquisition-cost evidence. Partial receipts, returns,
+and transit reconciliation remain in issue #282 and #283.

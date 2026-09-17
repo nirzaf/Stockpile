@@ -102,3 +102,23 @@ so the balances can be reconciled explicitly instead of silently choosing one.
 Availability groups matching stock and reservation timestamps by calendar date.
 An idempotent retry returns its existing active reservation before re-running
 first-expiry selection; reservation consumption still enforces expiry.
+
+## Transfer-order dispatch
+
+Dispatch is supported only for approved, unbatched transfer reservations whose
+source warehouse has an existing valuation bucket covering the dispatched
+quantity. The source bucket's weighted-average carrying value is captured at the
+dispatch boundary, reduced atomically with the source quantity/reservation, and
+recorded in the company-scoped transfer transit ledger against the immutable
+transfer-order line identity. Transit value is not recalculated from selling
+price, and no destination quantity is created by dispatch. A later receipt or
+return must post its own source-linked transit movement.
+
+Batch/expiry reservations and quantity-only stock are rejected for valued
+dispatch. M03 currently does not carry acquisition value by lot and explicitly
+keeps lot/expiry as quantity traceability dimensions; accepting such stock here
+would require inventing which cost belongs to the selected lot. Cross-company
+transfers remain unsupported. Dispatch entries are append-only, and the transfer
+cannot be amended or cancelled after dispatch. The dispatch notification is
+written to the durable outbox in the same database transaction; delivery happens
+asynchronously after commit and cannot undo a committed movement.

@@ -5,5 +5,6 @@ public enum StockValuationEntryType
 {
     Receipt,
     Sale,
-    Return
+    Return,
+    TransferOut
 }

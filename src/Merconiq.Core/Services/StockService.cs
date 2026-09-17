@@ -452,7 +452,7 @@ public class StockService : IStockService
             checkLowStock: true,
             movementSourceLineReference: null);
 
-    private async Task SellStockCoreAsync(
+    private async Task<TransferStockDispatchMovement?> SellStockCoreAsync(
         int itemId,
         int locationId,
         int quantity,
@@ -463,8 +463,14 @@ public class StockService : IStockService
         StockMutationScope? mutationScope,
         string? expiryExceptionReason,
         bool checkLowStock,
-        string? movementSourceLineReference)
+        string? movementSourceLineReference,
+        TransactionType movementType = TransactionType.Sell,
+        int? destinationLocationId = null,
+        bool requireValuation = false,
+        bool enqueueStockWebhook = true,
+        CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         if (quantity <= 0) throw new ArgumentException("Quantity must be positive");
         expiryDate = StockLotExpiryDate.Normalize(expiryDate);
         if (!string.IsNullOrWhiteSpace(reservationSourceLineReference))
@@ -472,10 +478,12 @@ public class StockService : IStockService
         EnsureExpiryExceptionReasonLength(expiryExceptionReason);
 
         StockTransaction? transaction = null;
+        TransferStockDispatchMovement? movement = null;
+        StockValuationPosting? valuationPosting = null;
         await ExecuteWithRetryAsync(itemId, async () =>
         {
-            await _unitOfWork.AcquireLocationLocksAsync([locationId]);
-            var location = await EnsureLocationUsableAsync(locationId);
+            await _unitOfWork.AcquireLocationLocksAsync([locationId], cancellationToken);
+            var location = await EnsureLocationUsableAsync(locationId, cancellationToken);
             await EnsureAuthorizedCompanyScopeAsync(location, mutationScope);
             var initiallySelectedStock = await GetStockForRequestedLotAsync(
                 itemId, locationId, batchNumber, expiryDate);
@@ -556,8 +564,9 @@ public class StockService : IStockService
             {
                 ItemId = itemId,
                 FromLocationId = locationId,
+                ToLocationId = destinationLocationId,
                 Quantity = quantity,
-                TransactionType = TransactionType.Sell,
+                TransactionType = movementType,
                 SourceLineReference = movementSourceLineReference,
                 TransactionDate = DateTime.UtcNow,
                 BatchNumber = stock.BatchNumber,
@@ -569,26 +578,131 @@ public class StockService : IStockService
 
             if (stock.BatchNumber is null && stock.ExpiryDate is null)
             {
-                await ApplySaleValuationAsync(itemId, locationId, quantity, transaction);
+                valuationPosting = await ApplySaleValuationAsync(
+                    itemId,
+                    locationId,
+                    quantity,
+                    transaction,
+                    movementType == TransactionType.TransferDispatch
+                        ? StockValuationEntryType.TransferOut
+                        : StockValuationEntryType.Sale,
+                    requireValuation);
+            }
+            else if (requireValuation)
+            {
+                throw new InvalidOperationException(
+                    "Valued transfer dispatch is limited to unbatched stock until lot valuation is implemented.");
             }
 
-            await _webhookDispatcher.EnqueueAsync(WebhookEventFactory.Create(_tenantContext, "Stock.Sold",
-                new
-                {
-                    ItemId = itemId,
-                    LocationId = locationId,
-                    Quantity = quantity,
-                    Notes = notes,
-                    BatchNumber = stock.BatchNumber,
-                    ExpiryDate = stock.ExpiryDate,
-                    ExpiryExceptionReason = normalizedExpiryExceptionReason,
-                    ReservationSourceLineReference = reservationSourceLineReference?.Trim(),
-                    MovementSourceLineReference = transaction.SourceLineReference
-                }));
-            await _unitOfWork.SaveChangesAsync();
-        }, () => VerifyTransactionCommitAsync(transaction), checkLowStock: checkLowStock);
+            if (enqueueStockWebhook)
+            {
+                await _webhookDispatcher.EnqueueAsync(WebhookEventFactory.Create(_tenantContext, "Stock.Sold",
+                    new
+                    {
+                        ItemId = itemId,
+                        LocationId = locationId,
+                        Quantity = quantity,
+                        Notes = notes,
+                        BatchNumber = stock.BatchNumber,
+                        ExpiryDate = stock.ExpiryDate,
+                        ExpiryExceptionReason = normalizedExpiryExceptionReason,
+                        ReservationSourceLineReference = reservationSourceLineReference?.Trim(),
+                        MovementSourceLineReference = transaction.SourceLineReference
+                    }));
+            }
+            await _unitOfWork.SaveChangesAsync(cancellationToken);
+            if (valuationPosting is not null)
+            {
+                movement = new TransferStockDispatchMovement(
+                    transaction.Id,
+                    quantity,
+                    stock.BatchNumber,
+                    stock.ExpiryDate,
+                    valuationPosting.UnitCost,
+                    valuationPosting.TotalValue);
+            }
+        }, () => VerifyTransactionCommitAsync(transaction),
+            checkLowStock: checkLowStock,
+            cancellationToken: cancellationToken);
 
-        _logger.LogInformation("Sold {Qty} of item {ItemId} from location {LocId}", quantity, itemId, locationId);
+        _logger.LogInformation("Posted {MovementType} of {Qty} item {ItemId} from location {LocId}",
+            movementType, quantity, itemId, locationId);
+        return movement;
+    }
+
+    /// <inheritdoc />
+    public async Task<TransferStockDispatchMovement> DispatchReservationAsync(
+        string sourceLineReference,
+        int quantity,
+        int destinationLocationId,
+        string notes,
+        StockMutationScope mutationScope,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        EnsureReservationRequest(quantity, sourceLineReference);
+        EnsureControlledTransferReservationAccess(sourceLineReference, mutationScope);
+        if (destinationLocationId <= 0)
+            throw new ArgumentOutOfRangeException(nameof(destinationLocationId));
+        EnsureReservationFields(null, notes);
+        EnsureReservationRepository();
+        if (!_unitOfWork.HasActiveTransaction)
+            throw new InvalidOperationException("Transfer dispatch must run inside its transfer-order transaction.");
+
+        var normalizedSourceLine = sourceLineReference.Trim();
+        var initialReservation = await FindReservationAsync(normalizedSourceLine)
+            ?? throw new KeyNotFoundException("Transfer reservation not found.");
+        await _unitOfWork.AcquireLocationLocksAsync(
+            [initialReservation.LocationId, destinationLocationId], cancellationToken);
+
+        var source = await EnsureLocationUsableAsync(initialReservation.LocationId, cancellationToken);
+        var destination = await EnsureLocationUsableAsync(destinationLocationId, cancellationToken);
+        await EnsureSameCompanyTransferAsync(source, destination);
+        await EnsureAuthorizedCompanyScopeAsync(source, mutationScope);
+        await EnsureAuthorizedCompanyScopeAsync(destination, mutationScope);
+
+        var reservation = await FindReservationAsync(normalizedSourceLine)
+            ?? throw new KeyNotFoundException("Transfer reservation not found.");
+        if (reservation.Status != StockReservationStatus.Active || reservation.ExpiresAt <= DateTimeOffset.UtcNow)
+            throw new StockAvailabilityConflictException("Transfer reservation is not active.");
+        if (Remaining(reservation) < quantity)
+            throw new StockAvailabilityConflictException("Dispatch exceeds the approved outstanding reservation.");
+
+        var loaded = await LoadReservationAllocationsAsync(reservation);
+        if (loaded.Allocations.Sum(Remaining) != Remaining(reservation))
+            throw new StockAvailabilityConflictException("Stock reservation allocations are inconsistent.");
+        var allocation = loaded.Allocations
+            .OrderBy(candidate => candidate.Ordinal)
+            .FirstOrDefault(candidate => Remaining(candidate) > 0)
+            ?? throw new StockAvailabilityConflictException("Transfer reservation has no outstanding allocation.");
+        if (allocation.BatchNumber is not null || allocation.ExpiryDate is not null)
+            throw new StockAvailabilityConflictException(
+                "Valued transfer dispatch is limited to unbatched stock until lot valuation is implemented.");
+        if (Remaining(allocation) < quantity)
+            throw new StockAvailabilityConflictException(
+                "A partial dispatch cannot span lot allocations until lot valuation is implemented.");
+
+        var movement = await SellStockCoreAsync(
+            reservation.ItemId,
+            reservation.LocationId,
+            quantity,
+            notes,
+            allocation.BatchNumber,
+            allocation.ExpiryDate,
+            normalizedSourceLine,
+            mutationScope,
+            null,
+            checkLowStock: false,
+            movementSourceLineReference: CreateReservationConsumptionReference(
+                normalizedSourceLine, reservation.ConsumedQuantity, allocation.Ordinal),
+            movementType: TransactionType.TransferDispatch,
+            destinationLocationId: destinationLocationId,
+            requireValuation: true,
+            enqueueStockWebhook: false,
+            cancellationToken: cancellationToken);
+
+        return movement
+            ?? throw new InvalidOperationException("Transfer dispatch did not produce a valued stock movement.");
     }
 
     /// <inheritdoc />
@@ -1741,11 +1855,13 @@ public class StockService : IStockService
         });
     }
 
-    private async Task ApplySaleValuationAsync(
+    private async Task<StockValuationPosting?> ApplySaleValuationAsync(
         int itemId,
         int locationId,
         int quantity,
-        StockTransaction source)
+        StockTransaction source,
+        StockValuationEntryType entryType = StockValuationEntryType.Sale,
+        bool requireValuation = false)
     {
         // A sale with no bucket remains explicitly unvalued. The required repositories
         // ensure an existing bucket is always consulted instead of silently bypassed.
@@ -1753,7 +1869,10 @@ public class StockService : IStockService
             bucket.ItemId == itemId && bucket.LocationId == locationId)).FirstOrDefault();
         if (existing is null || existing.Quantity == 0)
         {
-            return;
+            if (requireValuation)
+                throw new StockAvailabilityConflictException(
+                    "Transfer dispatch requires an existing valued source bucket.");
+            return null;
         }
 
         if (existing.Quantity < quantity)
@@ -1775,11 +1894,12 @@ public class StockService : IStockService
             StockTransaction = source,
             ItemId = itemId,
             LocationId = locationId,
-            EntryType = StockValuationEntryType.Sale,
+            EntryType = entryType,
             Quantity = quantity,
             UnitCost = Round(totalValue / quantity),
             TotalValue = totalValue
         });
+        return new StockValuationPosting(Round(totalValue / quantity), totalValue);
     }
 
     private static decimal Round(decimal value) => decimal.Round(value, 6, MidpointRounding.AwayFromZero);
@@ -1931,4 +2051,6 @@ public class StockService : IStockService
     private sealed record LoadedReservationAllocations(
         IReadOnlyList<StockReservationAllocation> Allocations,
         bool Persisted);
+
+    private sealed record StockValuationPosting(decimal UnitCost, decimal TotalValue);
 }
