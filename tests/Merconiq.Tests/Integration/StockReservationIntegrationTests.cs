@@ -748,7 +748,8 @@ public sealed class StockReservationPostgreSqlIntegrationTests(PostgreSqlIntegra
                 .Should().Equal(movements.Select(row => row.SourceLineReference));
 
             var reservationAudit = await verifyConsumed.AuditLogs
-                .Where(row => row.EntityName == nameof(StockReservation) && row.NewValues != null)
+                .Where(row => row.EntityName == nameof(StockReservation) &&
+                    row.Action == "Insert" && row.NewValues != null)
                 .ToListAsync();
             reservationAudit.Should().Contain(entry =>
                 AuditValue(entry.NewValues!, nameof(StockReservation.SourceLineReference)) == sourceLineReference);
@@ -1902,7 +1903,10 @@ public sealed class StockReservationPostgreSqlIntegrationTests(PostgreSqlIntegra
     private static string? AuditValue(string newValues, string propertyName)
     {
         using var document = System.Text.Json.JsonDocument.Parse(newValues);
-        return document.RootElement.GetProperty(propertyName).GetString();
+        return document.RootElement.TryGetProperty(propertyName, out var value) &&
+               value.ValueKind == System.Text.Json.JsonValueKind.String
+            ? value.GetString()
+            : null;
     }
 
     private sealed record PostgresExpiredLotSeed(
