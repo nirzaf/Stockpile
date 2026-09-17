@@ -259,7 +259,7 @@ public sealed class DocumentIdentityPostgreSqlIntegrationTests(PostgreSqlIntegra
         {
             PONumber = "TAX-SNAPSHOT-001",
             SupplierId = supplier.Id,
-            CurrencyScale = 2
+            CurrencyScale = 3
         };
         var detail = new OrderDetail
         {
@@ -299,7 +299,7 @@ public sealed class DocumentIdentityPostgreSqlIntegrationTests(PostgreSqlIntegra
                 {
                     PONumber = "TAX-SNAPSHOT-001",
                     SupplierId = supplier.Id,
-                    CurrencyScale = 2
+                    CurrencyScale = 3
                 },
                 [new OrderDetail { ItemId = item.Id, Quantity = 1, UnitPrice = 100m, TaxRuleId = rule.Id }],
                 requestKey);
@@ -313,7 +313,9 @@ public sealed class DocumentIdentityPostgreSqlIntegrationTests(PostgreSqlIntegra
             .SingleAsync(value => value.Id == created.Id);
         storedOrder.TotalAmount.Should().Be(115m);
         storedOrder.TaxAmount.Should().Be(15m);
+        storedOrder.CurrencyScale.Should().Be(3);
         storedOrder.OrderDetails.Single().TaxRatePercent.Should().Be(15m);
+        storedOrder.OrderDetails.Single().CurrencyScale.Should().Be(3);
         storedOrder.OrderDetails.Single().GrossAmount.Should().Be(115m);
     }
 
@@ -407,6 +409,20 @@ public sealed class DocumentIdentityPostgreSqlIntegrationTests(PostgreSqlIntegra
             mapped.OrderDetails.Should().OnlyContain(line => line.GrossAmount == 1.01m &&
                 line.TaxAmount == 0m &&
                 line.CalculationVersion == DocumentAmountCalculator.CalculationVersion);
+
+            await migrator.MigrateAsync("20260917170000_AddTaxRulesAndAmountSnapshots");
+            context.ChangeTracker.Clear();
+            (await context.PurchaseOrders.AsNoTracking()
+                .Where(order => order.Id == purchaseOrderId)
+                .Select(order => order.TotalAmount)
+                .SingleAsync()).Should().Be(2.01m);
+
+            await migrator.MigrateAsync();
+            context.ChangeTracker.Clear();
+            (await context.PurchaseOrders.AsNoTracking()
+                .Where(order => order.Id == purchaseOrderId)
+                .Select(order => order.TotalAmount)
+                .SingleAsync()).Should().Be(2.02m);
 
             context.TaxRules.Add(new TaxRule
             {

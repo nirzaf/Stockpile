@@ -10,17 +10,43 @@ namespace Merconiq.Infrastructure.Migrations
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
         {
-            // Make the document headers use the exact rounded line snapshots that
-            // were backfilled by AddTaxRulesAndAmountSnapshots. This preserves the
-            // documented sum-of-rounded-lines rule and avoids a header/line mismatch.
+            // Retain the old header values so a clean downgrade can restore them.
+            // Orders without lines retain their existing amounts unchanged.
             migrationBuilder.Sql(
                 """
-                UPDATE "PurchaseOrders" AS orders
-                SET "NetAmount" = line_totals."NetAmount",
-                    "DiscountAmount" = line_totals."DiscountAmount",
-                    "TaxAmount" = line_totals."TaxAmount",
-                    "TotalAmount" = line_totals."GrossAmount"
-                FROM (
+                CREATE TABLE "PurchaseOrderAmountReconciliationBackups" (
+                    "PurchaseOrderId" integer PRIMARY KEY,
+                    "OriginalNetAmount" numeric(18,6) NOT NULL,
+                    "OriginalDiscountAmount" numeric(18,6) NOT NULL,
+                    "OriginalTaxAmount" numeric(18,6) NOT NULL,
+                    "OriginalTotalAmount" numeric(18,6) NOT NULL,
+                    "ReconciledNetAmount" numeric(18,6) NOT NULL,
+                    "ReconciledDiscountAmount" numeric(18,6) NOT NULL,
+                    "ReconciledTaxAmount" numeric(18,6) NOT NULL,
+                    "ReconciledTotalAmount" numeric(18,6) NOT NULL
+                );
+
+                INSERT INTO "PurchaseOrderAmountReconciliationBackups" (
+                    "PurchaseOrderId",
+                    "OriginalNetAmount",
+                    "OriginalDiscountAmount",
+                    "OriginalTaxAmount",
+                    "OriginalTotalAmount",
+                    "ReconciledNetAmount",
+                    "ReconciledDiscountAmount",
+                    "ReconciledTaxAmount",
+                    "ReconciledTotalAmount")
+                SELECT orders."Id",
+                       orders."NetAmount",
+                       orders."DiscountAmount",
+                       orders."TaxAmount",
+                       orders."TotalAmount",
+                       COALESCE(line_totals."NetAmount", orders."NetAmount"),
+                       COALESCE(line_totals."DiscountAmount", orders."DiscountAmount"),
+                       COALESCE(line_totals."TaxAmount", orders."TaxAmount"),
+                       COALESCE(line_totals."GrossAmount", orders."TotalAmount")
+                FROM "PurchaseOrders" AS orders
+                LEFT JOIN (
                     SELECT "PurchaseOrderId",
                            SUM("NetAmount") AS "NetAmount",
                            SUM("DiscountAmount") AS "DiscountAmount",
@@ -28,17 +54,23 @@ namespace Merconiq.Infrastructure.Migrations
                            SUM("GrossAmount") AS "GrossAmount"
                     FROM "OrderDetails"
                     GROUP BY "PurchaseOrderId"
-                ) AS line_totals
-                WHERE orders."Id" = line_totals."PurchaseOrderId";
+                ) AS line_totals ON orders."Id" = line_totals."PurchaseOrderId";
+
+                UPDATE "PurchaseOrders" AS orders
+                SET "NetAmount" = backups."ReconciledNetAmount",
+                    "DiscountAmount" = backups."ReconciledDiscountAmount",
+                    "TaxAmount" = backups."ReconciledTaxAmount",
+                    "TotalAmount" = backups."ReconciledTotalAmount"
+                FROM "PurchaseOrderAmountReconciliationBackups" AS backups
+                WHERE orders."Id" = backups."PurchaseOrderId";
                 """);
         }
 
         /// <inheritdoc />
         protected override void Down(MigrationBuilder migrationBuilder)
         {
-            // This data-only correction is safe to retain on downgrade, but the
-            // preceding tax/snapshot migration would discard tax policy or
-            // non-default calculation evidence. Fail closed before it can run.
+            // Refuse to overwrite post-migration document edits or discard tax
+            // evidence. For unchanged records, restore the exact prior header values.
             migrationBuilder.Sql(
                 """
                 DO $migration$
@@ -66,8 +98,47 @@ namespace Merconiq.Infrastructure.Migrations
                     THEN
                         RAISE EXCEPTION 'Rollback blocked: persisted tax rules or non-default amount snapshots would be discarded.';
                     END IF;
+
+                    IF EXISTS (
+                           SELECT 1
+                           FROM "PurchaseOrders" AS orders
+                           LEFT JOIN "PurchaseOrderAmountReconciliationBackups" AS backups
+                               ON backups."PurchaseOrderId" = orders."Id"
+                           WHERE backups."PurchaseOrderId" IS NULL)
+                       OR EXISTS (
+                           SELECT 1
+                           FROM "PurchaseOrderAmountReconciliationBackups" AS backups
+                           LEFT JOIN "PurchaseOrders" AS orders
+                               ON orders."Id" = backups."PurchaseOrderId"
+                           WHERE orders."Id" IS NULL)
+                    THEN
+                        RAISE EXCEPTION 'Rollback blocked: purchase orders were added or removed after amount reconciliation.';
+                    END IF;
+
+                    IF EXISTS (
+                           SELECT 1
+                           FROM "PurchaseOrders" AS orders
+                           INNER JOIN "PurchaseOrderAmountReconciliationBackups" AS backups
+                               ON backups."PurchaseOrderId" = orders."Id"
+                           WHERE orders."NetAmount" IS DISTINCT FROM backups."ReconciledNetAmount"
+                              OR orders."DiscountAmount" IS DISTINCT FROM backups."ReconciledDiscountAmount"
+                              OR orders."TaxAmount" IS DISTINCT FROM backups."ReconciledTaxAmount"
+                              OR orders."TotalAmount" IS DISTINCT FROM backups."ReconciledTotalAmount")
+                    THEN
+                        RAISE EXCEPTION 'Rollback blocked: purchase-order amounts changed after reconciliation.';
+                    END IF;
                 END
                 $migration$;
+
+                UPDATE "PurchaseOrders" AS orders
+                SET "NetAmount" = backups."OriginalNetAmount",
+                    "DiscountAmount" = backups."OriginalDiscountAmount",
+                    "TaxAmount" = backups."OriginalTaxAmount",
+                    "TotalAmount" = backups."OriginalTotalAmount"
+                FROM "PurchaseOrderAmountReconciliationBackups" AS backups
+                WHERE orders."Id" = backups."PurchaseOrderId";
+
+                DROP TABLE "PurchaseOrderAmountReconciliationBackups";
                 """);
         }
     }

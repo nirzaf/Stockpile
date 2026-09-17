@@ -8,6 +8,7 @@ using Merconiq.Tests.Infrastructure;
 using Merconiq.Web.Controllers.Api.V1;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Npgsql;
 
 namespace Merconiq.Tests.Integration;
 
@@ -20,11 +21,9 @@ public sealed class TaxRulesPostgreSqlIntegrationTests(PostgreSqlIntegrationFixt
     {
         fixture.EnsureEnabled();
         var tenantId = $"tax-rule-overlap-{Guid.NewGuid():N}";
-        var startGate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
         async Task<IActionResult> CreateAsync(DateTime from, DateTime to, string appName)
         {
-            await startGate.Task;
             await using var context = fixture.CreateContext(tenantId, appName);
             var controller = new TaxRulesController(
                 new Repository<TaxRule>(context),
@@ -38,21 +37,79 @@ public sealed class TaxRulesPostgreSqlIntegrationTests(PostgreSqlIntegrationFixt
                 to));
         }
 
-        var first = CreateAsync(
-            new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc),
-            new DateTime(2026, 6, 1, 0, 0, 0, DateTimeKind.Utc),
-            "tax-rule-first");
-        var second = CreateAsync(
-            new DateTime(2026, 3, 1, 0, 0, 0, DateTimeKind.Utc),
-            new DateTime(2026, 7, 1, 0, 0, 0, DateTimeKind.Utc),
-            "tax-rule-second");
-        startGate.SetResult();
+        await using var lockContext = fixture.CreateContext(tenantId, "tax-rule-lock-holder");
+        var lockUnitOfWork = new UnitOfWork(lockContext);
+        var lockAcquired = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseLock = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var lockHolder = lockUnitOfWork.ExecuteInTransactionAsync(async () =>
+        {
+            await lockUnitOfWork.AcquireTenantOperationLockAsync("tax-rule-period:STANDARD");
+            lockAcquired.SetResult();
+            await releaseLock.Task;
+        });
 
-        var results = await Task.WhenAll(first, second);
+        try
+        {
+            await lockAcquired.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            var first = CreateAsync(
+                new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc),
+                new DateTime(2026, 6, 1, 0, 0, 0, DateTimeKind.Utc),
+                "tax-rule-first");
+            var second = CreateAsync(
+                new DateTime(2026, 3, 1, 0, 0, 0, DateTimeKind.Utc),
+                new DateTime(2026, 7, 1, 0, 0, 0, DateTimeKind.Utc),
+                "tax-rule-second");
 
-        results.OfType<CreatedAtActionResult>().Should().HaveCount(1);
-        results.OfType<BadRequestObjectResult>().Should().HaveCount(1);
+            var bothRequestsWaitedForLock = await WaitForAdvisoryLockWaitersAsync(
+                fixture.ConnectionString,
+                ["tax-rule-first", "tax-rule-second"]);
+            releaseLock.TrySetResult();
+            await lockHolder;
+            var results = await Task.WhenAll(first, second);
+
+            bothRequestsWaitedForLock.Should().BeTrue(
+                "both requests must be observed waiting on the PostgreSQL advisory lock before it is released");
+            results.OfType<CreatedAtActionResult>().Should().HaveCount(1);
+            results.OfType<BadRequestObjectResult>().Should().HaveCount(1);
+        }
+        finally
+        {
+            releaseLock.TrySetResult();
+            await lockHolder;
+        }
+
         await using var verify = fixture.CreateContext(tenantId);
         (await verify.TaxRules.CountAsync()).Should().Be(1);
+    }
+
+    private static async Task<bool> WaitForAdvisoryLockWaitersAsync(
+        string connectionString,
+        string[] applicationNames)
+    {
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync();
+        var deadline = DateTime.UtcNow.AddSeconds(10);
+        while (DateTime.UtcNow < deadline)
+        {
+            await using var command = new NpgsqlCommand(
+                """
+                SELECT COUNT(*)
+                FROM pg_stat_activity
+                WHERE application_name = ANY(@application_names)
+                  AND wait_event_type = 'Lock'
+                  AND wait_event = 'advisory'
+                """,
+                connection);
+            command.Parameters.AddWithValue("application_names", applicationNames);
+            var waiting = (long)(await command.ExecuteScalarAsync())!;
+            if (waiting >= applicationNames.Length)
+            {
+                return true;
+            }
+
+            await Task.Delay(25);
+        }
+
+        return false;
     }
 }
