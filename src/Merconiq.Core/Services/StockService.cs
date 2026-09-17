@@ -609,8 +609,9 @@ public class StockService : IStockService
                 var key = group.Key;
                 var reserved = reservedByLot.GetValueOrDefault(key);
                 var onHand = group.Sum(row => row.Quantity);
+                var quarantined = group.Sum(row => row.QuarantinedQuantity);
                 return new StockAvailabilityView(key.ItemId, key.LocationId, key.BatchNumber, key.ExpiryDate,
-                    onHand, reserved, Math.Max(0, onHand - reserved));
+                    onHand, reserved, quarantined, Math.Max(0, onHand - reserved - quarantined));
             })
             .OrderBy(row => row.ItemId)
             .ThenBy(row => row.LocationId)
@@ -788,7 +789,8 @@ public class StockService : IStockService
         // FEFO is deterministic for the bounded single-lot reservation contract. A null
         // expiry is last because it cannot win an expiry-first allocation.
         return (await _stockRepo.FindAsync(row =>
-                row.ItemId == itemId && row.LocationId == locationId && row.Quantity > 0))
+                row.ItemId == itemId && row.LocationId == locationId &&
+                row.Quantity - row.ReservedQuantity - row.QuarantinedQuantity > 0))
             .OrderBy(row => row.ExpiryDate.HasValue ? 0 : 1)
             .ThenBy(row => row.ExpiryDate)
             .ThenBy(row => row.BatchNumber)
@@ -822,9 +824,10 @@ public class StockService : IStockService
         int? reservedOverride = null)
     {
         var reserved = reservedOverride ?? stock.ReservedQuantity;
-        if (reserved < 0 || reserved > stock.Quantity || stock.Quantity - reserved < quantity)
+        var available = (long)stock.Quantity - reserved - stock.QuarantinedQuantity;
+        if (reserved < 0 || stock.QuarantinedQuantity < 0 || available < quantity)
             throw new StockAvailabilityConflictException(
-                $"Insufficient available stock for {operation}; reserved stock cannot be used.");
+                $"Insufficient available stock for {operation}; reserved stock or quarantined stock cannot be used.");
     }
 
     private static void EnsureLotNotExpired(DateTime? expiryDate)

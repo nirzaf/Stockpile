@@ -533,6 +533,7 @@ public class StockServiceTests
             .With(s => s.LocationId, 2)
             .With(s => s.Quantity, 15)
             .With(s => s.ReservedQuantity, 0)
+            .With(s => s.QuarantinedQuantity, 0)
             .Create();
         _itemRepoMock.Setup(r => r.GetByIdAsync(1)).ReturnsAsync(item);
         _stockRepoMock.SetupSequence(r => r.FindAsync(

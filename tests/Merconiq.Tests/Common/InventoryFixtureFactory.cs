@@ -36,6 +36,7 @@ public static class InventoryFixtureFactory
 
         fixture.Customize<StockInHand>(c => c
             .With(x => x.Quantity, 100)
+            .With(x => x.QuarantinedQuantity, 0)
             .Without(x => x.Item)
             .Without(x => x.Location));
 

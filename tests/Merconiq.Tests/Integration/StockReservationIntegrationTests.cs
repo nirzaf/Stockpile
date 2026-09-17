@@ -80,6 +80,7 @@ public sealed class StockReservationIntegrationTests
             var result = (await CreateService(context, tenant).GetAvailabilityAsync(itemId, locationId)).Single();
             result.OnHand.Should().Be(6);
             result.Reserved.Should().Be(0);
+            result.Quarantined.Should().Be(0);
             result.Available.Should().Be(6);
         }
     }
@@ -668,6 +669,67 @@ public sealed class StockReservationPostgreSqlIntegrationTests(PostgreSqlIntegra
         stock.Quantity.Should().Be(6);
         stock.ReservedQuantity.Should().Be(0);
         reservation.Status.Should().Be(StockReservationStatus.Expired);
+    }
+
+    [PostgreSqlFact]
+    public async Task Quarantined_quantity_is_reported_and_unavailable_to_reservations_or_sales()
+    {
+        fixture.EnsureEnabled();
+        var tenant = $"quarantine-availability-{Guid.NewGuid():N}";
+        int itemId;
+        int locationId;
+        await using (var setup = fixture.CreateContext(tenant))
+        {
+            var item = new Item { ItemCode = $"QUAR-{Guid.NewGuid():N}", Description = "Quarantine availability", ReorderLevel = 0 };
+            var location = new Location { Name = "Quarantine availability location" };
+            setup.Items.Add(item);
+            setup.Locations.Add(location);
+            await setup.SaveChangesAsync();
+            setup.StockInHand.Add(new StockInHand
+            {
+                ItemId = item.Id,
+                LocationId = location.Id,
+                Quantity = 10,
+                ReservedQuantity = 2,
+                QuarantinedQuantity = 4
+            });
+            setup.StockReservations.Add(new StockReservation
+            {
+                ItemId = item.Id,
+                LocationId = location.Id,
+                SourceLineReference = "existing-quarantine-reservation",
+                Quantity = 2,
+                ExpiresAt = DateTimeOffset.UtcNow.AddHours(1),
+                Status = StockReservationStatus.Active
+            });
+            await setup.SaveChangesAsync();
+            itemId = item.Id;
+            locationId = location.Id;
+        }
+
+        await using (var context = fixture.CreateContext(tenant))
+        {
+            var service = CreateService(context, tenant);
+            var availability = (await service.GetAvailabilityAsync(itemId, locationId)).Single();
+            availability.OnHand.Should().Be(10);
+            availability.Reserved.Should().Be(2);
+            availability.Quarantined.Should().Be(4);
+            availability.Available.Should().Be(4);
+
+            await FluentActions.Invoking(() => service.CreateReservationAsync(
+                    new CreateStockReservationRequest(itemId, locationId, 5, "quarantine-line")))
+                .Should().ThrowAsync<StockAvailabilityConflictException>();
+            await FluentActions.Invoking(() => service.SellStockAsync(itemId, locationId, 5, "quarantine sale"))
+                .Should().ThrowAsync<StockAvailabilityConflictException>();
+            await service.SellStockAsync(itemId, locationId, 4, "available sale");
+        }
+
+        await using var verify = fixture.CreateContext(tenant);
+        var stock = await verify.StockInHand.SingleAsync();
+        stock.Quantity.Should().Be(6);
+        stock.ReservedQuantity.Should().Be(2);
+        stock.QuarantinedQuantity.Should().Be(4);
+        (await verify.StockReservations.SingleAsync()).Status.Should().Be(StockReservationStatus.Active);
     }
 
     private static async Task<Exception?> CaptureAsync(Func<Task> action)

@@ -38,4 +38,5 @@ public sealed record StockAvailabilityView(
     DateTime? ExpiryDate,
     int OnHand,
     int Reserved,
+    int Quarantined,
     int Available);
