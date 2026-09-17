@@ -454,6 +454,10 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
             entity.HasIndex(e => e.TenantId);
             entity.Property(e => e.BatchNumber).HasMaxLength(100);
             entity.Property(e => e.ReservedQuantity).HasDefaultValue(0).IsRequired();
+            entity.Property(e => e.QuarantinedQuantity).HasDefaultValue(0).IsRequired();
+            entity.ToTable("StockInHand", table => table.HasCheckConstraint(
+                "CK_StockInHand_AvailableQuantity",
+                "\"Quantity\" >= 0 AND \"ReservedQuantity\" >= 0 AND \"QuarantinedQuantity\" >= 0 AND \"ReservedQuantity\" + \"QuarantinedQuantity\" <= \"Quantity\""));
             entity.HasIndex(e => new { e.TenantId, e.ItemId, e.LocationId, e.BatchNumber, e.ExpiryDate }).IsUnique();
 
             entity.HasOne(s => s.Item)
