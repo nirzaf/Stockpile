@@ -82,6 +82,19 @@ public class ItemCommandHandlerTests
             updated.WholeUnitOnly)), Times.Once);
     }
 
+    [Fact]
+    public async Task UpdateItemCommandHandler_can_clear_a_barcode_explicitly()
+    {
+        var item = _fixture.Build<Item>().With(i => i.Id, 1).With(i => i.Barcode, "012345").Create();
+        var serviceMock = new Mock<IItemService>();
+        serviceMock.Setup(s => s.GetByIdAsync(1)).ReturnsAsync(item);
+        var handler = new UpdateItemCommandHandler(serviceMock.Object, NullLogger<UpdateItemCommandHandler>.Instance);
+
+        await handler.Handle(new UpdateItemCommand(1, "Updated", 25m, null, ClearBarcode: true), CancellationToken.None);
+
+        serviceMock.Verify(s => s.UpdateAsync(It.Is<Item>(updated => updated.Barcode == null)), Times.Once);
+    }
+
     // === DeleteItemCommandHandler ===
 
     [Fact]

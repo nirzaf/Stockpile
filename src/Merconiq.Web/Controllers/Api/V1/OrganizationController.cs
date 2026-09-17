@@ -214,7 +214,7 @@ public sealed class OrganizationController(
     private static CompanyResponse ToResponse(Company company) =>
         new(company.Id, company.TenantId, company.Code, company.LegalName, company.TradingName,
             company.RegistrationNumber, company.TaxIdentifier, company.BaseCurrency,
-            company.CountryCode, company.IsActive);
+            company.CountryCode, company.IsActive, company.CurrencyScale);
 
     private static BranchResponse ToResponse(Branch branch) =>
         new(branch.Id, branch.CompanyId, branch.TenantId, branch.Code, branch.Name,
@@ -235,7 +235,8 @@ public sealed record CompanyResponse(
     string? TaxIdentifier,
     string BaseCurrency,
     string? CountryCode,
-    bool IsActive);
+    bool IsActive,
+    int? CurrencyScale);
 
 public sealed record BranchResponse(
     int Id,

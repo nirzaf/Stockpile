@@ -10,6 +10,8 @@ public sealed class Company : AuditableEntity
     public string? RegistrationNumber { get; set; }
     public string? TaxIdentifier { get; set; }
     public string BaseCurrency { get; set; } = string.Empty;
+    /// <summary>Number of fractional decimal places used for company money rounding.</summary>
+    public int? CurrencyScale { get; set; }
     public string? CountryCode { get; set; }
     public bool IsActive { get; set; } = true;
     public ICollection<Branch> Branches { get; set; } = new List<Branch>();

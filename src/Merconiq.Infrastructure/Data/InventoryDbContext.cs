@@ -381,6 +381,10 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
             entity.Property(e => e.RegistrationNumber).HasMaxLength(100);
             entity.Property(e => e.TaxIdentifier).HasMaxLength(100);
             entity.Property(e => e.BaseCurrency).HasMaxLength(3).IsRequired();
+            entity.Property(e => e.CurrencyScale);
+            entity.ToTable("Companies", table => table.HasCheckConstraint(
+                "CK_Companies_CurrencyScale",
+                "\"CurrencyScale\" IS NULL OR \"CurrencyScale\" BETWEEN 0 AND 4"));
             entity.Property(e => e.CountryCode).HasMaxLength(2);
             entity.HasIndex(e => new { e.TenantId, e.Code }).IsUnique();
             entity.HasIndex(e => new { e.Id, e.TenantId }).IsUnique();

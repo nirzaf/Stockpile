@@ -2,6 +2,7 @@ using System.Globalization;
 using Merconiq.Core.Entities;
 using Merconiq.Core.Interfaces;
 using Merconiq.Core.Models;
+using Merconiq.Core.Services;
 using Microsoft.EntityFrameworkCore;
 
 namespace Merconiq.Infrastructure.Services;
@@ -103,6 +104,52 @@ public sealed class MasterDataImportService(
                 continue;
             }
 
+            try
+            {
+                ItemQuantityConventions.Validate(new Item
+                {
+                    BaseUnitId = baseUnitId,
+                    PurchaseUnitId = purchaseUnitId,
+                    SalesUnitId = salesUnitId,
+                    PurchaseToBaseFactor = row.PurchaseToBaseFactor,
+                    SalesToBaseFactor = row.SalesToBaseFactor,
+                    QuantityPrecision = row.QuantityPrecision,
+                    WholeUnitOnly = row.WholeUnitOnly
+                });
+            }
+            catch (ArgumentException exception)
+            {
+                results.Add(new(row.RowNumber, row.ExternalId, "rejected", exception.Message));
+                continue;
+            }
+
+            if (baseUnitId is null && (purchaseUnitId.HasValue || salesUnitId.HasValue))
+            {
+                results.Add(new(row.RowNumber, row.ExternalId, "rejected",
+                    "A base unit is required when a purchase or sales unit is configured."));
+                continue;
+            }
+            if (!purchaseUnitId.HasValue && row.PurchaseToBaseFactor != 1m)
+            {
+                results.Add(new(row.RowNumber, row.ExternalId, "rejected",
+                    "Purchase-to-base factor must be 1 when no purchase unit is configured."));
+                continue;
+            }
+            if (!salesUnitId.HasValue && row.SalesToBaseFactor != 1m)
+            {
+                results.Add(new(row.RowNumber, row.ExternalId, "rejected",
+                    "Sales-to-base factor must be 1 when no sales unit is configured."));
+                continue;
+            }
+            var referencedUnits = tenantUnits.Where(unit =>
+                unit.Id == baseUnitId || unit.Id == purchaseUnitId || unit.Id == salesUnitId);
+            if (referencedUnits.Any(unit => unit.IsWholeUnitOnly) && row.QuantityPrecision != 0)
+            {
+                results.Add(new(row.RowNumber, row.ExternalId, "rejected",
+                    "Items using a whole-unit-only unit must use zero quantity precision."));
+                continue;
+            }
+
             var existingMatches = existingItems.Where(item =>
                 string.Equals(item.ExternalId, row.ExternalId, StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(item.ItemCode, row.ItemCode, StringComparison.OrdinalIgnoreCase)).ToList();
@@ -167,6 +214,8 @@ public sealed class MasterDataImportService(
         if (!codes.Add(row.Code)) return "Code is duplicated in the import.";
         if (string.IsNullOrWhiteSpace(row.Name) || row.Name.Length > 100) return "Name is required and must be at most 100 characters.";
         if (row.DecimalPlaces is < 0 or > 6) return "Decimal places must be between 0 and 6.";
+        if (row.IsWholeUnitOnly && row.DecimalPlaces != 0)
+            return "Whole-unit-only units must use zero decimal places.";
         return null;
     }
 
@@ -208,7 +257,7 @@ public sealed class MasterDataImportService(
         if (!codes.Add(row.ItemCode)) return "Item code is duplicated in the import.";
         if (string.IsNullOrWhiteSpace(row.Description) || row.Description.Length > 500)
             return "Description is required and must be at most 500 characters.";
-        if (!row.RateParsed || row.Rate < 0) return "Rate must be a non-negative decimal.";
+        if (!row.RateParsed || row.Rate <= 0) return "Rate must be a positive decimal.";
         if (!row.PurchaseToBaseFactorParsed || row.PurchaseToBaseFactor <= 0)
             return "Purchase-to-base factor must be a positive decimal.";
         if (!row.SalesToBaseFactorParsed || row.SalesToBaseFactor <= 0)
@@ -216,6 +265,8 @@ public sealed class MasterDataImportService(
         if (!row.QuantityPrecisionParsed || row.QuantityPrecision is < 0 or > 6)
             return "Quantity precision must be between 0 and 6.";
         if (!row.WholeUnitOnlyParsed) return "Whole-unit-only must be true or false.";
+        if (row.WholeUnitOnly && row.QuantityPrecision != 0)
+            return "Whole-unit-only items must use zero quantity precision.";
         return null;
     }
 

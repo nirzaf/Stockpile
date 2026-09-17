@@ -24,6 +24,7 @@ public class CreateItemCommandHandler : IRequestHandler<CreateItemCommand, Item>
             ItemCode = request.ItemCode,
             Description = request.Description,
             Rate = request.Rate,
+            Barcode = request.Barcode,
             SupplierId = request.SupplierId,
             BaseUnitId = request.BaseUnitId,
             PurchaseUnitId = request.PurchaseUnitId,

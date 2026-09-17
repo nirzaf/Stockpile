@@ -156,6 +156,10 @@ public class StockService : IStockService
             {
                 await _unitOfWork.ExecuteInTransactionAsync(async () =>
                 {
+                    // Keep stock postings in the same lock domain as company currency
+                    // freeze checks. ponytail: tenant-wide serialization is the smallest
+                    // correct boundary; split by company if throughput requires it.
+                    await _unitOfWork.AcquireTenantOperationLockAsync("organization-state");
                     var item = await _itemRepo.GetByIdAsync(itemId);
                     if (item is not null && !item.IsActive)
                         throw new InvalidOperationException("Inactive items cannot be used in stock operations.");

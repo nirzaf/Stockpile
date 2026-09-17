@@ -74,6 +74,46 @@ public sealed class MasterDataImportServiceTests
         context.Items.Should().BeEmpty();
     }
 
+    [Fact]
+    public async Task ImportUnits_rejects_fractional_precision_for_whole_only_units()
+    {
+        await using var context = CreateContext(Guid.NewGuid().ToString(), "tenant-a");
+        var result = await CreateService(context).ImportUnitsAsync(new ImportUnitsRequest(
+            "external_id,code,name,decimal_places,whole_unit_only\nbox,BOX,Box,2,true", DryRun: false));
+
+        result.Rejected.Should().Be(1);
+        result.Rows.Single().Error.Should().Be("Whole-unit-only units must use zero decimal places.");
+        context.UnitsOfMeasure.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task ImportItems_rejects_non_identity_factor_for_a_base_unit_reference()
+    {
+        await using var context = CreateContext(Guid.NewGuid().ToString(), "tenant-a");
+        context.UnitsOfMeasure.Add(new UnitOfMeasure { ExternalId = "piece", Code = "PC", Name = "Piece" });
+        await context.SaveChangesAsync();
+
+        var result = await CreateService(context).ImportItemsAsync(new ImportItemsRequest(
+            Csv("item-1,SKU-1,Widget,12.50,piece,piece,,12,1,0,false"), DryRun: false));
+
+        result.Rejected.Should().Be(1);
+        result.Rows.Single().Error.Should().Contain(
+            "Purchase-to-base factor must be 1 when the purchase unit is the base unit.");
+        context.Items.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task ImportItems_rejects_a_factor_that_would_round_in_postgresql()
+    {
+        await using var context = CreateContext(Guid.NewGuid().ToString(), "tenant-a");
+        var result = await CreateService(context).ImportItemsAsync(new ImportItemsRequest(
+            Csv("item-1,SKU-1,Widget,12.50,,,,1.0000001,1,0,false"), DryRun: false));
+
+        result.Rejected.Should().Be(1);
+        result.Rows.Single().Error.Should().Contain("must fit decimal(18,6) without rounding");
+        context.Items.Should().BeEmpty();
+    }
+
     private static MasterDataImportService CreateService(InventoryDbContext context) => new(
         new Repository<UnitOfMeasure>(context),
         new Repository<Item>(context),
