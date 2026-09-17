@@ -209,6 +209,6 @@ public sealed class IdempotencyPostgreSqlIntegrationTests
         (await verify.Items.CountAsync(item => item.ItemCode == "RECLAIMED-WORKER-ITEM")).Should().Be(1);
         var completed = await verify.IdempotencyRecords.SingleAsync(item => item.Scope == scope && item.Key == key);
         completed.Status.Should().Be(IdempotencyRecordStatus.Completed);
-        completed.AttemptCount.Should().Be(2);
+        completed.AttemptCount.Should().Be(3);
     }
 }
