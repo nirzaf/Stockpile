@@ -43,6 +43,9 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
     public DbSet<TransferOrder> TransferOrders { get; set; } = null!;
     public DbSet<TransferOrderLine> TransferOrderLines { get; set; } = null!;
 
+    /// <summary>Lot-specific allocations belonging to source-line stock reservations.</summary>
+    public DbSet<StockReservationAllocation> StockReservationAllocations { get; set; } = null!;
+
     /// <summary>Current weighted-average stock valuation per item and location.</summary>
     public DbSet<StockValuationBucket> StockValuationBuckets { get; set; } = null!;
 
@@ -215,6 +218,10 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
             entry.Entity.ExpiryDate = StockLotExpiryDate.Normalize(entry.Entity.ExpiryDate);
 
         foreach (var entry in ChangeTracker.Entries<StockReservation>()
+                     .Where(entry => entry.State is EntityState.Added or EntityState.Modified))
+            entry.Entity.ExpiryDate = StockLotExpiryDate.Normalize(entry.Entity.ExpiryDate);
+
+        foreach (var entry in ChangeTracker.Entries<StockReservationAllocation>()
                      .Where(entry => entry.State is EntityState.Added or EntityState.Modified))
             entry.Entity.ExpiryDate = StockLotExpiryDate.Normalize(entry.Entity.ExpiryDate);
 
@@ -591,6 +598,31 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
                 .HasForeignKey(e => new { e.ItemId, e.TenantId })
                 .HasPrincipalKey(e => new { e.Id, e.TenantId })
                 .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<StockReservationAllocation>(entity =>
+        {
+            entity.HasQueryFilter(allocation => allocation.TenantId == CurrentTenantId);
+            entity.Property(allocation => allocation.TenantId).HasMaxLength(64).IsRequired();
+            entity.Property(allocation => allocation.BatchNumber).HasMaxLength(100);
+            entity.Property(allocation => allocation.ExpiryDate).HasColumnType("timestamp with time zone");
+            entity.Property(allocation => allocation.ExpiryExceptionReason).HasMaxLength(500);
+            entity.HasIndex(allocation => new { allocation.TenantId, allocation.ReservationId, allocation.Ordinal })
+                .IsUnique();
+            entity.HasIndex(allocation => new { allocation.TenantId, allocation.ReservationId });
+            entity.ToTable(table => table.HasCheckConstraint(
+                "CK_StockReservationAllocations_Quantities",
+                "\"Quantity\" > 0 AND \"ConsumedQuantity\" >= 0 AND \"ConsumedQuantity\" <= \"Quantity\""));
+            entity.HasOne(allocation => allocation.Reservation)
+                .WithMany(reservation => reservation.Allocations)
+                .HasForeignKey(allocation => new { allocation.ReservationId, allocation.TenantId })
+                .HasPrincipalKey(reservation => new { reservation.Id, reservation.TenantId })
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.Property(allocation => allocation.Version)
+                .HasColumnName("xmin")
+                .HasColumnType("xid")
+                .ValueGeneratedOnAddOrUpdate()
+                .IsConcurrencyToken();
         });
 
         modelBuilder.Entity<StockValuationBucket>(entity =>

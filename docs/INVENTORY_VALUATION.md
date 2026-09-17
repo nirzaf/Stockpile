@@ -57,10 +57,18 @@ dispatch and the stock service rechecks it after acquiring the location lock.
 Direct service callers that do not provide the authorization callback cannot
 override expiry. Supplying a reason for a non-expired lot is rejected.
 
-Accepted reasons are persisted separately on the stock reservation or movement
-and included in the normal audit log. The same rule applies to
-reservation creation, reservation consumption, sales, and transfers. It does
-not add multi-lot allocation or automatically quarantine expired stock.
+Accepted reasons are persisted separately on the stock reservation, its
+lot-specific allocation, or the stock movement and included in the normal audit
+log. The same rule applies to
+reservation creation, reservation consumption, sales, and transfers. An
+un-pinned reservation uses FEFO and can split its quantity across as many
+eligible, unexpired lots as needed by default. Expired lots participate only
+when the request explicitly supplies an expiry-exception reason and the caller
+has the required company-scoped override capability. Its allocation view preserves that lot order and each
+allocation's quantity, consumption, and expiry-exception reason. A request
+pinned to a batch or expiry date remains limited to that lot, and a reservation
+that cannot be fully allocated fails rather than reserving only part of the
+requested quantity. This does not automatically quarantine expired stock.
 
 ## Quarantined stock
 
@@ -79,8 +87,8 @@ additional capability is never implied by the tenant Admin role; only Admin and
 Accountant roles may hold it, and a location without an owning company cannot
 use it. The service rechecks the posting and override grants after acquiring the
 location lock. Release restores availability without changing on-hand quantity
-or valuation. Multi-lot allocation and a complete quarantine-review workflow
-remain follow-up work.
+or valuation. FEFO reservations can allocate across multiple lots; a complete
+quarantine-review workflow remains follow-up work.
 
 The current PostgreSQL schema stores expiry in `timestamp with time zone`
 columns. At service lookup and EF persistence boundaries, Merconiq preserves the

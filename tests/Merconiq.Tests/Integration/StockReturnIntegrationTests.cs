@@ -172,7 +172,8 @@ public sealed class StockReturnPostgreSqlIntegrationTests(PostgreSqlIntegrationF
         NullLogger<StockService>.Instance,
         new Repository<StockValuationBucket>(context),
         new Repository<StockValuationEntry>(context),
-        new Repository<StockReservation>(context));
+        new Repository<StockReservation>(context),
+        new Repository<StockReservationAllocation>(context));
 }
 
 public sealed class StockReturnApiTests(CustomWebApplicationFactory factory)

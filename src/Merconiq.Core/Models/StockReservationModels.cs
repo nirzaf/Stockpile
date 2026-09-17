@@ -32,7 +32,16 @@ public sealed record StockReservationView(
     int RemainingQuantity,
     DateTimeOffset ExpiresAt,
     StockReservationStatus Status,
-    string? ExpiryExceptionReason = null);
+    string? ExpiryExceptionReason = null,
+    IReadOnlyList<StockReservationAllocationView>? Allocations = null);
+
+public sealed record StockReservationAllocationView(
+    string? BatchNumber,
+    DateTime? ExpiryDate,
+    int Quantity,
+    int ConsumedQuantity,
+    int RemainingQuantity,
+    string? ExpiryExceptionReason);
 
 public sealed record StockAvailabilityView(
     int ItemId,
