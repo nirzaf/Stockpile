@@ -78,6 +78,10 @@ public class PurchaseOrderServiceTests
                 It.IsAny<DocumentLifecycleStatus>(),
                 It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
+        _uowMock
+            .Setup(unitOfWork => unitOfWork.ExecuteInReadSnapshotAsync(
+                It.IsAny<Func<Task>>(), It.IsAny<CancellationToken>()))
+            .Returns((Func<Task> operation, CancellationToken _) => operation());
     }
 
     [Fact]
@@ -337,6 +341,29 @@ public class PurchaseOrderServiceTests
         po.ApprovedCommercialSnapshotJson.Should().Contain("\"supplierName\"");
         _poRepoMock.Verify(r => r.UpdateAsync(It.IsAny<PurchaseOrder>()), Times.Never);
         _uowMock.Verify(u => u.SaveChangesAsync(default), Times.Once);
+    }
+
+    [Fact]
+    public async Task UpdateStatusAsync_WhenApprovingAnEmptyPurchaseOrder_RejectsWithoutMutation()
+    {
+        var po = new PurchaseOrder
+        {
+            Id = 902,
+            PONumber = "PO-EMPTY-902",
+            Status = PurchaseOrderStatus.Pending,
+            CommercialVersion = 1
+        };
+        _poRepoMock.Setup(repository => repository.GetByIdAsync(po.Id)).ReturnsAsync(po);
+
+        var act = () => _sut.UpdateStatusAsync(po.Id, nameof(PurchaseOrderStatus.Approved));
+
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("A purchase order must contain at least one line before it can be approved.");
+        po.Status.Should().Be(PurchaseOrderStatus.Pending);
+        po.ApprovedCommercialVersion.Should().BeNull();
+        po.ApprovedCommercialSnapshotJson.Should().BeNull();
+        _uowMock.Verify(unitOfWork => unitOfWork.SaveChangesAsync(default), Times.Never);
+        _webhookDispatcherMock.Invocations.Should().BeEmpty();
     }
 
     [Fact]

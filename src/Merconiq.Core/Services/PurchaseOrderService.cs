@@ -381,10 +381,24 @@ public class PurchaseOrderService : IPurchaseOrderService
 
     private async Task<string> CaptureApprovedSnapshotAsync(PurchaseOrder po)
     {
+        string? snapshotJson = null;
+        await _unitOfWork.ExecuteInReadSnapshotAsync(async () =>
+        {
+            snapshotJson = await CaptureApprovedSnapshotWithinReadSnapshotAsync(po);
+        });
+
+        return snapshotJson ?? throw new InvalidOperationException("The approved purchase-order snapshot was not captured.");
+    }
+
+    private async Task<string> CaptureApprovedSnapshotWithinReadSnapshotAsync(PurchaseOrder po)
+    {
         var lines = (await RequireRepository(_orderDetailRepository)
                 .FindAsync(line => line.PurchaseOrderId == po.Id))
             .OrderBy(line => line.DocumentLineId.Value)
             .ToList();
+        if (lines.Count == 0)
+            throw new InvalidOperationException("A purchase order must contain at least one line before it can be approved.");
+
         var supplier = (await RequireRepository(_supplierRepository)
                 .FindAsync(candidate => candidate.Id == po.SupplierId))
             .SingleOrDefault()

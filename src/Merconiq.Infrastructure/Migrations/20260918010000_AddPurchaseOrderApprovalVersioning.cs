@@ -147,6 +147,9 @@ namespace Merconiq.Infrastructure.Migrations
         /// <inheritdoc />
         protected override void Down(MigrationBuilder migrationBuilder)
         {
+            // Keep approval/amendment writes out until the preflight and all column drops commit.
+            migrationBuilder.Sql("LOCK TABLE \"PurchaseOrders\" IN ACCESS EXCLUSIVE MODE;");
+
             migrationBuilder.Sql(
                 """
                 DO $migration$
