@@ -130,6 +130,10 @@ public sealed class TransferOrderService(
 
         await unitOfWork.ExecuteInTransactionAsync(async () =>
         {
+            await unitOfWork.AcquireTenantOperationLockAsync("organization-state", cancellationToken);
+            await unitOfWork.AcquireLocationLocksAsync(
+                [request.FromLocationId, request.ToLocationId],
+                cancellationToken);
             await ValidateReferencesAsync(request);
             var order = await orderRepository.GetByIdAsync(id)
                 ?? throw new KeyNotFoundException("Transfer order not found.");
