@@ -719,14 +719,15 @@ public sealed class StockReservationPostgreSqlIntegrationTests(PostgreSqlIntegra
             stockQuantity: 5,
             reservedQuantity: 5,
             reservationQuantity: 5);
+        const string reason = "Approved after expired-lot safety review";
         var request = new CreateStockReservationRequest(
-            state.ItemId, state.LocationId, 1, newReservationReference);
+            state.ItemId, state.LocationId, 1, newReservationReference,
+            ExpiryExceptionReason: reason);
 
         await using (var context = fixture.CreateContext(tenant))
         {
             var action = () => CreateService(context, tenant).CreateReservationAsync(
-                request,
-                new StockMutationScope(state.CompanyId, () => Task.FromResult(true)));
+                request, CreateOverrideScope(state.CompanyId, authorized: false));
             await action.Should().ThrowAsync<StockAvailabilityConflictException>()
                 .WithMessage("An explicit company-scoped expired-stock override capability is required.");
         }
@@ -736,19 +737,18 @@ public sealed class StockReservationPostgreSqlIntegrationTests(PostgreSqlIntegra
         await using (var context = fixture.CreateContext(tenant))
         {
             var action = () => CreateService(context, tenant).CreateReservationAsync(
-                request, CreateOverrideScope(state.CompanyId, authorized: true));
+                request with { ExpiryExceptionReason = null },
+                CreateOverrideScope(state.CompanyId, authorized: true));
             await action.Should().ThrowAsync<StockAvailabilityConflictException>()
                 .WithMessage("An audit reason is required to use an expired stock lot.");
         }
         await AssertAutoExpiredLotUnchangedAsync(
             fixture, tenant, state, staleReservationReference, newReservationReference);
 
-        const string reason = "Approved after expired-lot safety review";
         await using (var context = fixture.CreateContext(tenant))
         {
             await CreateService(context, tenant).CreateReservationAsync(
-                request with { ExpiryExceptionReason = reason },
-                CreateOverrideScope(state.CompanyId, authorized: true));
+                request, CreateOverrideScope(state.CompanyId, authorized: true));
         }
 
         await using var verify = fixture.CreateContext(tenant);
@@ -839,6 +839,50 @@ public sealed class StockReservationPostgreSqlIntegrationTests(PostgreSqlIntegra
         createdReservation.BatchNumber.Should().Be("LOT-EXPIRED");
         createdReservation.ExpiryDate.Should().Be(state.ExpiryDate);
         createdReservation.ExpiryExceptionReason.Should().Be(reason);
+    }
+
+    [PostgreSqlFact]
+    public async Task Active_expired_reservation_replay_requires_the_same_audit_reason()
+    {
+        fixture.EnsureEnabled();
+        var tenant = $"expired-reservation-replay-{Guid.NewGuid():N}";
+        const string reservationReference = "expired-reservation-replay-line";
+        const string reason = "Approved expired reservation replay";
+        var state = await SeedExpiredPostgresLotAsync(
+            fixture, tenant, "stale-expired-reservation", stockQuantity: 5,
+            reservedQuantity: 5, reservationQuantity: 5);
+        var request = new CreateStockReservationRequest(
+            state.ItemId, state.LocationId, 1, reservationReference,
+            "LOT-EXPIRED", state.ExpiryDate, ExpiryExceptionReason: reason);
+
+        await using (var context = fixture.CreateContext(tenant))
+        {
+            await CreateService(context, tenant).CreateReservationAsync(
+                request, CreateOverrideScope(state.CompanyId, authorized: true));
+        }
+
+        await using (var context = fixture.CreateContext(tenant))
+        {
+            await CreateService(context, tenant).CreateReservationAsync(
+                request with { ExpiryExceptionReason = $"  {reason}  " },
+                CreateOverrideScope(state.CompanyId, authorized: true));
+        }
+
+        foreach (var mismatchedRequest in new[]
+                 {
+                     request with { ExpiryExceptionReason = null },
+                     request with { ExpiryExceptionReason = "Different audit reason" }
+                 })
+        {
+            await using var context = fixture.CreateContext(tenant);
+            var action = () => CreateService(context, tenant).CreateReservationAsync(
+                mismatchedRequest, CreateOverrideScope(state.CompanyId, authorized: true));
+            await action.Should().ThrowAsync<InvalidOperationException>()
+                .WithMessage("The source line already has a different or closed reservation.");
+        }
+
+        await AssertPostgresReservationHasReasonAsync(
+            fixture, tenant, reservationReference, reason);
     }
 
     [PostgreSqlFact]
@@ -933,12 +977,12 @@ public sealed class StockReservationPostgreSqlIntegrationTests(PostgreSqlIntegra
             reservedQuantity: 5, reservationQuantity: 5);
         const string newLine = "approved-batch-only-expired-reservation";
         var request = new CreateStockReservationRequest(
-            reservationState.ItemId, reservationState.LocationId, 1, newLine, "LOT-EXPIRED");
+            reservationState.ItemId, reservationState.LocationId, 1, newLine, "LOT-EXPIRED",
+            ExpiryExceptionReason: reason);
         await using (var context = fixture.CreateContext(reservationTenant))
         {
             var action = () => CreateService(context, reservationTenant).CreateReservationAsync(
-                request,
-                new StockMutationScope(reservationState.CompanyId, () => Task.FromResult(true)));
+                request, CreateOverrideScope(reservationState.CompanyId, authorized: false));
             await action.Should().ThrowAsync<StockAvailabilityConflictException>()
                 .WithMessage("An explicit company-scoped expired-stock override capability is required.");
         }
@@ -946,8 +990,7 @@ public sealed class StockReservationPostgreSqlIntegrationTests(PostgreSqlIntegra
         await using (var context = fixture.CreateContext(reservationTenant))
         {
             await CreateService(context, reservationTenant).CreateReservationAsync(
-                request with { ExpiryExceptionReason = reason },
-                CreateOverrideScope(reservationState.CompanyId, authorized: true));
+                request, CreateOverrideScope(reservationState.CompanyId, authorized: true));
         }
         await AssertPostgresReservationHasReasonAsync(fixture, reservationTenant, newLine, reason);
     }
@@ -1012,6 +1055,9 @@ public sealed class StockReservationPostgreSqlIntegrationTests(PostgreSqlIntegra
             failure.Which.MessageText.Should().Contain(
                 "Cannot downgrade expired-stock override reasons while audit reasons are still persisted.");
 
+            // A downgrade to this target first rolls back the later source-linked-return migration.
+            // Reapply it before using the current EF model to verify that the guarded migration kept the reasons.
+            await migrator.MigrateAsync();
             context.ChangeTracker.Clear();
             (await context.StockTransactions.SingleAsync()).ExpiryExceptionReason.Should().Be(reason);
             (await context.StockReservations.SingleAsync()).ExpiryExceptionReason.Should().Be(reason);

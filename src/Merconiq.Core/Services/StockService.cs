@@ -637,6 +637,9 @@ public class StockService : IStockService
         EnsureReservationRepository();
 
         var sourceLineReference = request.SourceLineReference.Trim();
+        var requestedExpiryExceptionReason = string.IsNullOrWhiteSpace(request.ExpiryExceptionReason)
+            ? null
+            : request.ExpiryExceptionReason.Trim();
         var now = DateTimeOffset.UtcNow;
         var expiresAt = request.ExpiresAt ?? now.AddHours(24);
         if (expiresAt <= now)
@@ -656,7 +659,8 @@ public class StockService : IStockService
                     existing.Quantity == request.Quantity &&
                     (request.ExpiresAt is null || existing.ExpiresAt == expiresAt) &&
                     (request.BatchNumber is null && !request.ExpiryDate.HasValue ||
-                     existing.BatchNumber == request.BatchNumber && existing.ExpiryDate == request.ExpiryDate))
+                     existing.BatchNumber == request.BatchNumber && existing.ExpiryDate == request.ExpiryDate) &&
+                    existing.ExpiryExceptionReason == requestedExpiryExceptionReason)
                     return;
 
                 if (existing.Status == StockReservationStatus.Active && existing.ExpiresAt <= now)
