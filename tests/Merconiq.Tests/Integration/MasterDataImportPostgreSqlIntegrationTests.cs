@@ -220,11 +220,63 @@ public sealed class MasterDataImportPostgreSqlIntegrationTests(PostgreSqlIntegra
         fixture.EnsureEnabled();
         var tenantId = $"unit-import-concurrent-{Guid.NewGuid():N}";
         const string csv = "external_id,code,name,decimal_places,whole_unit_only\nunit-1,EA,Each,0,false";
+        var firstApplicationName = $"master-import-first-{Guid.NewGuid():N}";
+        var secondApplicationName = $"master-import-second-{Guid.NewGuid():N}";
+        var firstConnectionString = new NpgsqlConnectionStringBuilder(fixture.ConnectionString)
+        {
+            ApplicationName = firstApplicationName
+        }.ConnectionString;
+        var secondConnectionString = new NpgsqlConnectionStringBuilder(fixture.ConnectionString)
+        {
+            ApplicationName = secondApplicationName
+        }.ConnectionString;
 
-        await using var firstContext = fixture.CreateContext(tenantId);
-        await using var secondContext = fixture.CreateContext(tenantId);
-        var firstImport = CreateService(firstContext).ImportUnitsAsync(new ImportUnitsRequest(csv, false));
+        await using var firstContext = CreateMigrationContext(firstConnectionString, tenantId);
+        await using var secondContext = CreateMigrationContext(secondConnectionString, tenantId);
+        var firstLockAcquired = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseFirstLock = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var realFirstUnitOfWork = new UnitOfWork(firstContext);
+        var firstUnitOfWork = new Mock<IUnitOfWork>();
+        firstUnitOfWork
+            .Setup(work => work.ExecuteInTransactionAsync(
+                It.IsAny<Func<Task>>(), It.IsAny<CancellationToken>(), It.IsAny<Func<Task<bool>>?>()))
+            .Returns((Func<Task> operation, CancellationToken cancellationToken, Func<Task<bool>>? verifySucceeded) =>
+                realFirstUnitOfWork.ExecuteInTransactionAsync(operation, cancellationToken, verifySucceeded));
+        firstUnitOfWork
+            .Setup(work => work.AcquireTenantOperationLockAsync(
+                It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(async (string operation, CancellationToken cancellationToken) =>
+            {
+                await realFirstUnitOfWork.AcquireTenantOperationLockAsync(operation, cancellationToken);
+                firstLockAcquired.TrySetResult(true);
+                await releaseFirstLock.Task.WaitAsync(cancellationToken);
+            });
+
+        var firstImport = CreateService(firstContext, firstUnitOfWork.Object)
+            .ImportUnitsAsync(new ImportUnitsRequest(csv, false));
+        try
+        {
+            await firstLockAcquired.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        }
+        catch
+        {
+            releaseFirstLock.TrySetResult(true);
+            await firstImport;
+            throw;
+        }
+
         var secondImport = CreateService(secondContext).ImportUnitsAsync(new ImportUnitsRequest(csv, false));
+        try
+        {
+            await WaitForAdvisoryLockWaitAsync(fixture.ConnectionString, secondApplicationName);
+        }
+        catch
+        {
+            releaseFirstLock.TrySetResult(true);
+            await Task.WhenAll(firstImport, secondImport);
+            throw;
+        }
+        releaseFirstLock.TrySetResult(true);
 
         var results = await Task.WhenAll(firstImport, secondImport);
 
@@ -563,6 +615,26 @@ public sealed class MasterDataImportPostgreSqlIntegrationTests(PostgreSqlIntegra
             .UseNpgsql(connectionString)
             .Options;
         return new InventoryDbContext(options, new TestTenantContext(tenantId));
+    }
+
+    private static async Task WaitForAdvisoryLockWaitAsync(string connectionString, string applicationName)
+    {
+        await using var observer = new NpgsqlConnection(connectionString);
+        await observer.OpenAsync();
+        await using var command = new NpgsqlCommand(
+            "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE application_name = @applicationName " +
+            "AND wait_event_type = 'Lock' AND query LIKE '%pg_advisory_xact_lock%')",
+            observer);
+        command.Parameters.AddWithValue("applicationName", applicationName);
+
+        for (var attempt = 0; attempt < 100; attempt++)
+        {
+            if ((bool)(await command.ExecuteScalarAsync())!)
+                return;
+            await Task.Delay(TimeSpan.FromMilliseconds(50));
+        }
+
+        throw new TimeoutException("The second import did not wait for the first import's tenant lock.");
     }
 
     private static async Task WaitForMigrationLockAsync(string connectionString, string applicationName)
