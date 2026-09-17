@@ -21,7 +21,7 @@ public sealed class TaxRulesController(
     IUnitOfWork unitOfWork) : ControllerBase
 {
     [HttpGet]
-    [Authorize(Policy = CapabilityPolicies.View)]
+    [Authorize(Policy = CapabilityPolicies.TenantAdministrator)]
     public async Task<IActionResult> GetAll()
     {
         var rules = (await repository.GetAllAsync())
@@ -33,7 +33,7 @@ public sealed class TaxRulesController(
     }
 
     [HttpGet("{id:int}")]
-    [Authorize(Policy = CapabilityPolicies.View)]
+    [Authorize(Policy = CapabilityPolicies.TenantAdministrator)]
     public async Task<IActionResult> GetById(int id)
     {
         var rule = await repository.GetByIdAsync(id);
@@ -43,12 +43,14 @@ public sealed class TaxRulesController(
     }
 
     [HttpPost]
-    [Authorize(Policy = CapabilityPolicies.Edit)]
+    [Authorize(Policy = CapabilityPolicies.TenantAdministrator)]
     // This bearer-token API is not cookie-authenticated, so browser CSRF tokens do not apply.
     // Keep the explicit validation marker for static security analysis while opting out at runtime.
     [ValidateAntiForgeryToken]
     [IgnoreAntiforgeryToken]
-    public async Task<IActionResult> Create([FromBody] TaxRuleRequest request)
+    public async Task<IActionResult> Create(
+        [FromBody] TaxRuleRequest request,
+        CancellationToken cancellationToken = default)
     {
         try
         {
@@ -62,16 +64,6 @@ public sealed class TaxRulesController(
                 throw new ArgumentException("EffectiveToUtc must be later than EffectiveFromUtc.");
             }
 
-            var existing = await repository.FindAsync(rule => rule.Code == code);
-            if (existing.Any(rule => PeriodsOverlap(
-                    rule.EffectiveFromUtc,
-                    rule.EffectiveToUtc,
-                    effectiveFrom,
-                    effectiveTo)))
-            {
-                throw new ArgumentException("Tax-rule effective periods for the same code cannot overlap.");
-            }
-
             var rule = new TaxRule
             {
                 Code = code,
@@ -82,8 +74,25 @@ public sealed class TaxRulesController(
                 EffectiveToUtc = effectiveTo,
                 IsActive = request.IsActive
             };
-            await repository.AddAsync(rule);
-            await unitOfWork.SaveChangesAsync();
+            await unitOfWork.ExecuteInTransactionAsync(async () =>
+            {
+                // Serialize by tenant/code so different starts with overlapping
+                // intervals cannot both pass the application-level range check.
+                await unitOfWork.AcquireTenantOperationLockAsync(
+                    $"tax-rule-period:{code}", cancellationToken);
+                var existing = await repository.FindAsync(candidate => candidate.Code == code);
+                if (existing.Any(candidate => PeriodsOverlap(
+                        candidate.EffectiveFromUtc,
+                        candidate.EffectiveToUtc,
+                        effectiveFrom,
+                        effectiveTo)))
+                {
+                    throw new ArgumentException("Tax-rule effective periods for the same code cannot overlap.");
+                }
+
+                await repository.AddAsync(rule);
+                await unitOfWork.SaveChangesAsync(cancellationToken);
+            }, cancellationToken);
             return CreatedAtAction(nameof(GetById), new { id = rule.Id },
                 ApiResponse<TaxRuleResponse>.CreateSuccess(ToResponse(rule)));
         }

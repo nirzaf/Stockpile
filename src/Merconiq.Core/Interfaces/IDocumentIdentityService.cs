@@ -26,6 +26,16 @@ public interface IDocumentIdentityService
         string requestKey,
         CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// Checks for and returns a successful purchase-order replay before resolving mutable
+    /// tax policy. Uses the same request lock and request hash as creation.
+    /// </summary>
+    Task<PurchaseOrder?> TryReplayPurchaseOrderAsync(
+        PurchaseOrder purchaseOrder,
+        IReadOnlyCollection<OrderDetail> details,
+        string requestKey,
+        CancellationToken cancellationToken = default);
+
     /// <summary>Adds a directed traceability link; both lines must belong to the same tenant and company.</summary>
     Task LinkLinesAsync(
         DocumentLineIdentityId sourceLineId,
