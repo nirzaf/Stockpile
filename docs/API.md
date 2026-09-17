@@ -230,7 +230,9 @@ must be non-negative with at most six decimal places. Costed receipts are
 unbatched in this release; omitted `unitCost` preserves quantity-only behavior.
 
 `GET /api/v1/stock/valuation` returns each current tenant/item/location moving-average
-bucket and its ordered immutable valuation entries. Optional `itemId` and
+bucket and its ordered immutable valuation entries from one repeatable-read
+snapshot, so each returned balance reconciles with its ledger at the time of the
+read. Optional `itemId` and
 `locationId` filters are applied within the caller's authorized company scope;
 the endpoint is read-only and never recalculates or mutates posted costs.
 

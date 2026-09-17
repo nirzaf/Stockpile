@@ -177,8 +177,12 @@ public class UnitOfWork : IUnitOfWork
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(operation);
+        if (HasActiveTransaction)
+        {
+            throw new InvalidOperationException("A read snapshot must own its repeatable-read transaction.");
+        }
 
-        if (HasActiveTransaction || _context.Database.ProviderName == "Microsoft.EntityFrameworkCore.InMemory")
+        if (_context.Database.ProviderName == "Microsoft.EntityFrameworkCore.InMemory")
         {
             await operation();
             return;

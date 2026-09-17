@@ -36,6 +36,8 @@ public interface IUnitOfWork
         Func<Task<bool>>? verifySucceeded = null);
 
     /// <summary>Executes read operations against one repeatable database snapshot.</summary>
+    /// <param name="operation">The read operation that must share one snapshot.</param>
+    /// <param name="cancellationToken">A token used while creating and completing the transaction.</param>
     Task ExecuteInReadSnapshotAsync(
         Func<Task> operation,
         CancellationToken cancellationToken = default);
