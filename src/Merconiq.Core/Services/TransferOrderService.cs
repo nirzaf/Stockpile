@@ -28,6 +28,8 @@ public sealed class TransferOrderService(
     private const string DocumentType = "TransferOrder";
     private const string RequestScope = "TransferOrder.Create";
     private const string NumberPrefix = "TO-";
+    private static readonly DateTimeOffset ReservationUntilResolution =
+        new(9999, 12, 31, 0, 0, 0, TimeSpan.Zero);
 
     public async Task<TransferOrderView?> GetByIdAsync(int id, CancellationToken cancellationToken = default)
     {
@@ -141,12 +143,13 @@ public sealed class TransferOrderService(
 
             if (order.Status == TransferOrderStatus.Approved)
             {
+                var controlledScope = mutationScope with { AllowControlledTransferReservation = true };
                 foreach (var line in existingLines)
                 {
                     await stockService.ReleaseReservationAsync(
                         line.ReservationSourceLineReference,
                         "Transfer order amended; approval invalidated.",
-                        mutationScope);
+                        controlledScope);
                     line.SetReservationVersionForAmendment();
                 }
                 order.Status = TransferOrderStatus.Draft;
@@ -201,6 +204,7 @@ public sealed class TransferOrderService(
                 lineRequests,
                 order.Notes));
             await unitOfWork.AcquireLocationLocksAsync([order.FromLocationId, order.ToLocationId], cancellationToken);
+            var controlledScope = mutationScope with { AllowControlledTransferReservation = true };
             foreach (var line in lines)
             {
                 await stockService.CreateReservationAsync(new CreateStockReservationRequest(
@@ -209,7 +213,8 @@ public sealed class TransferOrderService(
                     line.Quantity,
                     line.ReservationSourceLineReference,
                     line.BatchNumber,
-                    line.ExpiryDate), mutationScope);
+                    line.ExpiryDate,
+                    ReservationUntilResolution), controlledScope);
             }
 
             order.Status = TransferOrderStatus.Approved;
@@ -239,13 +244,14 @@ public sealed class TransferOrderService(
 
             if (order.Status == TransferOrderStatus.Approved)
             {
+                var controlledScope = mutationScope with { AllowControlledTransferReservation = true };
                 var lines = await lineRepository.FindAsync(line => line.TransferOrderId == id);
                 foreach (var line in lines)
                 {
                     await stockService.ReleaseReservationAsync(
                         line.ReservationSourceLineReference,
                         "Transfer order cancelled.",
-                        mutationScope);
+                        controlledScope);
                 }
             }
 
@@ -314,7 +320,7 @@ public sealed class TransferOrderService(
                 throw new ArgumentException("Transfer-order line IDs must be positive when supplied.");
             if (line.BatchNumber?.Length > 100)
                 throw new ArgumentException("Batch numbers cannot exceed 100 characters.");
-            if (line.ExpiryDate.HasValue && StockLotExpiryDate.Normalize(line.ExpiryDate) <= DateTime.UtcNow.Date)
+            if (line.ExpiryDate.HasValue && StockLotExpiryDate.Normalize(line.ExpiryDate) < DateTime.UtcNow.Date)
                 throw new ArgumentException("Expired lots cannot be used in transfer orders.");
         }
         return lines.ToArray();

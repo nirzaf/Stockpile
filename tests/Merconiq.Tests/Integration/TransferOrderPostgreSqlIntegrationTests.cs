@@ -65,7 +65,17 @@ public sealed class TransferOrderPostgreSqlIntegrationTests(PostgreSqlIntegratio
                     stockRow.ItemId == itemId && stockRow.LocationId == sourceLocationId))
                 .Should().Match<StockInHand>(stockRow => stockRow.Quantity == 10 && stockRow.ReservedQuantity == 3);
             (await operation.StockReservations.SingleAsync()).Should().Match<StockReservation>(reservation =>
-                reservation.Quantity == 3 && reservation.Status == StockReservationStatus.Active);
+                reservation.Quantity == 3 &&
+                reservation.Status == StockReservationStatus.Active &&
+                reservation.ExpiresAt > DateTimeOffset.UtcNow.AddYears(50));
+
+            await using var genericMutation = fixture.CreateContext(tenantId);
+            var genericStock = CreateStockService(genericMutation, tenantId);
+            var sourceLineReference = (await genericMutation.StockReservations.SingleAsync()).SourceLineReference;
+            await FluentAssertions.FluentActions.Invoking(() => genericStock.ConsumeReservationAsync(
+                    new ConsumeStockReservationRequest(sourceLineReference, 1),
+                    new StockMutationScope(companyId)))
+                .Should().ThrowAsync<UnauthorizedAccessException>();
 
             await using var cancellation = fixture.CreateContext(tenantId);
             await CreateService(cancellation, tenantId)
@@ -82,19 +92,7 @@ public sealed class TransferOrderPostgreSqlIntegrationTests(PostgreSqlIntegratio
     {
         var tenant = new TestTenantContext(tenantId);
         var unitOfWork = new UnitOfWork(context);
-        var stock = new StockService(
-            new Repository<StockInHand>(context),
-            new Repository<StockTransaction>(context),
-            new Repository<Item>(context),
-            new Repository<Location>(context),
-            new Repository<Branch>(context),
-            unitOfWork,
-            new Mock<IWebhookDispatcher>().Object,
-            tenant,
-            NullLogger<StockService>.Instance,
-            new Repository<StockValuationBucket>(context),
-            new Repository<StockValuationEntry>(context),
-            new Repository<StockReservation>(context));
+        var stock = CreateStockService(context, tenant, unitOfWork);
         return new TransferOrderService(
             new Repository<TransferOrder>(context),
             new Repository<TransferOrderLine>(context),
@@ -111,4 +109,27 @@ public sealed class TransferOrderPostgreSqlIntegrationTests(PostgreSqlIntegratio
             new Mock<IWebhookDispatcher>().Object,
             NullLogger<TransferOrderService>.Instance);
     }
+
+    private static StockService CreateStockService(InventoryDbContext context, string tenantId)
+    {
+        var tenant = new TestTenantContext(tenantId);
+        return CreateStockService(context, tenant, new UnitOfWork(context));
+    }
+
+    private static StockService CreateStockService(
+        InventoryDbContext context,
+        TestTenantContext tenant,
+        UnitOfWork unitOfWork) => new(
+            new Repository<StockInHand>(context),
+            new Repository<StockTransaction>(context),
+            new Repository<Item>(context),
+            new Repository<Location>(context),
+            new Repository<Branch>(context),
+            unitOfWork,
+            new Mock<IWebhookDispatcher>().Object,
+            tenant,
+            NullLogger<StockService>.Instance,
+            new Repository<StockValuationBucket>(context),
+            new Repository<StockValuationEntry>(context),
+            new Repository<StockReservation>(context));
 }

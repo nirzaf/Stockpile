@@ -10,4 +10,5 @@ namespace Merconiq.Core.Models;
 /// </summary>
 public readonly record struct StockMutationScope(
     int? CompanyId,
-    Func<Task<bool>>? Reauthorize = null);
+    Func<Task<bool>>? Reauthorize = null,
+    bool AllowControlledTransferReservation = false);

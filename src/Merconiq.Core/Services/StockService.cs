@@ -374,6 +374,8 @@ public class StockService : IStockService
         if (quantity <= 0) throw new ArgumentException("Quantity must be positive");
         expiryDate = StockLotExpiryDate.Normalize(expiryDate);
         EnsureLotNotExpired(expiryDate);
+        if (!string.IsNullOrWhiteSpace(reservationSourceLineReference))
+            EnsureControlledTransferReservationAccess(reservationSourceLineReference, mutationScope);
 
         StockTransaction? transaction = null;
         await ExecuteWithRetryAsync(itemId, async () =>
@@ -681,6 +683,7 @@ public class StockService : IStockService
         EnsureReservationFields(null, request.Notes);
         EnsureReservationRepository();
         var sourceLineReference = request.SourceLineReference.Trim();
+        EnsureControlledTransferReservationAccess(sourceLineReference, mutationScope);
         var reservation = await GetReservationAsync(sourceLineReference)
             ?? throw new KeyNotFoundException("Reservation not found.");
         if (reservation.Status != StockReservationStatus.Active)
@@ -826,6 +829,7 @@ public class StockService : IStockService
             var initialReservation = await FindReservationAsync(source);
             if (initialReservation is null)
                 throw new KeyNotFoundException("Reservation not found.");
+            EnsureControlledTransferReservationAccess(source, mutationScope);
             await _unitOfWork.AcquireLocationLocksAsync([initialReservation.LocationId]);
             var reservation = await FindReservationAsync(source);
             if (reservation is null || reservation.LocationId != initialReservation.LocationId)
@@ -1224,6 +1228,18 @@ public class StockService : IStockService
         {
             throw new UnauthorizedAccessException(
                 "Company posting access changed before the stock mutation could be committed.");
+        }
+    }
+
+    private static void EnsureControlledTransferReservationAccess(
+        string sourceLineReference,
+        StockMutationScope? mutationScope)
+    {
+        if (sourceLineReference.StartsWith("TransferOrder:", StringComparison.OrdinalIgnoreCase) &&
+            mutationScope?.AllowControlledTransferReservation != true)
+        {
+            throw new UnauthorizedAccessException(
+                "Transfer-order reservations can only be changed by the transfer-order workflow.");
         }
     }
 
