@@ -358,7 +358,7 @@ public sealed class TransferOrderPostgreSqlIntegrationTests(PostgreSqlIntegratio
     public async Task Transfer_order_completion_aggregates_settlements_across_all_dispatch_entries()
     {
         fixture.EnsureEnabled();
-        var tenantId = $"transfer-settlement-multiple-dispatches-{Guid.NewGuid():N}";
+        var tenantId = $"transit-multi-{Guid.NewGuid():N}";
         var seeded = await CreateApprovedTransferAsync(tenantId, 30, unitCost: 10m);
 
         await using var operation = fixture.CreateContext(tenantId);
