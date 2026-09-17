@@ -231,41 +231,44 @@ public class PurchaseOrderService : IPurchaseOrderService
     /// <inheritdoc />
     public async Task UpdateStatusAsync(int id, string status)
     {
-        var po = await _poRepo.GetByIdAsync(id);
-        if (po == null) throw new InvalidOperationException("Purchase order not found");
-
         if (!Enum.TryParse<PurchaseOrderStatus>(status, ignoreCase: true, out var parsedStatus))
             throw new ArgumentException($"Invalid status: {status}");
 
-        var previousStatus = po.Status;
-        if (previousStatus != parsedStatus && !IsValidTransition(previousStatus, parsedStatus))
-            throw new InvalidOperationException($"Invalid purchase order status transition: {previousStatus} -> {parsedStatus}");
-
-        if (previousStatus != parsedStatus && parsedStatus == PurchaseOrderStatus.Approved)
+        await _unitOfWork.ExecuteInTransactionAsync(async () =>
         {
-            if (po.CommercialVersion < 1)
-                throw new InvalidOperationException("A purchase order must have a valid commercial version before approval.");
+            var po = await _poRepo.GetByIdAsync(id);
+            if (po == null) throw new InvalidOperationException("Purchase order not found");
 
-            po.ApprovedCommercialSnapshotJson = await CaptureApprovedSnapshotAsync(po);
-            po.ApprovedCommercialVersion = po.CommercialVersion;
-        }
+            var previousStatus = po.Status;
+            if (previousStatus != parsedStatus && !IsValidTransition(previousStatus, parsedStatus))
+                throw new InvalidOperationException($"Invalid purchase order status transition: {previousStatus} -> {parsedStatus}");
 
-        await _documentIdentityService.TransitionLifecycleAsync(
-            po.DocumentId,
-            ToDocumentLifecycle(parsedStatus));
-        po.Status = parsedStatus;
-        if (previousStatus != parsedStatus)
-        {
-            await _webhookDispatcher.EnqueueAsync(WebhookEventFactory.Create(_tenantContext, "PurchaseOrder.StatusChanged", new
+            if (previousStatus != parsedStatus && parsedStatus == PurchaseOrderStatus.Approved)
             {
-                PurchaseOrderId = po.Id,
-                PONumber = po.PONumber,
-                PreviousStatus = previousStatus.ToString(),
-                Status = parsedStatus.ToString()
-            }));
-        }
-        await _unitOfWork.SaveChangesAsync();
-        _logger.LogInformation("Updated PO {Id} status to {Status}", id, parsedStatus);
+                if (po.CommercialVersion < 1)
+                    throw new InvalidOperationException("A purchase order must have a valid commercial version before approval.");
+
+                po.ApprovedCommercialSnapshotJson = await CaptureApprovedSnapshotAsync(po);
+                po.ApprovedCommercialVersion = po.CommercialVersion;
+            }
+
+            await _documentIdentityService.TransitionLifecycleAsync(
+                po.DocumentId,
+                ToDocumentLifecycle(parsedStatus));
+            po.Status = parsedStatus;
+            if (previousStatus != parsedStatus)
+            {
+                await _webhookDispatcher.EnqueueAsync(WebhookEventFactory.Create(_tenantContext, "PurchaseOrder.StatusChanged", new
+                {
+                    PurchaseOrderId = po.Id,
+                    PONumber = po.PONumber,
+                    PreviousStatus = previousStatus.ToString(),
+                    Status = parsedStatus.ToString()
+                }));
+            }
+            await _unitOfWork.SaveChangesAsync();
+            _logger.LogInformation("Updated PO {Id} status to {Status}", id, parsedStatus);
+        });
     }
 
     /// <inheritdoc />
@@ -523,16 +526,19 @@ public class PurchaseOrderService : IPurchaseOrderService
     /// <inheritdoc />
     public async Task DeleteAsync(int id)
     {
-        var po = await _poRepo.GetByIdAsync(id);
-        if (po != null)
+        await _unitOfWork.ExecuteInTransactionAsync(async () =>
         {
-            if (po.Status is not (PurchaseOrderStatus.Draft or PurchaseOrderStatus.Pending))
-                throw new InvalidOperationException($"Purchase order {id} in status {po.Status} cannot be deleted.");
+            var po = await _poRepo.GetByIdAsync(id);
+            if (po != null)
+            {
+                if (po.Status is not (PurchaseOrderStatus.Draft or PurchaseOrderStatus.Pending))
+                    throw new InvalidOperationException($"Purchase order {id} in status {po.Status} cannot be deleted.");
 
-            _logger.LogInformation("Cancelling PO {Id} without releasing its document number", id);
-            await _documentIdentityService.TransitionLifecycleAsync(po.DocumentId, DocumentLifecycleStatus.Cancelled);
-            po.Status = PurchaseOrderStatus.Cancelled;
-            await _unitOfWork.SaveChangesAsync();
-        }
+                _logger.LogInformation("Cancelling PO {Id} without releasing its document number", id);
+                await _documentIdentityService.TransitionLifecycleAsync(po.DocumentId, DocumentLifecycleStatus.Cancelled);
+                po.Status = PurchaseOrderStatus.Cancelled;
+                await _unitOfWork.SaveChangesAsync();
+            }
+        });
     }
 }

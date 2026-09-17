@@ -216,6 +216,24 @@ public sealed class DocumentIdentityPostgreSqlIntegrationTests(PostgreSqlIntegra
         var service = new DocumentIdentityService(context, unitOfWork, new DocumentNumberService(context, unitOfWork));
         await service.LinkLinesAsync(companyOneLineA, companyOneLineB, DocumentLineRelationshipType.Successor);
 
+        context.ChangeTracker.Clear();
+        var persistedLink = await context.DocumentLineLinks.SingleAsync();
+        persistedLink.RelationshipType = DocumentLineRelationshipType.Source;
+        var updateLink = () => context.SaveChangesAsync();
+        await updateLink.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("Document line links are append-only and cannot be updated or deleted.");
+
+        context.ChangeTracker.Clear();
+        var linkToDelete = await context.DocumentLineLinks.SingleAsync();
+        context.DocumentLineLinks.Remove(linkToDelete);
+        var deleteLink = () => context.SaveChangesAsync();
+        await deleteLink.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("Document line links are append-only and cannot be updated or deleted.");
+
+        context.ChangeTracker.Clear();
+        var retainedLink = await context.DocumentLineLinks.SingleAsync();
+        retainedLink.RelationshipType.Should().Be(DocumentLineRelationshipType.Successor);
+
         var crossCompany = () => service.LinkLinesAsync(companyOneLineA, companyTwoLine, DocumentLineRelationshipType.Source);
         await crossCompany.Should().ThrowAsync<InvalidOperationException>()
             .WithMessage("Cross-company document-line links are not allowed.");
