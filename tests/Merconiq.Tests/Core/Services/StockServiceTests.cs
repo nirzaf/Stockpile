@@ -4,6 +4,7 @@ using FluentAssertions;
 using Merconiq.Core.Entities;
 using Merconiq.Core.Exceptions;
 using Merconiq.Core.Interfaces;
+using Merconiq.Core.Models;
 using Merconiq.Core.Services;
 using Merconiq.Tests.Common;
 using Merconiq.Tests.Infrastructure;
@@ -565,5 +566,76 @@ public class StockServiceTests
 
         await act.Should().ThrowAsync<InvalidOperationException>()
             .WithMessage("Inactive items cannot be used in stock operations.");
+    }
+
+    [Fact]
+    public async Task ReceiveStockAsync_rejects_ownership_changed_after_authorization()
+    {
+        _locations[0].BranchId = 7;
+        _branches.Add(new Branch { Id = 7, TenantId = "test-tenant", CompanyId = 22, IsActive = true });
+
+        var act = () => _sut.ReceiveStockAsync(
+            1, _locations[0].Id, 1, "authorized for another company",
+            mutationScope: new StockMutationScope(11));
+
+        await act.Should().ThrowAsync<UnauthorizedAccessException>()
+            .WithMessage("Location ownership changed while stock access was being authorized.*");
+        _uowMock.Verify(u => u.AcquireLocationLocksAsync(
+            It.Is<IReadOnlyCollection<int>>(ids => ids.SequenceEqual(new[] { _locations[0].Id })),
+            It.IsAny<CancellationToken>()), Times.Once);
+        _stockRepoMock.Verify(r => r.AddAsync(It.IsAny<StockInHand>()), Times.Never);
+        _txRepoMock.Verify(r => r.AddAsync(It.IsAny<StockTransaction>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ReleaseReservationAsync_acquires_its_location_lock_before_mutating()
+    {
+        var reservation = new StockReservation
+        {
+            Id = 19,
+            ItemId = 1,
+            LocationId = 4,
+            SourceLineReference = "line-19",
+            Quantity = 3,
+            ExpiresAt = DateTimeOffset.UtcNow.AddHours(1)
+        };
+        var stock = new StockInHand
+        {
+            ItemId = 1,
+            LocationId = 4,
+            Quantity = 8,
+            ReservedQuantity = 3
+        };
+        var reservationRepo = new Mock<IRepository<StockReservation>>();
+        reservationRepo.Setup(repo => repo.FindAsync(It.IsAny<Expression<Func<StockReservation, bool>>>() ))
+            .Returns((Expression<Func<StockReservation, bool>> predicate) =>
+                Task.FromResult<IEnumerable<StockReservation>>(
+                    new[] { reservation }.Where(predicate.Compile()).ToArray()));
+        _stockRepoMock.Setup(repo => repo.FindAsync(It.IsAny<Expression<Func<StockInHand, bool>>>() ))
+            .Returns((Expression<Func<StockInHand, bool>> predicate) =>
+                Task.FromResult<IEnumerable<StockInHand>>(
+                    new[] { stock }.Where(predicate.Compile()).ToArray()));
+        var service = new StockService(
+            _stockRepoMock.Object,
+            _txRepoMock.Object,
+            _itemRepoMock.Object,
+            _locationRepoMock.Object,
+            _branchRepoMock.Object,
+            _uowMock.Object,
+            _webhookDispatcherMock.Object,
+            new TestTenantContext("test-tenant"),
+            NullLogger<StockService>.Instance,
+            _valuationBucketRepoMock.Object,
+            _valuationEntryRepoMock.Object,
+            reservationRepo.Object);
+
+        await service.ReleaseReservationAsync(
+            "line-19", "release test", new StockMutationScope(null));
+
+        _uowMock.Verify(unit => unit.AcquireLocationLocksAsync(
+            It.Is<IReadOnlyCollection<int>>(ids => ids.SequenceEqual(new[] { 4 })),
+            It.IsAny<CancellationToken>()), Times.Once);
+        stock.ReservedQuantity.Should().Be(0);
+        reservation.Status.Should().Be(StockReservationStatus.Released);
     }
 }

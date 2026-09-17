@@ -41,6 +41,7 @@ public interface IStockService
     /// <param name="batchNumber">Optional lot/batch number.</param>
     /// <param name="expiryDate">Optional expiry date for perishable stock.</param>
     /// <param name="unitCost">Optional acquisition cost per base unit.</param>
+    /// <param name="mutationScope">Company authorized by the caller before posting; revalidated under the location lock.</param>
     /// <exception cref="Exceptions.ConcurrencyException">Thrown when concurrent updates are detected after retries are exhausted.</exception>
     Task ReceiveStockAsync(
         int itemId,
@@ -49,7 +50,8 @@ public interface IStockService
         string? notes,
         string? batchNumber = null,
         DateTime? expiryDate = null,
-        decimal? unitCost = null);
+        decimal? unitCost = null,
+        StockMutationScope? mutationScope = null);
 
     /// <summary>Transfers stock between two locations atomically.</summary>
     /// <param name="itemId">The item identifier.</param>
@@ -59,9 +61,18 @@ public interface IStockService
     /// <param name="notes">Optional free-text notes.</param>
     /// <param name="batchNumber">Optional lot/batch number.</param>
     /// <param name="expiryDate">Optional expiry date for perishable stock.</param>
+    /// <param name="mutationScope">Company authorized by the caller before posting; revalidated under both location locks.</param>
     /// <exception cref="Exceptions.ConcurrencyException">Thrown when concurrent updates are detected after retries are exhausted.</exception>
     /// <exception cref="InvalidOperationException">Thrown when the source location has insufficient stock.</exception>
-    Task TransferStockAsync(int itemId, int fromLocationId, int toLocationId, int quantity, string? notes, string? batchNumber = null, DateTime? expiryDate = null);
+    Task TransferStockAsync(
+        int itemId,
+        int fromLocationId,
+        int toLocationId,
+        int quantity,
+        string? notes,
+        string? batchNumber = null,
+        DateTime? expiryDate = null,
+        StockMutationScope? mutationScope = null);
 
     /// <summary>Sells stock out of a location, decreasing on-hand quantity.</summary>
     /// <param name="itemId">The item identifier.</param>
@@ -71,6 +82,7 @@ public interface IStockService
     /// <param name="batchNumber">Optional lot/batch number.</param>
     /// <param name="expiryDate">Optional expiry date for perishable stock.</param>
     /// <param name="reservationSourceLineReference">Optional source line being consumed.</param>
+    /// <param name="mutationScope">Company authorized by the caller before posting; revalidated under the location lock.</param>
     /// <exception cref="Exceptions.ConcurrencyException">Thrown when concurrent updates are detected after retries are exhausted.</exception>
     /// <exception cref="InvalidOperationException">Thrown when the location has insufficient stock to sell.</exception>
     Task SellStockAsync(
@@ -80,19 +92,20 @@ public interface IStockService
         string? notes,
         string? batchNumber = null,
         DateTime? expiryDate = null,
-        string? reservationSourceLineReference = null);
+        string? reservationSourceLineReference = null,
+        StockMutationScope? mutationScope = null);
 
     /// <summary>Creates a lot-specific reservation for one source document line.</summary>
-    Task CreateReservationAsync(CreateStockReservationRequest request);
+    Task CreateReservationAsync(CreateStockReservationRequest request, StockMutationScope? mutationScope = null);
 
     /// <summary>Releases an active reservation and returns its quantity to availability.</summary>
-    Task ReleaseReservationAsync(string sourceLineReference, string? reason = null);
+    Task ReleaseReservationAsync(string sourceLineReference, string? reason = null, StockMutationScope? mutationScope = null);
 
     /// <summary>Cancels an active reservation and returns its quantity to availability.</summary>
-    Task CancelReservationAsync(string sourceLineReference, string? reason = null);
+    Task CancelReservationAsync(string sourceLineReference, string? reason = null, StockMutationScope? mutationScope = null);
 
     /// <summary>Consumes reserved quantity through the normal atomic sale posting.</summary>
-    Task ConsumeReservationAsync(ConsumeStockReservationRequest request);
+    Task ConsumeReservationAsync(ConsumeStockReservationRequest request, StockMutationScope? mutationScope = null);
 
     /// <summary>Gets one reservation by its stable source-line reference.</summary>
     Task<StockReservationView?> GetReservationAsync(string sourceLineReference);

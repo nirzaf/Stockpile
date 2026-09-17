@@ -2,11 +2,14 @@ using FluentAssertions;
 using Merconiq.Core.Entities;
 using Merconiq.Core.Interfaces;
 using Merconiq.Core.Models;
+using Merconiq.Core.Services;
 using Merconiq.Infrastructure.Data;
 using Merconiq.Infrastructure.Repositories;
 using Merconiq.Infrastructure.Services;
 using Merconiq.Tests.Infrastructure;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging.Abstractions;
+using Moq;
 using Npgsql;
 
 namespace Merconiq.Tests.Integration;
@@ -107,6 +110,160 @@ public sealed class OrganizationPostgreSqlIntegrationTests(PostgreSqlIntegration
         (await context.Companies.SingleAsync()).BaseCurrency.Should().Be("QAR");
     }
 
+    [PostgreSqlFact]
+    public async Task Location_branch_ownership_cannot_change_after_posted_stock_activity()
+    {
+        fixture.EnsureEnabled();
+        var tenantId = $"location-ownership-{Guid.NewGuid():N}";
+        int locationId;
+        int originalBranchId;
+        int newBranchId;
+
+        await using (var setup = fixture.CreateContext(tenantId))
+        {
+            var company = new Company { Code = "COMPANY", LegalName = "Company" };
+            var originalBranch = new Branch { Company = company, Code = "ORIGINAL", Name = "Original" };
+            var newBranch = new Branch { Company = company, Code = "NEW", Name = "New" };
+            var location = new Location { Branch = originalBranch, Name = "Warehouse" };
+            var item = new Item { ItemCode = "OWNERSHIP-ITEM", Description = "Ownership fixture", Rate = 1m };
+            setup.Companies.Add(company);
+            setup.Branches.AddRange(originalBranch, newBranch);
+            setup.Locations.Add(location);
+            setup.Items.Add(item);
+            await setup.SaveChangesAsync();
+            setup.StockTransactions.Add(new StockTransaction
+            {
+                ItemId = item.Id,
+                FromLocationId = location.Id,
+                Quantity = 1,
+                TransactionType = TransactionType.Receive
+            });
+            await setup.SaveChangesAsync();
+            locationId = location.Id;
+            originalBranchId = originalBranch.Id;
+            newBranchId = newBranch.Id;
+        }
+
+        await using var context = fixture.CreateContext(tenantId);
+        var service = CreateService(context, tenantId);
+        var act = () => service.AssignLocationBranchAsync(locationId, newBranchId);
+
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("A location's branch ownership cannot change after posted stock activity.");
+        (await context.Locations.SingleAsync(location => location.Id == locationId))
+            .BranchId.Should().Be(originalBranchId);
+    }
+
+    [PostgreSqlFact]
+    public async Task Location_reassignment_waits_for_stock_posting_then_rejects_the_ownership_change()
+    {
+        fixture.EnsureEnabled();
+        var tenantId = $"location-ownership-race-{Guid.NewGuid():N}";
+        var token = Guid.NewGuid().ToString("N");
+        int locationId;
+        int originalBranchId;
+        int newBranchId;
+
+        await using (var setup = fixture.CreateContext(tenantId))
+        {
+            var company = new Company { Code = "COMPANY", LegalName = "Company" };
+            var originalBranch = new Branch { Company = company, Code = "ORIGINAL", Name = "Original" };
+            var newBranch = new Branch { Company = company, Code = "NEW", Name = "New" };
+            var location = new Location { Branch = originalBranch, Name = "Warehouse" };
+            var item = new Item { ItemCode = "OWNERSHIP-RACE-ITEM", Description = "Ownership race fixture", Rate = 1m };
+            setup.Companies.Add(company);
+            setup.Branches.AddRange(originalBranch, newBranch);
+            setup.Locations.Add(location);
+            setup.Items.Add(item);
+            await setup.SaveChangesAsync();
+            locationId = location.Id;
+            originalBranchId = originalBranch.Id;
+            newBranchId = newBranch.Id;
+        }
+
+        var posterName = $"ownership-poster-{token}";
+        await using var poster = fixture.CreateContext(tenantId, posterName);
+        var posterUnitOfWork = new UnitOfWork(poster);
+        await posterUnitOfWork.BeginTransactionAsync();
+        await posterUnitOfWork.AcquireLocationLocksAsync([locationId]);
+        poster.StockTransactions.Add(new StockTransaction
+        {
+            ItemId = await poster.Items.Where(item => item.ItemCode == "OWNERSHIP-RACE-ITEM")
+                .Select(item => item.Id).SingleAsync(),
+            FromLocationId = locationId,
+            Quantity = 1,
+            TransactionType = TransactionType.Receive
+        });
+        await posterUnitOfWork.SaveChangesAsync();
+
+        var assignmentName = $"ownership-assignment-{token}";
+        var assignment = RunLocationAssignmentAsync(fixture, tenantId, assignmentName, locationId, newBranchId);
+        await using var monitor = fixture.CreateContext(tenantId, $"ownership-monitor-{token}");
+        await WaitForLockWaitAsync(monitor, assignmentName, "advisory");
+
+        await posterUnitOfWork.CommitTransactionAsync();
+        var result = () => assignment;
+        await result.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("A location's branch ownership cannot change after posted stock activity.");
+
+        await using var verify = fixture.CreateContext(tenantId);
+        (await verify.Locations.SingleAsync(location => location.Id == locationId))
+            .BranchId.Should().Be(originalBranchId);
+    }
+
+    [PostgreSqlFact]
+    public async Task Stock_posting_rejects_a_company_scope_stale_after_location_reassignment()
+    {
+        fixture.EnsureEnabled();
+        var tenantId = $"location-scope-race-{Guid.NewGuid():N}";
+        var token = Guid.NewGuid().ToString("N");
+        int itemId;
+        int locationId;
+        int originalBranchId;
+        int newBranchId;
+        int originalCompanyId;
+
+        await using (var setup = fixture.CreateContext(tenantId))
+        {
+            var originalCompany = new Company { Code = $"A-{token[..10]}", LegalName = "Original" };
+            var newCompany = new Company { Code = $"B-{token[..10]}", LegalName = "New" };
+            var originalBranch = new Branch { Company = originalCompany, Code = "ORIGINAL", Name = "Original" };
+            var newBranch = new Branch { Company = newCompany, Code = "NEW", Name = "New" };
+            var location = new Location { Branch = originalBranch, Name = "Warehouse" };
+            var item = new Item { ItemCode = $"SCOPE-{token[..10]}", Description = "Scope fixture", Rate = 1m };
+            setup.Companies.AddRange(originalCompany, newCompany);
+            setup.Branches.AddRange(originalBranch, newBranch);
+            setup.Locations.Add(location);
+            setup.Items.Add(item);
+            await setup.SaveChangesAsync();
+            itemId = item.Id;
+            locationId = location.Id;
+            originalBranchId = originalBranch.Id;
+            newBranchId = newBranch.Id;
+            originalCompanyId = originalCompany.Id;
+        }
+
+        await using (var reassignment = fixture.CreateContext(tenantId, $"scope-reassign-{token}"))
+        {
+            await CreateService(reassignment, tenantId).AssignLocationBranchAsync(locationId, newBranchId);
+        }
+
+        await using var context = fixture.CreateContext(tenantId, $"scope-post-{token}");
+        var unitOfWork = new UnitOfWork(context);
+        var stockService = CreateStockService(context, tenantId, unitOfWork);
+        var act = () => stockService.ReceiveStockAsync(
+            itemId, locationId, 1, "previously authorized under original company",
+            mutationScope: new StockMutationScope(originalCompanyId));
+
+        await act.Should().ThrowAsync<UnauthorizedAccessException>()
+            .WithMessage("Location ownership changed while stock access was being authorized.*");
+        (await context.Locations.SingleAsync(location => location.Id == locationId))
+            .BranchId.Should().Be(newBranchId);
+        (await context.StockInHand.CountAsync()).Should().Be(0);
+        (await context.StockTransactions.CountAsync()).Should().Be(0);
+        originalBranchId.Should().NotBe(newBranchId);
+    }
+
     private static async Task RunCompanyUpdateAsync(
         PostgreSqlIntegrationFixture fixture,
         string tenantId,
@@ -133,6 +290,18 @@ public sealed class OrganizationPostgreSqlIntegrationTests(PostgreSqlIntegration
             new UpdateBranchRequest("Inactive branch", null, "UTC", isActive));
     }
 
+    private static async Task RunLocationAssignmentAsync(
+        PostgreSqlIntegrationFixture fixture,
+        string tenantId,
+        string applicationName,
+        int locationId,
+        int branchId)
+    {
+        await using var context = fixture.CreateContext(tenantId, applicationName);
+        var service = CreateService(context, tenantId);
+        await service.AssignLocationBranchAsync(locationId, branchId);
+    }
+
     private static OrganizationService CreateService(InventoryDbContext context, string tenantId) => new(
         new Repository<Company>(context),
         new Repository<Branch>(context),
@@ -140,6 +309,23 @@ public sealed class OrganizationPostgreSqlIntegrationTests(PostgreSqlIntegration
         new UnitOfWork(context),
         new TestTenantContext(tenantId),
         context);
+
+    private static StockService CreateStockService(
+        InventoryDbContext context,
+        string tenantId,
+        IUnitOfWork unitOfWork) => new(
+        new Repository<StockInHand>(context),
+        new Repository<StockTransaction>(context),
+        new Repository<Item>(context),
+        new Repository<Location>(context),
+        new Repository<Branch>(context),
+        unitOfWork,
+        new Mock<IWebhookDispatcher>().Object,
+        new TestTenantContext(tenantId),
+        NullLogger<StockService>.Instance,
+        new Repository<StockValuationBucket>(context),
+        new Repository<StockValuationEntry>(context),
+        new Repository<StockReservation>(context));
 
     private static async Task WaitForLockWaitAsync(
         InventoryDbContext context,
