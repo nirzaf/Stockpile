@@ -529,8 +529,24 @@ public sealed class StockReservationPostgreSqlApiAcceptanceTests(PostgreSqlInteg
             lockObjectSubId = Convert.ToInt32(reader.GetValue(2));
         }
 
-        var firstRequest = CreateReservationAsync(client, seed, sourceLineReferenceA, 5);
-        var secondRequest = CreateReservationAsync(client, seed, sourceLineReferenceB, 5);
+        // Use distinct TestServer clients so each request has an independent handler/connection
+        // path; a single client can serialize in-memory requests before both reach PostgreSQL.
+        using var secondClient = _factory.CreateClient();
+        secondClient.DefaultRequestHeaders.Authorization = client.DefaultRequestHeaders.Authorization;
+
+        var startRequests = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var firstRequest = Task.Run(async () =>
+        {
+            await startRequests.Task;
+            return await CreateReservationAsync(client, seed, sourceLineReferenceA, 5);
+        });
+        var secondRequest = Task.Run(async () =>
+        {
+            await startRequests.Task;
+            return await CreateReservationAsync(secondClient, seed, sourceLineReferenceB, 5);
+        });
+        startRequests.SetResult();
+
         var observedBothRequestsWaiting = await WaitForAdvisoryLockWaitersAsync(
             connection,
             transaction,
@@ -538,7 +554,7 @@ public sealed class StockReservationPostgreSqlApiAcceptanceTests(PostgreSqlInteg
             lockObjectId,
             lockObjectSubId,
             expectedWaiters: 2,
-            timeout: TimeSpan.FromSeconds(15));
+            timeout: TimeSpan.FromSeconds(30));
 
         await transaction.RollbackAsync();
         var results = await Task.WhenAll(firstRequest, secondRequest);
