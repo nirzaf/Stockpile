@@ -88,6 +88,17 @@ public sealed class StockNestedUnitOfWorkPostgreSqlIntegrationTests(PostgreSqlIn
                 (await concurrentRead.StockInHand.CountAsync()).Should().Be(0);
                 (await concurrentRead.StockTransactions.CountAsync(transaction => transaction.Notes == notes))
                     .Should().Be(0);
+                (await concurrentRead.StockValuationBuckets.CountAsync()).Should().Be(0);
+                (await concurrentRead.StockValuationEntries.CountAsync()).Should().Be(0);
+                (await concurrentRead.WebhookDeliveries.CountAsync(delivery =>
+                    delivery.SubscriptionId == subscriptionId && delivery.EventType == "Stock.Received"))
+                    .Should().Be(0);
+                (await concurrentRead.AuditLogs.CountAsync(audit =>
+                    audit.EntityName == nameof(StockInHand) ||
+                    audit.EntityName == nameof(StockTransaction) ||
+                    audit.EntityName == nameof(StockValuationBucket) ||
+                    audit.EntityName == nameof(StockValuationEntry) ||
+                    audit.EntityName == nameof(WebhookDelivery))).Should().Be(0);
                 throw new InvalidOperationException("Injected failure after nested stock posting.");
             });
 
