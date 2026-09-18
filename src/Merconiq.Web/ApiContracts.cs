@@ -57,3 +57,13 @@ public sealed record ItemMasterExportRecord(
     int QuantityPrecision,
     bool WholeUnitOnly,
     bool IsActive);
+
+public sealed record SupplierSourceExportResponse(
+    int PageSize,
+    bool HasMore,
+    string? NextCursor,
+    IReadOnlyList<SupplierSourceExportRecord> Suppliers);
+
+public sealed record SupplierSourceExportRecord(
+    string ExternalId,
+    string Name);

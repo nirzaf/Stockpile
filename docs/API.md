@@ -123,6 +123,7 @@ Webhook administration is restricted to `Admin` and `Manager`.
 | POST | `/api/v1/organization/units/import` | Tenant `Admin` plus `CompanyId` | `200` or `422` |
 | GET | `/api/v1/organization/units/export` | Tenant `Admin` | `200` or `400` |
 | GET | `/api/v1/organization/items/export` | Tenant `Admin` | `200` or `400` |
+| GET | `/api/v1/organization/suppliers/export` | Tenant `Admin` | `200` or `400` |
 | POST | `/api/v1/organization/items/import` | Company `Edit` plus `CompanyId` | `200` or `422` |
 
 ### Company-scoped customer master
@@ -236,6 +237,46 @@ returned item's `externalId` when more rows remain, otherwise `null`.
         "quantityPrecision": 0,
         "wholeUnitOnly": true,
         "isActive": true
+      }
+    ]
+  },
+  "errorMessage": null,
+  "errors": null
+}
+```
+
+### Tenant supplier source-ID export
+
+`GET /api/v1/organization/suppliers/export` requires an API JWT and the tenant
+`Admin` role. Suppliers are tenant-scoped; no company ownership is inferred or
+returned. Company capability membership alone does not authorize this tenant-wide
+export.
+
+| Query parameter | Default | Bounds / meaning |
+| --- | --- | --- |
+| `pageSize` | `50` | `1`–`100` records per response; values outside this range return `400`. |
+| `afterExternalId` | omitted | Optional keyset cursor, from 1 through 128 nonblank characters. Pass the previous response's `nextCursor` unchanged to continue after that source ID; blank or longer values return `400`. |
+
+The response uses the standard API envelope. `suppliers` are ordered by
+`externalId` and contain only `externalId` and `name`. Suppliers with a missing
+or blank source ID are omitted. Contact person, phone, email, address, internal
+IDs, tenant/company IDs, and related purchasing data are not exposed. This
+bounded source-ID export is not a complete supplier import round-trip format.
+
+`hasMore` indicates whether another page exists. `nextCursor` is the last
+returned supplier's `externalId` when more rows remain, otherwise `null`.
+
+```json
+{
+  "success": true,
+  "data": {
+    "pageSize": 1,
+    "hasMore": true,
+    "nextCursor": "supplier-001",
+    "suppliers": [
+      {
+        "externalId": "supplier-001",
+        "name": "Acme Supplies"
       }
     ]
   },

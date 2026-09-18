@@ -512,6 +512,234 @@ public sealed class MasterDataImportPostgreSqlIntegrationTests(PostgreSqlIntegra
     }
 
     [PostgreSqlFact]
+    public async Task Concurrent_replays_of_the_same_company_import_create_one_company_and_audit_each_batch()
+    {
+        fixture.EnsureEnabled();
+        var tenantId = $"company-import-concurrent-{Guid.NewGuid():N}";
+        var suffix = Guid.NewGuid().ToString("N")[..12];
+        var externalId = $"company-{suffix}";
+        var csv = "external_id,code,legal_name,trading_name,registration_number,tax_identifier,base_currency,country_code,currency_scale,is_active\n"
+            + $"{externalId},C-{suffix},Synthetic Company,Synthetic Trading,REG-{suffix},TAX-{suffix},QAR,QA,2,true";
+        var firstApplicationName = $"company-import-first-{Guid.NewGuid():N}";
+        var secondApplicationName = $"company-import-second-{Guid.NewGuid():N}";
+        var firstConnectionString = new NpgsqlConnectionStringBuilder(fixture.ConnectionString)
+        {
+            ApplicationName = firstApplicationName
+        }.ConnectionString;
+        var secondConnectionString = new NpgsqlConnectionStringBuilder(fixture.ConnectionString)
+        {
+            ApplicationName = secondApplicationName
+        }.ConnectionString;
+
+        await using var firstContext = CreateMigrationContext(firstConnectionString, tenantId);
+        await using var secondContext = CreateMigrationContext(secondConnectionString, tenantId);
+        var firstLockAcquired = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseFirstLock = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var realFirstUnitOfWork = new UnitOfWork(firstContext);
+        var firstUnitOfWork = new Mock<IUnitOfWork>();
+        firstUnitOfWork
+            .Setup(work => work.ExecuteInTransactionAsync(
+                It.IsAny<Func<Task>>(), It.IsAny<CancellationToken>(), It.IsAny<Func<Task<bool>>?>()))
+            .Returns((Func<Task> operation, CancellationToken cancellationToken, Func<Task<bool>>? verifySucceeded) =>
+                realFirstUnitOfWork.ExecuteInTransactionAsync(operation, cancellationToken, verifySucceeded));
+        firstUnitOfWork
+            .Setup(work => work.AcquireTenantOperationLockAsync(
+                It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(async (string operation, CancellationToken cancellationToken) =>
+            {
+                await realFirstUnitOfWork.AcquireTenantOperationLockAsync(operation, cancellationToken);
+                firstLockAcquired.TrySetResult(true);
+                await releaseFirstLock.Task.WaitAsync(cancellationToken);
+            });
+
+        var firstImport = CreateService(firstContext, firstUnitOfWork.Object)
+            .ImportCompaniesAsync(new ImportCompaniesRequest(csv, false));
+        try
+        {
+            await firstLockAcquired.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        }
+        catch
+        {
+            releaseFirstLock.TrySetResult(true);
+            await firstImport;
+            throw;
+        }
+
+        var secondImport = CreateService(secondContext).ImportCompaniesAsync(new ImportCompaniesRequest(csv, false));
+        try
+        {
+            await WaitForAdvisoryLockWaitAsync(fixture.ConnectionString, secondApplicationName);
+        }
+        catch
+        {
+            releaseFirstLock.TrySetResult(true);
+            await Task.WhenAll(firstImport, secondImport);
+            throw;
+        }
+        releaseFirstLock.TrySetResult(true);
+
+        var results = await Task.WhenAll(firstImport, secondImport);
+
+        results.Sum(result => result.Created).Should().Be(1);
+        results.Sum(result => result.Unchanged).Should().Be(1);
+        results.Sum(result => result.Rejected).Should().Be(0);
+        results.SelectMany(result => result.Rows).Select(row => row.Status)
+            .Should().BeEquivalentTo(new[] { "created", "unchanged" });
+
+        await using var verification = fixture.CreateContext(tenantId);
+        var companies = await verification.Companies.AsNoTracking().ToListAsync();
+        companies.Should().ContainSingle();
+        companies[0].ExternalId.Should().Be(externalId);
+        companies[0].LegalName.Should().Be("Synthetic Company");
+
+        var batchAudits = await verification.AuditLogs.AsNoTracking()
+            .Where(log => log.TenantId == tenantId && log.EntityName == "MasterDataImportBatch")
+            .ToListAsync();
+        batchAudits.Should().HaveCount(2);
+        var batchIds = new List<Guid>();
+        var outcomes = new List<(string Outcome, int RowsCreated, int RowsUnchanged, int RowsRejected, bool ChangesApplied)>();
+        foreach (var audit in batchAudits)
+        {
+            audit.Action.Should().Be("ImportBatchCompleted");
+            using var keyValues = JsonDocument.Parse(audit.KeyValues!);
+            keyValues.RootElement.GetProperty("ImportType").GetString().Should().Be(nameof(Company));
+            batchIds.Add(keyValues.RootElement.GetProperty("BatchId").GetGuid());
+            using var summary = JsonDocument.Parse(audit.NewValues!);
+            outcomes.Add((
+                summary.RootElement.GetProperty("Outcome").GetString()!,
+                summary.RootElement.GetProperty("RowsCreated").GetInt32(),
+                summary.RootElement.GetProperty("RowsUnchanged").GetInt32(),
+                summary.RootElement.GetProperty("RowsRejected").GetInt32(),
+                summary.RootElement.GetProperty("ChangesApplied").GetBoolean()));
+            audit.KeyValues.Should().NotContain(externalId);
+            audit.NewValues.Should().NotContain(externalId)
+                .And.NotContain("Synthetic Company")
+                .And.NotContain($"TAX-{suffix}")
+                .And.NotContain($"REG-{suffix}");
+        }
+
+        batchIds.Should().OnlyHaveUniqueItems();
+        outcomes.Should().BeEquivalentTo(new[]
+        {
+            ("Created", 1, 0, 0, true),
+            ("Unchanged", 0, 1, 0, false)
+        });
+    }
+
+    [PostgreSqlFact]
+    public async Task Concurrent_replays_of_the_same_supplier_import_create_one_supplier_and_audit_each_batch()
+    {
+        fixture.EnsureEnabled();
+        var tenantId = $"supplier-import-concurrent-{Guid.NewGuid():N}";
+        var suffix = Guid.NewGuid().ToString("N");
+        var externalId = $"supplier-{suffix}";
+        var csv = "external_id,name,contact_person,phone,email,address\n"
+            + $"{externalId},Synthetic Supplier,Synthetic Contact,+10000000000,"
+            + $"supplier-{suffix}@example.test,Synthetic Address";
+        var firstApplicationName = $"supplier-import-first-{Guid.NewGuid():N}";
+        var secondApplicationName = $"supplier-import-second-{Guid.NewGuid():N}";
+        var firstConnectionString = new NpgsqlConnectionStringBuilder(fixture.ConnectionString)
+        {
+            ApplicationName = firstApplicationName
+        }.ConnectionString;
+        var secondConnectionString = new NpgsqlConnectionStringBuilder(fixture.ConnectionString)
+        {
+            ApplicationName = secondApplicationName
+        }.ConnectionString;
+
+        await using var firstContext = CreateMigrationContext(firstConnectionString, tenantId);
+        await using var secondContext = CreateMigrationContext(secondConnectionString, tenantId);
+        var firstLockAcquired = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseFirstLock = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var realFirstUnitOfWork = new UnitOfWork(firstContext);
+        var firstUnitOfWork = new Mock<IUnitOfWork>();
+        firstUnitOfWork
+            .Setup(work => work.ExecuteInTransactionAsync(
+                It.IsAny<Func<Task>>(), It.IsAny<CancellationToken>(), It.IsAny<Func<Task<bool>>?>()))
+            .Returns((Func<Task> operation, CancellationToken cancellationToken, Func<Task<bool>>? verifySucceeded) =>
+                realFirstUnitOfWork.ExecuteInTransactionAsync(operation, cancellationToken, verifySucceeded));
+        firstUnitOfWork
+            .Setup(work => work.AcquireTenantOperationLockAsync(
+                It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(async (string operation, CancellationToken cancellationToken) =>
+            {
+                await realFirstUnitOfWork.AcquireTenantOperationLockAsync(operation, cancellationToken);
+                firstLockAcquired.TrySetResult(true);
+                await releaseFirstLock.Task.WaitAsync(cancellationToken);
+            });
+
+        var firstImport = CreateService(firstContext, firstUnitOfWork.Object)
+            .ImportSuppliersAsync(new ImportSuppliersRequest(csv, false));
+        try
+        {
+            await firstLockAcquired.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        }
+        catch
+        {
+            releaseFirstLock.TrySetResult(true);
+            await firstImport;
+            throw;
+        }
+
+        var secondImport = CreateService(secondContext).ImportSuppliersAsync(new ImportSuppliersRequest(csv, false));
+        try
+        {
+            await WaitForAdvisoryLockWaitAsync(fixture.ConnectionString, secondApplicationName);
+        }
+        catch
+        {
+            releaseFirstLock.TrySetResult(true);
+            await Task.WhenAll(firstImport, secondImport);
+            throw;
+        }
+        releaseFirstLock.TrySetResult(true);
+
+        var results = await Task.WhenAll(firstImport, secondImport);
+
+        results.Sum(result => result.Created).Should().Be(1);
+        results.Sum(result => result.Unchanged).Should().Be(1);
+        results.Sum(result => result.Rejected).Should().Be(0);
+        results.SelectMany(result => result.Rows).Select(row => row.Status)
+            .Should().BeEquivalentTo(new[] { "created", "unchanged" });
+
+        await using var verification = fixture.CreateContext(tenantId);
+        var suppliers = await verification.Suppliers.AsNoTracking().ToListAsync();
+        suppliers.Should().ContainSingle();
+        suppliers[0].ExternalId.Should().Be(externalId);
+        suppliers[0].Name.Should().Be("Synthetic Supplier");
+
+        var batchAudits = await verification.AuditLogs.AsNoTracking()
+            .Where(log => log.TenantId == tenantId && log.EntityName == "MasterDataImportBatch")
+            .ToListAsync();
+        batchAudits.Should().HaveCount(2);
+        var batchIds = new List<Guid>();
+        var outcomes = new List<(string Outcome, int RowsCreated, int RowsUnchanged, int RowsRejected, bool ChangesApplied)>();
+        foreach (var audit in batchAudits)
+        {
+            audit.Action.Should().Be("ImportBatchCompleted");
+            using var keyValues = JsonDocument.Parse(audit.KeyValues!);
+            keyValues.RootElement.GetProperty("ImportType").GetString().Should().Be(nameof(Supplier));
+            batchIds.Add(keyValues.RootElement.GetProperty("BatchId").GetGuid());
+            using var summary = JsonDocument.Parse(audit.NewValues!);
+            outcomes.Add((
+                summary.RootElement.GetProperty("Outcome").GetString()!,
+                summary.RootElement.GetProperty("RowsCreated").GetInt32(),
+                summary.RootElement.GetProperty("RowsUnchanged").GetInt32(),
+                summary.RootElement.GetProperty("RowsRejected").GetInt32(),
+                summary.RootElement.GetProperty("ChangesApplied").GetBoolean()));
+            audit.KeyValues.Should().NotContain(externalId);
+            audit.NewValues.Should().NotContain(externalId).And.NotContain("Synthetic Supplier");
+        }
+
+        batchIds.Should().OnlyHaveUniqueItems();
+        outcomes.Should().BeEquivalentTo(new[]
+        {
+            ("Created", 1, 0, 0, true),
+            ("Unchanged", 0, 1, 0, false)
+        });
+    }
+
+    [PostgreSqlFact]
     public async Task Soft_deleted_master_keys_are_rejected_by_external_id_and_natural_code()
     {
         fixture.EnsureEnabled();
@@ -558,6 +786,66 @@ public sealed class MasterDataImportPostgreSqlIntegrationTests(PostgreSqlIntegra
         itemResult.Rows.Should().OnlyContain(row => row.Status == "rejected" && row.Error!.Contains("deleted item"));
         (await context.Items.IgnoreQueryFilters()
             .CountAsync(item => item.TenantId == tenantId)).Should().Be(1);
+    }
+
+    [PostgreSqlFact]
+    public async Task Supplier_import_rejects_a_soft_deleted_external_id_without_partial_mutation()
+    {
+        fixture.EnsureEnabled();
+        var tenantId = $"supplier-import-deleted-{Guid.NewGuid():N}";
+        var suffix = Guid.NewGuid().ToString("N");
+        const string deletedExternalId = "deleted-supplier";
+        var newExternalId = $"new-supplier-{suffix}";
+
+        await using (var seed = fixture.CreateContext(tenantId))
+        {
+            seed.Suppliers.Add(new Supplier
+            {
+                ExternalId = deletedExternalId,
+                Name = "Original deleted supplier",
+                ContactPerson = "Original contact",
+                Phone = "+10000000001",
+                Email = "original@example.test",
+                Address = "Original address",
+                IsDeleted = true
+            });
+            await seed.SaveChangesAsync();
+        }
+
+        var csv = "external_id,name,contact_person,phone,email,address\n"
+            + $"{newExternalId},New Supplier,New Contact,+10000000002,new@example.test,New Address\n"
+            + "deleted-supplier,Replacement Supplier,Replacement Contact,+10000000003,"
+            + "replacement@example.test,Replacement Address";
+        await using var importContext = fixture.CreateContext(tenantId);
+
+        var result = await CreateService(importContext)
+            .ImportSuppliersAsync(new ImportSuppliersRequest(csv, false));
+
+        result.Rejected.Should().Be(1);
+        result.Rows.Should().ContainSingle(row => row.ExternalId == deletedExternalId
+            && row.Status == "rejected" && row.Error!.Contains("deleted supplier"));
+
+        await using var verification = fixture.CreateContext(tenantId);
+        var suppliers = await verification.Suppliers.IgnoreQueryFilters().AsNoTracking()
+            .Where(supplier => supplier.TenantId == tenantId)
+            .ToListAsync();
+        suppliers.Should().ContainSingle();
+        suppliers[0].ExternalId.Should().Be(deletedExternalId);
+        suppliers[0].Name.Should().Be("Original deleted supplier");
+        suppliers[0].ContactPerson.Should().Be("Original contact");
+        suppliers[0].Phone.Should().Be("+10000000001");
+        suppliers[0].Email.Should().Be("original@example.test");
+        suppliers[0].Address.Should().Be("Original address");
+        suppliers[0].IsDeleted.Should().BeTrue();
+
+        var batchAudit = await verification.AuditLogs.AsNoTracking()
+            .SingleAsync(log => log.TenantId == tenantId && log.EntityName == "MasterDataImportBatch");
+        using var summary = JsonDocument.Parse(batchAudit.NewValues!);
+        summary.RootElement.GetProperty("Outcome").GetString().Should().Be("Rejected");
+        summary.RootElement.GetProperty("RowsCreated").GetInt32().Should().Be(0);
+        summary.RootElement.GetProperty("RowsEligibleForCreation").GetInt32().Should().Be(1);
+        summary.RootElement.GetProperty("RowsRejected").GetInt32().Should().Be(1);
+        summary.RootElement.GetProperty("ChangesApplied").GetBoolean().Should().BeFalse();
     }
 
     [PostgreSqlFact]

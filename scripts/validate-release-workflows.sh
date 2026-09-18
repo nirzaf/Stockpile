@@ -25,6 +25,10 @@ done
 
 grep -Fq 'mode docker' "$DOCKER_WORKFLOW" || fail 'Docker workflow does not select docker validation mode'
 grep -Fq 'mode release' "$RELEASE_WORKFLOW" || fail 'Release workflow does not select release validation mode'
+grep -Fq 'group: docker-${{ github.event_name }}-${{ inputs.ref || github.ref }}' "$DOCKER_WORKFLOW" \
+  || fail 'Docker concurrency group does not isolate event and candidate ref'
+grep -Fq "cancel-in-progress: \${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}" "$DOCKER_WORKFLOW" \
+  || fail 'Docker cancellation is not limited to superseded master pushes'
 grep -Fq 'type=raw,value=sha-${{ steps.candidate.outputs.candidate_sha }},priority=100' "$DOCKER_WORKFLOW" \
   || fail 'Docker workflow does not tag the selected candidate by its full SHA'
 ! grep -Fq 'type=sha' "$DOCKER_WORKFLOW" \
@@ -88,4 +92,4 @@ if (
   fail 'ambiguous branch/tag ref was accepted'
 fi
 
-echo 'release workflow harness passed: structure, valid refs, malformed refs, stale SHAs, and release kind checks'
+echo 'release workflow harness passed: structure, concurrency isolation, valid refs, malformed refs, stale SHAs, and release kind checks'

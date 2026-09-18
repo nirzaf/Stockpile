@@ -26,8 +26,8 @@ permissions:
   packages: write
 
 concurrency:
-  group: docker-${{ inputs.ref || github.ref }}
-  cancel-in-progress: false
+  group: docker-${{ github.event_name }}-${{ inputs.ref || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
 
 jobs:
   build-and-push:

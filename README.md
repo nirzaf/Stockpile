@@ -156,6 +156,7 @@ All endpoints are prefixed with `/api/v1`.
 | `GET` | `/forecast/{itemId}` | Demand forecast for an item |
 | `GET` | `/forecast` | Forecast all items |
 | `GET` | `/anomalies` | Detect stock anomalies |
+| `GET` | `/companies/{companyId}/purchase-orders/{purchaseOrderId}/obligations` | Read company-authorized ordered charge-line quantities (View capability) |
 | `POST` | `/organization/companies/import` | Dry-run or apply tenant company master import (tenant Admin required) |
 | `POST` | `/organization/branches/import` | Dry-run or apply company-scoped branch import (Edit capability required) |
 | `POST` | `/organization/locations/import` | Dry-run or apply company-scoped location import (Administer capability required) |
@@ -169,6 +170,11 @@ scope, not an ownership column for shared items, suppliers, or units. Every impo
 `external_id` values, reports row-level `created`, `unchanged`, or `rejected` results, and applies
 no rows when any row is rejected. A valid apply can be replayed safely. CSV headers and synthetic
 examples are documented in [`MASTER_DATA_ONBOARDING.md`](docs/MASTER_DATA_ONBOARDING.md).
+
+The purchase-order obligations view is read-only and reports ordered charge-line quantities only.
+It does not expose or infer receipt, acceptance, rejection, or outstanding quantities. Posted
+GoodsReceipt source-line progress, stock/GRNI posting, supplier returns, AP, and finance handoff
+are separate work.
 
 ## Project Structure
 

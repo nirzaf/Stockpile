@@ -24,6 +24,7 @@ public sealed class OrganizationController(
 {
     private const int MaximumUnitExportPageSize = 100;
     private const int MaximumItemExportPageSize = 100;
+    private const int MaximumSupplierExportPageSize = 100;
 
     [HttpGet("companies")]
     [Authorize(Policy = CapabilityPolicies.View)]
@@ -416,6 +417,73 @@ public sealed class OrganizationController(
             hasMore ? rows[^1].ExternalId : null,
             rows);
         return Ok(ApiResponse<ItemMasterExportResponse>.CreateSuccess(response));
+    }
+
+    /// <summary>Export a bounded page of tenant suppliers with known source IDs.</summary>
+    /// <remarks>
+    /// Requires the tenant Admin role. This tenant-scoped supplier master has no approved company ownership;
+    /// only the source external ID and display name are exported. Contact details are excluded.
+    /// </remarks>
+    /// <param name="suppliers">Tenant-filtered supplier repository.</param>
+    /// <param name="tenantContext">Tenant resolved for the authenticated request.</param>
+    /// <param name="cancellationToken">Cancels the export query.</param>
+    /// <param name="afterExternalId">Optional continuation cursor, at most 128 nonblank characters.</param>
+    /// <param name="pageSize">Maximum number of records, from 1 through 100; defaults to 50.</param>
+    [HttpGet("suppliers/export")]
+    [Authorize(Policy = CapabilityPolicies.TenantAdministrator)]
+    [ProducesResponseType(typeof(ApiResponse<SupplierSourceExportResponse>), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> ExportSuppliers(
+        [FromServices] IRepository<Supplier> suppliers,
+        [FromServices] ITenantContext tenantContext,
+        CancellationToken cancellationToken,
+        [FromQuery] string? afterExternalId = null,
+        [FromQuery] int pageSize = 50)
+    {
+        if (pageSize is < 1 or > MaximumSupplierExportPageSize)
+        {
+            return BadRequest(ApiResponse<object>.CreateFailure(
+                $"pageSize must be between 1 and {MaximumSupplierExportPageSize}."));
+        }
+
+        var cursorProvided = Request.Query.ContainsKey("afterExternalId");
+        if ((cursorProvided && string.IsNullOrWhiteSpace(afterExternalId)) || afterExternalId?.Length > 128)
+        {
+            return BadRequest(ApiResponse<object>.CreateFailure(
+                "afterExternalId must contain 1 through 128 nonblank characters."));
+        }
+
+        var query = suppliers.Query()
+            .Where(supplier => supplier.TenantId == tenantContext.TenantId &&
+                               !supplier.IsDeleted &&
+                               supplier.ExternalId != null &&
+                               supplier.ExternalId.Trim() != string.Empty);
+        if (afterExternalId is not null)
+        {
+            query = query.Where(supplier => supplier.ExternalId!.CompareTo(afterExternalId) > 0);
+        }
+
+        var rows = await query
+            .OrderBy(supplier => supplier.ExternalId)
+            .ThenBy(supplier => supplier.Id)
+            .Take(pageSize + 1)
+            .Select(supplier => new SupplierSourceExportRecord(
+                supplier.ExternalId!,
+                supplier.Name))
+            .ToListAsync(cancellationToken);
+
+        var hasMore = rows.Count > pageSize;
+        if (hasMore)
+        {
+            rows.RemoveAt(rows.Count - 1);
+        }
+
+        var response = new SupplierSourceExportResponse(
+            pageSize,
+            hasMore,
+            hasMore ? rows[^1].ExternalId : null,
+            rows);
+        return Ok(ApiResponse<SupplierSourceExportResponse>.CreateSuccess(response));
     }
 
     [HttpPost("items/import")]
