@@ -25,6 +25,8 @@ Welcome to the documentation site for **Merconiq** — a modern inventory manage
 | **[Contributing](https://github.com/nirzaf/merconiq/blob/master/CONTRIBUTING.md)** | Contributors | How to file issues, open PRs, and follow the project's coding standards. |
 | **[Security](https://github.com/nirzaf/merconiq/blob/master/SECURITY.md)** | Operators | Security policy and how to report vulnerabilities. |
 | **[Funding and OSS Eligibility](FUNDING_ELIGIBILITY.md)** | Maintainers | Source-dated public ledger for OSS programs, owner gates, and provider confirmation status. |
+| **[Codex for Open Source application draft](FUNDING_APPLICATION_DRAFT.md)** | Maintainers | Public-safe, unsubmitted form answers; private applicant fields remain blank. |
+| **[Funding application evidence index](FUNDING_APPLICATION_EVIDENCE.md)** | Maintainers | Dated program/repository sources, unknowns, measurement plan, and owner gates. |
 | **[Public GitHub evidence](GITHUB_EVIDENCE.md)** | Maintainers | Export dated, query-traceable maintenance signals with explicit unknowns. |
 | **[Readiness baseline](READINESS_BASELINE.md)** | Maintainers | Current SHA, SPF/SFR reconciliation, source checks, and milestone dependencies. |
 | **[Organization ownership](ORGANIZATION_OWNERSHIP.md)** | Maintainers | Tenant, company, branch, location and document ownership, including unknown legacy mappings. |
