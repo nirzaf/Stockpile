@@ -22,7 +22,8 @@ production adoption.
 Use a disposable instance and values such as `PILOT-001`, `Main Warehouse`, and
 `Shop Counter`; never copy real customer or supplier data.
 
-1. Install the application using the current [first-run instructions](../README.md)
+1. Install the application using the current
+   [first-run instructions](https://github.com/nirzaf/merconiq/blob/master/README.md)
    and record the host/runtime assumptions.
 2. Authenticate with an administrator account supplied through environment
    variables or user secrets. Do not put credentials in this form.

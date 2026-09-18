@@ -6,6 +6,7 @@ on:
     paths:
       - "docs/**"
       - ".github/workflows/pages.yml"
+      - "scripts/validate-pages-artifact.sh"
   workflow_dispatch:
     inputs:
       clean:
@@ -47,10 +48,19 @@ jobs:
         with:
           enablement: true
 
+      - name: Build documentation site with Jekyll
+        uses: actions/jekyll-build-pages@v1
+        with:
+          source: ./docs
+          destination: ./_site
+
+      - name: Verify rendered documentation artifact
+        run: bash scripts/validate-pages-artifact.sh
+
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v5
         with:
-          path: docs
+          path: ./_site
 
       - name: Deploy to GitHub Pages
         id: deployment

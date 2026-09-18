@@ -11,11 +11,11 @@ Merconiq is an open-source business management platform built with .NET and Post
 
 ## Documentation
 
-- **[Documentation source and cutover status](docs/REPOSITORY_CUTOVER.md)** — the selected [GitHub Pages URL](https://nirzaf.github.io/merconiq/) currently redirects to a 404; see the verified status and owner-pending repair gate.
+- **[Documentation source and cutover status](docs/REPOSITORY_CUTOVER.md)** — the selected canonical documentation URL is [GitHub Pages](https://nirzaf.github.io/merconiq/); see the guide for the latest deployment and verification status.
 - **[User Guide](docs/USER_GUIDE.md)** — for the people who will *use* the application day-to-day (login, items, stock operations, purchase orders, troubleshooting).
 - **README.md** (this file) — for developers and operators: installation, architecture, API, deployment.
 
-> To enable the GitHub Pages site on your fork: **Settings → Pages → Source: `master` (or `main`) branch, `/docs` folder → Save**. The site is built automatically with Jekyll.
+> To publish GitHub Pages on a fork, enable **Settings → Pages → Source: GitHub Actions** and update `docs/_config.yml` with the fork's project-site base path before verifying its URL.
 
 ## Tech Stack
 
@@ -278,7 +278,8 @@ Every push and pull request to `master` runs an automated pipeline, and tagged r
 |----------|------|---------|---------|
 | **CI** | [`.github/workflows/ci.yml`](.github/workflows/ci.yml) | PR + push to `master` | Restore → build → validate architecture, Compose, and release-workflow contracts → run xUnit tests with coverage → upload `coverage-report` artifact. |
 | **Docker** | [`.github/workflows/docker.yml`](.github/workflows/docker.yml) | Push to `master` & `v*.*.*` tags; manual candidate validation | Resolves and revalidates one exact commit, then builds the multi-arch image (`linux/amd64`, `linux/arm64`) → configured name `ghcr.io/nirzaf/merconiq` with commit-specific `sha-<full-commit>` and branch/semver tag aliases. Verify the package and digest before use; tags are pointers. Manual dry runs do not log in or push. |
-| **GitHub Pages** | [`.github/workflows/pages.yml`](.github/workflows/pages.yml) | Push to `master` (when `docs/**` changes) | Uploads the `/docs` folder for Pages deployment. The selected URL currently redirects to an external 404; see the [cutover status](docs/REPOSITORY_CUTOVER.md). |
+| **Pages validation** | [`.github/workflows/pages-validation.yml`](.github/workflows/pages-validation.yml) | Pull requests to `master` that change docs or Pages build files | Builds the documentation with Jekyll and checks the rendered entry page, guide, theme stylesheet, and project base path without deploying. |
+| **GitHub Pages** | [`.github/workflows/pages.yml`](.github/workflows/pages.yml) | Push to `master` when docs, the Pages workflow, or its artifact validator changes | Builds the Markdown documentation with Jekyll, verifies the entry page, guide, theme stylesheet, and project base path, then deploys the rendered `_site` artifact. |
 | **Release** | [`.github/workflows/release.yml`](.github/workflows/release.yml) | Push of `v*.*.*` tag; manual existing-tag validation | Revalidates the exact tag commit, waits for the commit-specific SHA image tag and semver image tag to exist, then cuts a GitHub Release. Use the verified manifest digest as the immutable image identity. Manual dry runs do not create a release. |
 | **Dependabot** | [`.github/dependabot.yml`](.github/dependabot.yml) | Weekly (Mon) | Opens grouped PRs for NuGet, GitHub Actions, and Docker base-image updates. |
 
@@ -296,7 +297,7 @@ To exercise either workflow without publication, use its manual `dry_run` input.
 
 ### GitHub Pages
 
-The Pages workflow uploads the `docs/` folder when a matching change reaches `master`. On a fresh repository, the owner must enable **Settings → Pages → Source: GitHub Actions**. A successful deployment does not guarantee the public URL is reachable: as of 2026-09-18, `https://nirzaf.github.io/merconiq/` redirects to a destination returning 404. See the [repository and artifact cutover guide](docs/REPOSITORY_CUTOVER.md); do not rely on the live site until the redirect is repaired and verified.
+The Pages workflow builds the Markdown files in `docs/` into a rendered Jekyll site and deploys `_site` when documentation changes reach `master`. On a fork, enable **Settings → Pages → Source: GitHub Actions** and configure that fork's own base path. The canonical project URL is `https://nirzaf.github.io/merconiq/`; the [cutover guide](docs/REPOSITORY_CUTOVER.md) records the last live verification, including post-deployment checks.
 
 ### Coverage
 

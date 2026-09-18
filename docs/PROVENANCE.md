@@ -30,7 +30,8 @@ with simulated values.
 ## Supported workflow
 
 Contributors should use the normal issue, branch, pull-request, review, test,
-and merge process described in [CONTRIBUTING.md](../CONTRIBUTING.md). The
-simulation script is intentionally absent from supported CI and deployment
-commands. This document and the script's own warning are the complete
-provenance disclosure; no history mutation is required to explain it.
+and merge process described in
+[CONTRIBUTING.md](https://github.com/nirzaf/merconiq/blob/master/CONTRIBUTING.md).
+The simulation script is intentionally absent from supported CI and deployment
+commands. This document and the script's own warning are the complete provenance
+disclosure; no history mutation is required to explain it.

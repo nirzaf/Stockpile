@@ -1,0 +1,29 @@
+name: Pages validation
+
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - "docs/**"
+      - ".github/workflows/pages.yml"
+      - ".github/workflows/pages-validation.yml"
+      - "scripts/validate-pages-artifact.sh"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Build documentation site with Jekyll
+        uses: actions/jekyll-build-pages@v1
+        with:
+          source: ./docs
+          destination: ./_site
+
+      - name: Verify rendered documentation artifact
+        run: bash scripts/validate-pages-artifact.sh
