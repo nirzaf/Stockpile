@@ -247,22 +247,17 @@ public sealed class TransferAgingReconciliationService(InventoryDbContext db)
                     g.Sum(row => Math.Abs(row.ExpectedValue - row.PostingValue))))
             .ToListAsync(cancellationToken);
 
-        var settlementByTransitEntry = settlementEntries
-            .GroupBy(settlement => settlement.TransferTransitEntryId)
-            .Select(group => new TransitSettlementTotal(
-                group.Key,
-                group.Sum(settlement => settlement.Quantity)));
-        var oldestOutstanding = await (
-                from entry in dispatchEntries
-                join settlement in settlementByTransitEntry
-                    on entry.Id equals settlement.TransferTransitEntryId into matchingSettlements
-                from settlement in matchingSettlements.DefaultIfEmpty()
-                where entry.Quantity > (settlement == null ? 0 : settlement.Quantity)
-                group new { entry.Id, entry.DispatchedAt } by entry.TransferOrderLineId into g
-                select g.OrderBy(entry => entry.DispatchedAt)
-                    .ThenBy(entry => entry.Id)
-                    .Select(entry => new OutstandingDispatch(g.Key, entry.Id, entry.DispatchedAt))
-                    .First())
+        var oldestOutstanding = await dispatchEntries
+            .Where(entry => entry.Quantity >
+                (settlementEntries
+                    .Where(settlement => settlement.TransferTransitEntryId == entry.Id)
+                    .Sum(settlement => (int?)settlement.Quantity) ?? 0))
+            .GroupBy(entry => entry.TransferOrderLineId)
+            .Select(group => group
+                .OrderBy(entry => entry.DispatchedAt)
+                .ThenBy(entry => entry.Id)
+                .Select(entry => new OutstandingDispatch(group.Key, entry.Id, entry.DispatchedAt))
+                .First())
             .ToListAsync(cancellationToken);
 
         var dispatchActions = dispatchEntries.Select(entry => new TransitAction(
@@ -410,8 +405,6 @@ public sealed class TransferAgingReconciliationService(InventoryDbContext db)
         int PostingCountVariance,
         int QuantityVariance,
         decimal ValueVariance);
-
-    private sealed record TransitSettlementTotal(int TransferTransitEntryId, int Quantity);
 
     private sealed record OutstandingDispatch(
         int TransferOrderLineId,
