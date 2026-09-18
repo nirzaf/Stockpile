@@ -216,12 +216,24 @@ public sealed class DocumentIdentityService(
         return result;
     }
 
+    /// <summary>
+    /// Adds a directed traceability link; both lines must belong to the same tenant and company.
+    /// Repeating the same source, target and relationship type is safe and does not create a duplicate.
+    /// </summary>
     public async Task LinkLinesAsync(
         DocumentLineIdentityId sourceLineId,
         DocumentLineIdentityId targetLineId,
         DocumentLineRelationshipType relationshipType,
         CancellationToken cancellationToken = default)
     {
+        if (sourceLineId.Value == Guid.Empty)
+        {
+            throw new ArgumentException("The source document-line identity cannot be empty.", nameof(sourceLineId));
+        }
+        if (targetLineId.Value == Guid.Empty)
+        {
+            throw new ArgumentException("The target document-line identity cannot be empty.", nameof(targetLineId));
+        }
         if (sourceLineId == targetLineId)
         {
             throw new ArgumentException("A document line cannot be linked to itself.", nameof(targetLineId));
@@ -231,43 +243,68 @@ public sealed class DocumentIdentityService(
             throw new ArgumentOutOfRangeException(nameof(relationshipType));
         }
 
-        var source = await context.DocumentLineIdentities
-            .Include(line => line.DocumentIdentity)
-            .SingleOrDefaultAsync(line => line.Id == sourceLineId, cancellationToken)
-            ?? throw new InvalidOperationException("The source document line does not exist in the current tenant.");
-        var target = await context.DocumentLineIdentities
-            .Include(line => line.DocumentIdentity)
-            .SingleOrDefaultAsync(line => line.Id == targetLineId, cancellationToken)
-            ?? throw new InvalidOperationException("The target document line does not exist in the current tenant.");
-
-        if (source.CompanyId != source.DocumentIdentity.CompanyId || target.CompanyId != target.DocumentIdentity.CompanyId)
+        var lockKey = string.Create(CultureInfo.InvariantCulture,
+            $"document-line-link:{sourceLineId.Value:N}:{targetLineId.Value:N}:{relationshipType}");
+        await unitOfWork.ExecuteInTransactionAsync(async () =>
         {
-            throw new InvalidOperationException("Document-line company mapping must match its owning document.");
-        }
+            await unitOfWork.AcquireTenantOperationLockAsync(lockKey, cancellationToken);
 
-        if (!source.CompanyId.HasValue || !target.CompanyId.HasValue)
-        {
-            throw new InvalidOperationException("Document lines must be mapped to a company before lineage can be recorded.");
-        }
+            var source = await context.DocumentLineIdentities
+                .Include(line => line.DocumentIdentity)
+                .SingleOrDefaultAsync(line => line.Id == sourceLineId, cancellationToken)
+                ?? throw new InvalidOperationException("The source document line does not exist in the current tenant.");
+            var target = await context.DocumentLineIdentities
+                .Include(line => line.DocumentIdentity)
+                .SingleOrDefaultAsync(line => line.Id == targetLineId, cancellationToken)
+                ?? throw new InvalidOperationException("The target document line does not exist in the current tenant.");
 
-        if (source.CompanyId != target.CompanyId)
-        {
-            throw new InvalidOperationException("Cross-company document-line links are not allowed.");
-        }
+            if (source.CompanyId != source.DocumentIdentity.CompanyId || target.CompanyId != target.DocumentIdentity.CompanyId)
+            {
+                throw new InvalidOperationException("Document-line company mapping must match its owning document.");
+            }
 
-        context.DocumentLineLinks.Add(new DocumentLineLink
-        {
-            TenantId = context.CurrentTenantId,
-            CompanyId = source.CompanyId.Value,
-            SourceDocumentId = source.DocumentId,
-            SourceLineId = source.Id,
-            TargetDocumentId = target.DocumentId,
-            TargetLineId = target.Id,
-            RelationshipType = relationshipType,
-            SourceLine = source,
-            TargetLine = target
-        });
-        await unitOfWork.SaveChangesAsync(cancellationToken);
+            if (!source.CompanyId.HasValue || !target.CompanyId.HasValue)
+            {
+                throw new InvalidOperationException("Document lines must be mapped to a company before lineage can be recorded.");
+            }
+
+            if (source.CompanyId != target.CompanyId)
+            {
+                throw new InvalidOperationException("Cross-company document-line links are not allowed.");
+            }
+
+            var existing = await context.DocumentLineLinks.AnyAsync(link =>
+                link.CompanyId == source.CompanyId.Value &&
+                link.SourceDocumentId == source.DocumentId &&
+                link.SourceLineId == source.Id &&
+                link.TargetDocumentId == target.DocumentId &&
+                link.TargetLineId == target.Id &&
+                link.RelationshipType == relationshipType,
+                cancellationToken);
+            if (existing || context.DocumentLineLinks.Local.Any(link =>
+                    link.CompanyId == source.CompanyId.Value &&
+                    link.SourceDocumentId == source.DocumentId &&
+                    link.SourceLineId == source.Id &&
+                    link.TargetDocumentId == target.DocumentId &&
+                    link.TargetLineId == target.Id &&
+                    link.RelationshipType == relationshipType))
+            {
+                return;
+            }
+
+            context.DocumentLineLinks.Add(new DocumentLineLink
+            {
+                TenantId = context.CurrentTenantId,
+                CompanyId = source.CompanyId.Value,
+                SourceDocumentId = source.DocumentId,
+                SourceLineId = source.Id,
+                TargetDocumentId = target.DocumentId,
+                TargetLineId = target.Id,
+                RelationshipType = relationshipType,
+                SourceLine = source,
+                TargetLine = target
+            });
+        }, cancellationToken);
     }
 
     public async Task TransitionLifecycleAsync(

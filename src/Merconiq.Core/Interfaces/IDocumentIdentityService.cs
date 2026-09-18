@@ -36,7 +36,10 @@ public interface IDocumentIdentityService
         string requestKey,
         CancellationToken cancellationToken = default);
 
-    /// <summary>Adds a directed traceability link; both lines must belong to the same tenant and company.</summary>
+    /// <summary>
+    /// Adds a directed traceability link; both lines must belong to the same tenant and company.
+    /// Repeating the same source, target and relationship type is safe and does not create a duplicate.
+    /// </summary>
     Task LinkLinesAsync(
         DocumentLineIdentityId sourceLineId,
         DocumentLineIdentityId targetLineId,
