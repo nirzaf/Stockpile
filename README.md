@@ -11,7 +11,7 @@ Merconiq is an open-source business management platform built with .NET and Post
 
 ## Documentation
 
-- **🌐 [Live docs site](https://nirzaf.github.io/merconiq/)** — published via GitHub Pages from the `docs/` folder. The recommended place for end users.
+- **[Documentation source and cutover status](docs/REPOSITORY_CUTOVER.md)** — the selected [GitHub Pages URL](https://nirzaf.github.io/merconiq/) currently redirects to a 404; see the verified status and owner-pending repair gate.
 - **[User Guide](docs/USER_GUIDE.md)** — for the people who will *use* the application day-to-day (login, items, stock operations, purchase orders, troubleshooting).
 - **README.md** (this file) — for developers and operators: installation, architecture, API, deployment.
 
@@ -277,9 +277,9 @@ Every push and pull request to `master` runs an automated pipeline, and tagged r
 | Workflow | File | Trigger | Purpose |
 |----------|------|---------|---------|
 | **CI** | [`.github/workflows/ci.yml`](.github/workflows/ci.yml) | PR + push to `master` | Restore → build → run xUnit tests with coverage → upload `coverage-report` artifact. |
-| **Docker** | [`.github/workflows/docker.yml`](.github/workflows/docker.yml) | Push to `master` & `v*.*.*` tags; manual candidate validation | Resolves and revalidates one exact commit, then builds the multi-arch image (`linux/amd64`, `linux/arm64`) → `ghcr.io/nirzaf/merconiq` with an immutable `sha-<full-commit>` tag plus branch/semver aliases. Manual dry runs do not log in or push. |
-| **GitHub Pages** | [`.github/workflows/pages.yml`](.github/workflows/pages.yml) | Push to `master` (when `docs/**` changes) | Deploys the `/docs` folder to `https://nirzaf.github.io/merconiq/`. |
-| **Release** | [`.github/workflows/release.yml`](.github/workflows/release.yml) | Push of `v*.*.*` tag; manual existing-tag validation | Revalidates the exact tag commit, waits for both the immutable SHA image and semver image to exist, then cuts a GitHub Release. Manual dry runs do not create a release. |
+| **Docker** | [`.github/workflows/docker.yml`](.github/workflows/docker.yml) | Push to `master` & `v*.*.*` tags; manual candidate validation | Resolves and revalidates one exact commit, then builds the multi-arch image (`linux/amd64`, `linux/arm64`) → configured name `ghcr.io/nirzaf/merconiq` with commit-specific `sha-<full-commit>` and branch/semver tag aliases. Verify the package and digest before use; tags are pointers. Manual dry runs do not log in or push. |
+| **GitHub Pages** | [`.github/workflows/pages.yml`](.github/workflows/pages.yml) | Push to `master` (when `docs/**` changes) | Uploads the `/docs` folder for Pages deployment. The selected URL currently redirects to an external 404; see the [cutover status](docs/REPOSITORY_CUTOVER.md). |
+| **Release** | [`.github/workflows/release.yml`](.github/workflows/release.yml) | Push of `v*.*.*` tag; manual existing-tag validation | Revalidates the exact tag commit, waits for the commit-specific SHA image tag and semver image tag to exist, then cuts a GitHub Release. Use the verified manifest digest as the immutable image identity. Manual dry runs do not create a release. |
 | **Dependabot** | [`.github/dependabot.yml`](.github/dependabot.yml) | Weekly (Mon) | Opens grouped PRs for NuGet, GitHub Actions, and Docker base-image updates. |
 
 ### Release flow
@@ -290,13 +290,13 @@ Every push and pull request to `master` runs an automated pipeline, and tagged r
    git tag v1.2.3
    git push origin v1.2.3
    ```
-3. The **Release** workflow revalidates the tag’s exact commit and verifies the Docker workflow’s immutable `sha-<full-commit>` and `v1.2.3` image tags before creating a GitHub Release. The Docker workflow publishes the multi-arch image with `sha-<full-commit>`, `v1.2.3`, `1.2`, and `1`; `latest` is reserved for `master`.
+3. The **Release** workflow revalidates the tag’s exact commit and verifies the Docker workflow’s commit-specific `sha-<full-commit>` and `v1.2.3` image tags before creating a GitHub Release. The Docker workflow publishes the multi-arch image with `sha-<full-commit>`, `v1.2.3`, `1.2`, and `1`; `latest` is reserved for `master`. Registry tags are pointers; retain the successful run's manifest digest for an immutable image reference.
 
 To exercise either workflow without publication, use its manual `dry_run` input. A manual Docker candidate may be a branch or existing tag; a manual Release candidate must be an existing `vMAJOR.MINOR.PATCH` tag. Both reject malformed refs and stale remote candidates.
 
 ### GitHub Pages
 
-The Pages site is built automatically from the `docs/` folder. **One-time setup on a fresh repo:** go to **Settings → Pages → Source: GitHub Actions** and save. After that, every change under `docs/**` (or to `pages.yml`) is deployed within ~1 minute. The site is available at `https://nirzaf.github.io/merconiq/`.
+The Pages workflow uploads the `docs/` folder when a matching change reaches `master`. On a fresh repository, the owner must enable **Settings → Pages → Source: GitHub Actions**. A successful deployment does not guarantee the public URL is reachable: as of 2026-09-18, `https://nirzaf.github.io/merconiq/` redirects to a destination returning 404. See the [repository and artifact cutover guide](docs/REPOSITORY_CUTOVER.md); do not rely on the live site until the redirect is repaired and verified.
 
 ### Coverage
 
