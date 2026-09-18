@@ -276,7 +276,7 @@ Every push and pull request to `master` runs an automated pipeline, and tagged r
 
 | Workflow | File | Trigger | Purpose |
 |----------|------|---------|---------|
-| **CI** | [`.github/workflows/ci.yml`](.github/workflows/ci.yml) | PR + push to `master` | Restore → build → run xUnit tests with coverage → upload `coverage-report` artifact. |
+| **CI** | [`.github/workflows/ci.yml`](.github/workflows/ci.yml) | PR + push to `master` | Restore → build → validate architecture, Compose, and release-workflow contracts → run xUnit tests with coverage → upload `coverage-report` artifact. |
 | **Docker** | [`.github/workflows/docker.yml`](.github/workflows/docker.yml) | Push to `master` & `v*.*.*` tags; manual candidate validation | Resolves and revalidates one exact commit, then builds the multi-arch image (`linux/amd64`, `linux/arm64`) → configured name `ghcr.io/nirzaf/merconiq` with commit-specific `sha-<full-commit>` and branch/semver tag aliases. Verify the package and digest before use; tags are pointers. Manual dry runs do not log in or push. |
 | **GitHub Pages** | [`.github/workflows/pages.yml`](.github/workflows/pages.yml) | Push to `master` (when `docs/**` changes) | Uploads the `/docs` folder for Pages deployment. The selected URL currently redirects to an external 404; see the [cutover status](docs/REPOSITORY_CUTOVER.md). |
 | **Release** | [`.github/workflows/release.yml`](.github/workflows/release.yml) | Push of `v*.*.*` tag; manual existing-tag validation | Revalidates the exact tag commit, waits for the commit-specific SHA image tag and semver image tag to exist, then cuts a GitHub Release. Use the verified manifest digest as the immutable image identity. Manual dry runs do not create a release. |

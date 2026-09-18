@@ -43,7 +43,7 @@ This is a project site, so its path prefix is `/merconiq/`, not the domain root.
 
 ## GHCR image references and publication evidence
 
-The current [`docker.yml`](https://github.com/nirzaf/merconiq/blob/master/.github/workflows/docker.yml) and [`release.yml`](https://github.com/nirzaf/merconiq/blob/master/.github/workflows/release.yml) configure `ghcr.io/nirzaf/merconiq`. The Docker workflow builds `linux/amd64` and `linux/arm64`, labels the image with its source repository and commit, and requests BuildKit provenance and SBOM attestations. For a successful authorized build it emits a commit-specific tag of the form `sha-<full-commit-sha>`; `master`/`latest` and semver aliases are mutable tag pointers, not immutable identities.
+The current [`docker.yml`](https://github.com/nirzaf/merconiq/blob/master/.github/workflows/docker.yml) and [`release.yml`](https://github.com/nirzaf/merconiq/blob/master/.github/workflows/release.yml) configure `ghcr.io/nirzaf/merconiq`. The Docker workflow builds `linux/amd64` and `linux/arm64`, labels the image with its source repository and commit, and requests BuildKit provenance and SBOM attestations. It constructs the immutable `sha-<full-candidate-sha>` tag directly from the resolver's `candidate_sha` output, including when a manual run's selected ref differs from the workflow revision. `master`/`latest` and semver aliases are mutable tag pointers, not immutable identities.
 
 The repository's production [`docker-compose.yml`](https://github.com/nirzaf/merconiq/blob/master/docker-compose.yml) currently builds the app from the checked-out source; it does not select the GHCR image by default. A configured image name, successful build workflow, or tag string is not evidence that a package can be pulled. Confirm package visibility/access and a real manifest digest in the registry before using an image.
 
@@ -66,7 +66,7 @@ docker buildx imagetools inspect "$IMAGE_REF"
 
 Use [`IMAGE_PROVENANCE.md`](IMAGE_PROVENANCE.md) for read-only manifest and attestation inspection commands. Verify the inspected image's source, exact commit, digest, both expected platform manifests, and attestation subjects against the same workflow candidate. The configured BuildKit provenance/SBOM options do not by themselves prove signed SLSA provenance, reproducible builds, runtime health, or an independently authenticated publisher identity.
 
-**Not yet evidenced by this guide:** GHCR package existence/visibility, anonymous or operator pull permissions, any current published tag/digest, platform runtime smoke tests, or registry-retention behavior. No image was built, pushed, tagged, or deleted for this documentation change.
+**Not yet evidenced by this guide:** GHCR package existence/visibility, anonymous or operator pull permissions, any current published tag/digest, platform runtime smoke tests, or registry-retention behavior. No artifact has been published by this unmerged pull request. Merging to `master` triggers the existing Docker workflow, whose publication remains gated by exact-candidate validation; no manual release or legacy image alias is added here.
 
 ## Operator volume mappings before changing a checkout or project name
 
@@ -111,7 +111,7 @@ Issue #267 remains open. Repository-local documentation cannot complete these ex
 - Have the release owner decide and record the old package's consumer notice, retention/deprecation schedule, and whether any one-time migration aid is necessary. Do not assume or promise automatic package redirects.
 - At each affected deployment, identify and preserve its actual PostgreSQL/Data Protection volumes and secrets; record a successful backup/restore or migration check before any operator changes project identity.
 
-This pull request changes documentation only. It does not rename the repository, alter GitHub settings, change DNS/CNAME, modify registry packages, deploy Pages, publish images, or change the tracking status of issue #267.
+This pull request updates repository documentation and the CI/Docker workflow contract for candidate-derived image tags. It does not rename the repository, alter GitHub or Pages settings, change DNS/CNAME, manually publish a release, or add a legacy image alias. A normal merge to `master` triggers the existing Pages and Docker workflows; verify their results separately.
 
 ## Source of current facts
 
