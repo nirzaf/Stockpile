@@ -210,11 +210,8 @@ public sealed class WebhookDeliveryLeasesPostgreSqlIntegrationTests(PostgreSqlIn
                 foreach (Match selectProjection in selectProjections)
                 {
                     var projection = selectProjection.Groups["projection"].Value;
-                    Regex.IsMatch(
-                        projection,
-                        @"(?:^|,)\s*(?:[\w"".]+\.)?\*(?:\s|,|$)",
-                        RegexOptions.IgnoreCase | RegexOptions.Singleline)
-                        .Should().BeFalse("delivery reads must use an explicit bounded projection");
+                    projection.Should().NotContain("*",
+                        "delivery reads must use an explicit bounded projection, including DISTINCT/ALL queries");
 
                     var projectionWithoutPayloadLength = Regex.Replace(
                         projection,
