@@ -7,25 +7,29 @@ does not authorize changing records to force a balance.
 
 ## Safety rules
 
-- Use an authenticated API identity with current `View` access to the company
-  for investigation and `Post` access to both transfer locations for a
-  settlement. The API checks company/location authorization when each request
-  runs; a previous grant or another operator's access is not sufficient.
+- Use an authenticated API identity with current company `View` access for
+  investigation. Receive, quarantine, and return require `Post` access to both
+  transfer locations; a write-off requires `Approve` access to both locations.
+  The API checks company/location authorization when each request runs; a
+  previous grant or another operator's access is not sufficient.
 - Confirm the legal company and both locations from the transfer record and
   current authorized company records. Location IDs are not a historical branch
   responsibility mapping. Do not infer which branch/company owned a historical
   transfer from its location name or from another issue's proposed mapping.
 - **Never use raw SQL, direct database edits, or migration/history edits to
-  settle, repair, or rebalance transit.** Use the supported API/UI so the
-  settlement, stock transaction, valuation entry, and source-document lineage
-  are written together in the application transaction. If the supported flow
-  cannot represent the facts, stop and escalate.
+  settle, repair, or rebalance transit.** Use the supported API/UI so settlement
+  and source-document lineage are written together in the application
+  transaction. Physical receipt, quarantine, and return also write their stock
+  transaction and valuation entry. An approved write-off intentionally has no
+  stock transaction, inventory valuation posting, or GL journal. If the
+  supported flow cannot represent the facts, stop and escalate.
 - Age, a nonzero variance, or the last recorded actor is evidence to investigate,
   not permission to post a correction. The aging report is read-only and does
   not automatically repair anything.
 - Choose receive, quarantine, or return only when physical and documentary
-  evidence supports that exact disposition. Do not treat quarantine as a
-  write-off or final disposition.
+  evidence supports that exact disposition. Use write-off only when evidence
+  supports an unrecoverable loss and an authorized approver has approved that
+  disposition. Do not treat quarantine as a write-off or final disposition.
 
 ## 1. Locate and review the transfer
 
@@ -46,8 +50,8 @@ and values reported. Review at least:
 
 - `outstandingTransitQuantity`, `outstandingTransitValue`, and oldest outstanding
   age;
-- `dispatchedQuantity`, received, quarantined, returned, and the quantity/value
-  conservation variances;
+- `dispatchedQuantity`, received, quarantined, returned, written-off, and the
+  quantity/value conservation variances;
 - dispatch and settlement ledger/valuation variances; and
 - latest transit action, actor, and timestamp, noting that this is not a complete
   approval or action history.
@@ -69,7 +73,8 @@ Authorization: Bearer {jwt}
 
 The transfer-orders page is also available to authorized users at **Stock →
 Transfer Orders**. It shows each dispatch entry's ID, remaining quantity/value,
-batch/expiry where present, and existing received/quarantined/returned totals.
+batch/expiry where present, and existing received/quarantined/returned/written-off
+totals.
 
 ## 2. Assemble evidence before acting
 
@@ -113,10 +118,11 @@ the responses with the same case record and note the query window and filters.
 
 ## 3. Select only an evidence-supported action
 
-The API settlement routes require `Post` access to both locations in the same
-company, an authenticated operator identity, a positive quantity no greater
-than the transit entry's current remaining quantity, and an
-`Idempotency-Key` of at most 200 characters. Each action is append-only and
+Receive, quarantine, and return require `Post` access to both locations in the
+same company. Write-off requires `Approve` access to both locations. Every
+settlement also requires an authenticated operator identity, a positive
+quantity no greater than the transit entry's current remaining quantity, and an
+`Idempotency-Key` of at most 200 characters. Settlements are append-only and
 limited to the unsettled dispatch quantity.
 
 - **Receive** only the quantity physically confirmed at the destination and
@@ -127,12 +133,18 @@ limited to the unsettled dispatch quantity.
   operations; quarantine is not a write-off.
 - **Return** only the quantity confirmed returned to the source location. It
   restores the captured transit value to source stock.
+- **Write off** only the quantity supported by documented evidence of an
+  unrecoverable loss and an authorized approver's decision. It removes the
+  selected quantity and dispatch-captured value from the transit subledger; it
+  does not change either location's on-hand stock or post inventory valuation
+  or a GL journal. Supply a nonblank `reason`; do not send destination lot
+  details or `notes`.
 
 Do not use an action merely to clear an aging balance. If stock is missing, its
 location is disputed, its company cannot be confirmed, the value/ledger evidence
-does not reconcile, or the facts need a disposition not offered above, leave the
-transit open and escalate to the inventory owner. Do not invent a write-off,
-branch assignment, cost, or accounting treatment.
+does not reconcile, or the evidence does not support one of the available
+dispositions, leave the transit open and escalate to the inventory owner. Do
+not invent a branch assignment, cost, or accounting treatment.
 
 For example, receive 20 units from transit entry 789 on line 456 of order 123:
 
@@ -146,10 +158,21 @@ Content-Type: application/json
 ```
 
 Use the same endpoint with `/quarantine` (and a nonblank `reason`) or `/return`
-only for those evidenced outcomes. Preserve the response and then re-read the
-order and aging report to verify the resulting quantity/value balances and
-ledger variances. Do not assume a successful HTTP response alone proves the
-physical count.
+only for those evidenced outcomes. For an approved write-off, use `/write-off`
+with a nonblank reason and omit lot fields and notes:
+
+```http
+POST /api/v1/transfer-orders/123/lines/456/transit/789/write-off
+Authorization: Bearer {jwt}
+Idempotency-Key: {unique-key-retained-for-this-attempt}
+Content-Type: application/json
+
+{"quantity":4,"reason":"Damaged beyond recovery; incident {reference}"}
+```
+
+Preserve the response and then re-read the order and aging report to verify the
+resulting quantity/value balances and ledger variances. Do not assume a
+successful HTTP response alone proves the physical count or loss.
 
 ## 4. Handle an uncertain response safely
 
@@ -169,8 +192,9 @@ are understood.
 
 The aging report reports persisted location IDs but intentionally does not
 assign historical branch responsibility. Do not fill that gap by guessing or
-by applying an unverified historical mapping. The report also provides no
-write-off action; quarantine is not a substitute. Lot/expiry must match the
-dispatched entry, and unsupported valuation/lot cases require owner review.
+by applying an unverified historical mapping. Write-offs are separately
+reported transit dispositions with no physical stock or valuation posting; they
+do not establish financial recognition or a GL treatment. Lot/expiry must match
+the dispatched entry, and unsupported valuation/lot cases require owner review.
 Consult the [API reference](API.md#transfer-order-dispatch) for exact endpoint
 contracts and report-field definitions.
