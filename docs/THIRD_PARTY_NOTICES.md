@@ -4,7 +4,8 @@ This inventory records the dependency and copied-asset evidence visible at
 Merconiq baseline `f86c1656a2ab5dbf1eed935a169118a7efe4badc` (16 September
 2026). It is an engineering notice and provenance record, not legal advice or
 a conclusion about which license applies to a particular owner, operator, or
-distribution model. The repository's [MIT License](../LICENSE) covers
+distribution model. The repository's
+[MIT License](https://github.com/nirzaf/merconiq/blob/master/LICENSE) covers
 Merconiq-authored material only; it does not relicense third-party material.
 
 Before distributing a build, the owner should confirm the applicable terms for

@@ -85,6 +85,7 @@ tool version, workflow URL, source SHA, manifest digest, platform digests, attes
 subjects, and result. No published release or retained artifact is claimed by this
 document until that owner-authorized run is recorded in `docs/RELEASE_CANDIDATE.md`.
 
-Related controls: [Docker workflow](../.github/workflows/docker.yml),
+Related controls:
+[Docker workflow](https://github.com/nirzaf/merconiq/blob/master/.github/workflows/docker.yml),
 [release-candidate evidence](RELEASE_CANDIDATE.md),
 [project provenance](PROVENANCE.md).
