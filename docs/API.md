@@ -73,9 +73,10 @@ API contract.
 ## Roles and routes
 
 All routes below except token issuance require the `Api` policy (an authenticated
-JWT). Resource reads do not add a role restriction, so any valid API role can
-read them. `Admin`, `Manager`, and `Staff` are the roles accepted by stock
-mutations. Webhook administration is restricted to `Admin` and `Manager`.
+JWT). Routes may add role or capability checks as shown in the Authorization
+column; reads without an additional restriction accept any valid API role.
+`Admin`, `Manager`, and `Staff` are the roles accepted by stock mutations.
+Webhook administration is restricted to `Admin` and `Manager`.
 
 | Method | Route | Authorization | Success |
 | --- | --- | --- | --- |
@@ -112,7 +113,46 @@ mutations. Webhook administration is restricted to `Admin` and `Manager`.
 | POST | `/api/v1/organization/locations/import` | Company `Administer` | `200` or `422` |
 | POST | `/api/v1/organization/suppliers/import` | Company `Edit` | `200` or `422` |
 | POST | `/api/v1/organization/units/import` | Tenant `Admin` plus `CompanyId` | `200` or `422` |
+| GET | `/api/v1/organization/units/export` | Tenant `Admin` | `200` or `400` |
 | POST | `/api/v1/organization/items/import` | Company `Edit` plus `CompanyId` | `200` or `422` |
+
+### Tenant unit source-ID export
+
+`GET /api/v1/organization/units/export` requires an API JWT and the tenant
+`Admin` role. Units are tenant-scoped; this endpoint does not accept a company
+scope.
+
+| Query parameter | Default | Bounds / meaning |
+| --- | --- | --- |
+| `pageSize` | `50` | `1`–`100` records per response; values outside this range return `400`. |
+| `afterExternalId` | omitted | Optional cursor, at most 128 characters. Pass the previous response's `nextCursor` unchanged to continue after that source ID; longer values return `400`. |
+
+The response is wrapped in the standard API envelope. `units` are ordered by
+`externalId` and expose only `externalId`, `code`, `name`, `decimalPlaces`, and
+`isWholeUnitOnly`. `hasMore` indicates another page is available, and
+`nextCursor` is the last returned `externalId` when more rows remain (otherwise
+`null`). Units without a source ID—including legacy units assigned a synthetic
+ID because their original source ID is unknown—are omitted.
+
+```json
+{
+  "success": true,
+  "data": {
+    "pageSize": 1,
+    "hasMore": true,
+    "nextCursor": "unit-each",
+    "units": [
+      {
+        "externalId": "unit-each",
+        "code": "EA",
+        "name": "Each",
+        "decimalPlaces": 0,
+        "isWholeUnitOnly": true
+      }
+    ]
+  }
+}
+```
 
 Forecast endpoints return `400 Bad Request` if the requested horizon, matching
 historical sell-row count, or all-item catalog size exceeds its configured limit.

@@ -263,6 +263,17 @@ public sealed class OrganizationController(
             : Ok(ApiResponse<ImportUnitsResult>.CreateSuccess(result));
     }
 
+    /// <summary>Export tenant units in a bounded, source-ID ordered page.</summary>
+    /// <remarks>
+    /// Requires the tenant Admin role. Pass the returned nextCursor as afterExternalId to continue.
+    /// Units with missing or synthetic legacy source IDs are omitted.
+    /// </remarks>
+    /// <param name="units">Tenant-filtered unit repository.</param>
+    /// <param name="tenantContext">Tenant resolved for the authenticated request.</param>
+    /// <param name="cancellationToken">Cancels the export query.</param>
+    /// <param name="afterExternalId">Optional continuation cursor, at most 128 characters.</param>
+    /// <param name="pageSize">Maximum number of records, from 1 through 100; defaults to 50.</param>
+    /// <returns>Source IDs and stable unit conventions for the requested page.</returns>
     [HttpGet("units/export")]
     [Authorize(Policy = CapabilityPolicies.TenantAdministrator)]
     [ProducesResponseType(typeof(ApiResponse<UnitOfMeasureExportResponse>), StatusCodes.Status200OK)]
