@@ -106,6 +106,81 @@ public sealed class CompanyCapabilityPostgreSqlApiTests(PostgreSqlIntegrationFix
     }
 
     [PostgreSqlFact]
+    public async Task Real_jwt_can_import_locations_only_for_a_company_it_administers()
+    {
+        fixture.EnsureEnabled();
+        var suffix = Guid.NewGuid().ToString("N");
+        var tenant = await SeedCompanyStockAsync(fixture, suffix);
+        var authorizedBranchExternalId = $"location-branch-a-{suffix[..10]}";
+        var restrictedBranchExternalId = $"location-branch-b-{suffix[..10]}";
+        var authorizedLocationExternalId = $"location-a-{suffix[..10]}";
+        var restrictedLocationExternalId = $"location-b-{suffix[..10]}";
+        int authorizedBranchId;
+        int restrictedBranchId;
+
+        await using (var seed = fixture.CreateContext(tenant.TenantId))
+        {
+            var authorizedBranch = new Branch
+            {
+                ExternalId = authorizedBranchExternalId,
+                CompanyId = tenant.CompanyAId,
+                Code = $"LOC-A-{suffix[..8]}",
+                Name = "Authorized import branch"
+            };
+            var restrictedBranch = new Branch
+            {
+                ExternalId = restrictedBranchExternalId,
+                CompanyId = tenant.CompanyBId,
+                Code = $"LOC-B-{suffix[..8]}",
+                Name = "Restricted import branch"
+            };
+            seed.AddRange(authorizedBranch, restrictedBranch);
+            await seed.SaveChangesAsync();
+            authorizedBranchId = authorizedBranch.Id;
+            restrictedBranchId = restrictedBranch.Id;
+        }
+
+        var companyAdmin = await CreatePersonaAsync(
+            "CompanyAdmin",
+            CompanyCapability.View | CompanyCapability.Edit | CompanyCapability.Administer,
+            suffix,
+            tenant.CompanyAId);
+
+        var authorizedCsv = $"external_id,branch_external_id,name,address\n"
+            + $"{authorizedLocationExternalId},{authorizedBranchExternalId},Authorized location,";
+        var authorizedResponse = await companyAdmin.Client.PostAsJsonAsync(
+            "/api/v1/organization/locations/import",
+            new { csv = authorizedCsv, dryRun = false, companyId = tenant.CompanyAId });
+
+        authorizedResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+        using (var authorizedBody = await authorizedResponse.Content.ReadFromJsonAsync<JsonDocument>())
+        {
+            authorizedBody!.RootElement.GetProperty("data").GetProperty("created").GetInt32().Should().Be(1);
+        }
+
+        var restrictedCsv = $"external_id,branch_external_id,name,address\n"
+            + $"{restrictedLocationExternalId},{restrictedBranchExternalId},Restricted location,";
+        var restrictedResponse = await companyAdmin.Client.PostAsJsonAsync(
+            "/api/v1/organization/locations/import",
+            new { csv = restrictedCsv, dryRun = false, companyId = tenant.CompanyBId });
+
+        restrictedResponse.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+
+        await using var verification = fixture.CreateContext(tenant.TenantId);
+        var importedLocation = await verification.Locations.IgnoreQueryFilters()
+            .SingleAsync(location => location.TenantId == tenant.TenantId &&
+                location.ExternalId == authorizedLocationExternalId);
+        importedLocation.BranchId.Should().Be(authorizedBranchId);
+        (await verification.Branches.IgnoreQueryFilters().AnyAsync(branch =>
+            branch.TenantId == tenant.TenantId && branch.Id == restrictedBranchId &&
+            branch.CompanyId == tenant.CompanyBId)).Should().BeTrue(
+                "the denied target belongs to a real, persisted branch in another company");
+        (await verification.Locations.IgnoreQueryFilters().CountAsync(location =>
+            location.TenantId == tenant.TenantId && location.ExternalId == restrictedLocationExternalId))
+            .Should().Be(0, "the cross-company denial must happen before any location is imported");
+    }
+
+    [PostgreSqlFact]
     public async Task Real_jwt_item_reads_recheck_active_company_membership_after_revocation()
     {
         fixture.EnsureEnabled();
