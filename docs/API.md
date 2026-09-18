@@ -289,10 +289,12 @@ The following endpoints intentionally do not use that envelope:
 
 The normal `Api` policy is a fixed window of 100 permits per minute with a
 queue of 10. Its partition is `tenant-id:sha256(client-discriminator)`, so the
-same client is isolated between tenants. The client discriminator is selected
-from the authenticated name identifier, `client_id`, the existing
-`X-Client-Id` header, the remote IP address, or `anonymous`, in that order.
-`X-Client-Id` identifies a client for partitioning; it never selects a tenant.
+same client is isolated between tenants. Authentication runs before this
+limiter, and the client discriminator is selected from the authenticated name
+identifier, the authenticated `client_id` claim, the remote IP address, or
+`anonymous`, in that order. Caller-supplied `X-Client-Id` headers are not used
+for rate-limit partitioning because they can be rotated to evade a limit; they
+never select a tenant.
 
 AI routes use the explicit `Ai` policy: 10 permits per minute with a queue of
 2. A rejected request receives `429 Too Many Requests`; the application does

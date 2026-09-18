@@ -11,9 +11,10 @@ public static class RateLimitPartitionKey
     public static string ForApi(HttpContext context)
     {
         var tenant = context.RequestServices.GetService<ITenantContext>()?.TenantId ?? "unresolved";
-        var client = context.User.FindFirstValue(ClaimTypes.NameIdentifier)
-            ?? context.User.FindFirstValue("client_id")
-            ?? context.Request.Headers["X-Client-Id"].FirstOrDefault()
+        var authenticatedIdentity = context.User.Identities.FirstOrDefault(identity => identity.IsAuthenticated);
+        var authenticatedClient = authenticatedIdentity?.FindFirst(ClaimTypes.NameIdentifier)?.Value
+            ?? authenticatedIdentity?.FindFirst("client_id")?.Value;
+        var client = authenticatedClient
             ?? context.Connection.RemoteIpAddress?.ToString()
             ?? "anonymous";
 
