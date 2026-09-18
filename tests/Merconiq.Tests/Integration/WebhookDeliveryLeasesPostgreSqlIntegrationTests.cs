@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Data.Common;
 using System.Net;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
 using FluentAssertions;
@@ -213,6 +214,105 @@ public sealed class WebhookDeliveryLeasesPostgreSqlIntegrationTests(PostgreSqlIn
         }
     }
 
+    [PostgreSqlFact]
+    public async Task Worker_retries_response_stream_failure_and_reuses_event_identity_for_receiver_deduplication()
+    {
+        fixture.EnsureEnabled();
+        var tenantId = UniqueTenant();
+        var eventId = Guid.NewGuid();
+        const string secret = "synthetic-webhook-secret";
+        var payload = $$"""{"eventId":"{{eventId:D}}","eventType":"Stock.Received","itemId":42}""";
+        var receiver = new IdempotentReceiverWithLostFirstResponse();
+        long deliveryId;
+
+        await using (var setup = fixture.CreateContext(tenantId))
+        {
+            var subscription = new WebhookSubscription
+            {
+                TenantId = tenantId,
+                Url = "https://8.8.8.8/webhook",
+                EventType = "Stock.Received",
+                Secret = secret
+            };
+            setup.WebhookSubscriptions.Add(subscription);
+            await setup.SaveChangesAsync();
+
+            var delivery = NewDelivery(tenantId, PostgreSqlTimestampNow());
+            delivery.SubscriptionId = subscription.Id;
+            delivery.EventId = eventId;
+            delivery.EventType = "Stock.Received";
+            delivery.Payload = payload;
+            setup.WebhookDeliveries.Add(delivery);
+            await setup.SaveChangesAsync();
+            deliveryId = delivery.Id;
+        }
+
+        var services = new ServiceCollection();
+        services.AddScoped<TenantContext>();
+        services.AddScoped<Merconiq.Infrastructure.Data.InventoryDbContext>(
+            _ => fixture.CreateContext(tenantId));
+        services.AddHttpClient("Webhooks")
+            .ConfigurePrimaryHttpMessageHandler(() => receiver);
+        await using var provider = services.BuildServiceProvider();
+
+        var firstWorker = CreateWorker(provider);
+        await firstWorker.StartAsync(CancellationToken.None);
+        try
+        {
+            var retry = await WaitForDeliveryAsync(
+                tenantId,
+                deliveryId,
+                item => item.Status == WebhookDeliveryStatus.Pending && item.AttemptCount == 1);
+
+            retry.LastError.Should().Be("Webhook transport failed.");
+            retry.LastStatusCode.Should().Be((int)HttpStatusCode.OK);
+            retry.LeaseToken.Should().BeNull();
+            firstWorker.ExecuteTask.Should().NotBeNull();
+            firstWorker.ExecuteTask!.IsCompleted.Should().BeFalse(
+                "a receiver disconnect while reading its response must not stop the hosted delivery worker");
+        }
+        finally
+        {
+            using var stopTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            await firstWorker.StopAsync(stopTimeout.Token);
+        }
+
+        await using (var advanceRetry = fixture.CreateContext(tenantId))
+        {
+            var delivery = await advanceRetry.WebhookDeliveries.SingleAsync(item => item.Id == deliveryId);
+            delivery.NextAttemptAt = PostgreSqlTimestampNow().AddSeconds(-1);
+            await advanceRetry.SaveChangesAsync();
+        }
+
+        var restartedWorker = CreateWorker(provider);
+        await restartedWorker.StartAsync(CancellationToken.None);
+        WebhookDelivery delivered;
+        try
+        {
+            delivered = await WaitForDeliveryAsync(
+                tenantId,
+                deliveryId,
+                item => item.Status == WebhookDeliveryStatus.Delivered);
+        }
+        finally
+        {
+            using var stopTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            await restartedWorker.StopAsync(stopTimeout.Token);
+        }
+
+        var requests = receiver.Requests.ToArray();
+        requests.Should().HaveCount(2);
+        requests.Should().OnlyContain(request => request.EventId == eventId && request.Payload == payload);
+        using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(secret));
+        var expectedSignature = Convert.ToHexString(hmac.ComputeHash(Encoding.UTF8.GetBytes(payload))).ToLowerInvariant();
+        requests.Should().OnlyContain(request => request.Signature == expectedSignature);
+        receiver.ProcessedEventCount.Should().Be(1, "the synthetic receiver deduplicates by stable event ID");
+        delivered.AttemptCount.Should().Be(2);
+        delivered.DeliveredAt.Should().NotBeNull();
+        delivered.LastStatusCode.Should().Be((int)HttpStatusCode.OK);
+        delivered.LastError.Should().BeNull();
+    }
+
     private async Task<WebhookDelivery> WaitForDeadLetterAsync(string tenantId, long deliveryId)
     {
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
@@ -228,6 +328,30 @@ public sealed class WebhookDeliveryLeasesPostgreSqlIntegrationTests(PostgreSqlIn
             await Task.Delay(TimeSpan.FromMilliseconds(25), timeout.Token);
         }
     }
+
+    private async Task<WebhookDelivery> WaitForDeliveryAsync(
+        string tenantId,
+        long deliveryId,
+        Func<WebhookDelivery, bool> condition)
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        while (true)
+        {
+            await using var verify = fixture.CreateContext(tenantId);
+            var delivery = await verify.WebhookDeliveries.SingleAsync(item => item.Id == deliveryId);
+            if (condition(delivery))
+            {
+                return delivery;
+            }
+
+            await Task.Delay(TimeSpan.FromMilliseconds(25), timeout.Token);
+        }
+    }
+
+    private static WebhookDeliveryBackgroundService CreateWorker(IServiceProvider provider) => new(
+        provider.GetRequiredService<IServiceScopeFactory>(),
+        provider.GetRequiredService<IHttpClientFactory>(),
+        NullLogger<WebhookDeliveryBackgroundService>.Instance);
 
     private static WebhookDelivery NewDelivery(string tenantId, DateTimeOffset now) => new()
     {
@@ -288,5 +412,69 @@ public sealed class WebhookDeliveryLeasesPostgreSqlIntegrationTests(PostgreSqlIn
             Interlocked.Increment(ref _sendCount);
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK));
         }
+    }
+
+    private sealed class IdempotentReceiverWithLostFirstResponse : HttpMessageHandler
+    {
+        private readonly ConcurrentQueue<ReceivedWebhook> _requests = new();
+        private readonly ConcurrentDictionary<Guid, byte> _processedEvents = new();
+        private int _requestCount;
+
+        public IReadOnlyCollection<ReceivedWebhook> Requests => _requests.ToArray();
+        public int ProcessedEventCount => _processedEvents.Count;
+
+        protected override async Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            var eventId = Guid.Parse(request.Headers.GetValues("X-Inventory-Event-Id").Single());
+            var payload = await request.Content!.ReadAsStringAsync(cancellationToken);
+            var signature = request.Headers.GetValues("X-Inventory-Signature").Single();
+            _requests.Enqueue(new ReceivedWebhook(eventId, payload, signature));
+            _processedEvents.TryAdd(eventId, 0);
+
+            if (Interlocked.Increment(ref _requestCount) == 1)
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StreamContent(new FailingResponseBodyStream())
+                };
+            }
+
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("accepted", Encoding.UTF8, "text/plain")
+            };
+        }
+    }
+
+    private sealed record ReceivedWebhook(Guid EventId, string Payload, string Signature);
+
+    private sealed class FailingResponseBodyStream : Stream
+    {
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position
+        {
+            get => throw new NotSupportedException();
+            set => throw new NotSupportedException();
+        }
+
+        public override void Flush() => throw new NotSupportedException();
+        public override int Read(byte[] buffer, int offset, int count) => throw CreateReadFailure();
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default) =>
+            ValueTask.FromException<int>(CreateReadFailure());
+        public override Task<int> ReadAsync(
+            byte[] buffer,
+            int offset,
+            int count,
+            CancellationToken cancellationToken) => Task.FromException<int>(CreateReadFailure());
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+
+        private static IOException CreateReadFailure() => new("Synthetic receiver response connection closed.");
     }
 }

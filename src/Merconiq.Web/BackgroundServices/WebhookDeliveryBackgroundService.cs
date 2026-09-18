@@ -122,49 +122,55 @@ public sealed class WebhookDeliveryBackgroundService(
             payload = delivery.Payload;
         }
 
+        HttpStatusCode? statusCode = null;
+        string? responseBody = null;
+        string? deliveryError = null;
         try
         {
-            var validationError = await WebhookUrlValidator.ValidateAsync(url, cancellationToken);
-            if (validationError != null)
+            deliveryError = await WebhookUrlValidator.ValidateAsync(url, cancellationToken);
+            if (deliveryError is null)
             {
-                await CompleteAsync(deliveryId, tenantId, leaseToken, null, null, validationError, cancellationToken);
-                return true;
-            }
+                using var request = new HttpRequestMessage(HttpMethod.Post, url)
+                {
+                    Content = new StringContent(payload, Encoding.UTF8, "application/json")
+                };
+                request.Headers.Add("X-Inventory-Event", eventType);
+                AddEventIdentityHeader(request, eventId);
+                if (!string.IsNullOrEmpty(secret))
+                {
+                    using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(secret));
+                    request.Headers.Add("X-Inventory-Signature", Convert.ToHexString(hmac.ComputeHash(Encoding.UTF8.GetBytes(payload))).ToLowerInvariant());
+                }
 
-            using var request = new HttpRequestMessage(HttpMethod.Post, url)
-            {
-                Content = new StringContent(payload, Encoding.UTF8, "application/json")
-            };
-            request.Headers.Add("X-Inventory-Event", eventType);
-            AddEventIdentityHeader(request, eventId);
-            if (!string.IsNullOrEmpty(secret))
-            {
-                using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(secret));
-                request.Headers.Add("X-Inventory-Signature", Convert.ToHexString(hmac.ComputeHash(Encoding.UTF8.GetBytes(payload))).ToLowerInvariant());
-            }
+                var client = httpClientFactory.CreateClient("Webhooks");
+                using var requestTimeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                if (client.Timeout != Timeout.InfiniteTimeSpan)
+                {
+                    requestTimeout.CancelAfter(client.Timeout);
+                }
 
-            var client = httpClientFactory.CreateClient("Webhooks");
-            using var requestTimeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            if (client.Timeout != Timeout.InfiniteTimeSpan)
-            {
-                requestTimeout.CancelAfter(client.Timeout);
+                using var response = await client.SendAsync(
+                    request,
+                    HttpCompletionOption.ResponseHeadersRead,
+                    requestTimeout.Token);
+                statusCode = response.StatusCode;
+                responseBody = await ReadDiagnosticResponseAsync(response.Content, secret, url, requestTimeout.Token);
             }
-
-            using var response = await client.SendAsync(
-                request,
-                HttpCompletionOption.ResponseHeadersRead,
-                requestTimeout.Token);
-            var responseBody = await ReadDiagnosticResponseAsync(response.Content, secret, url, requestTimeout.Token);
-            await CompleteAsync(deliveryId, tenantId, leaseToken, response.StatusCode, responseBody, null, cancellationToken);
         }
         catch (HttpRequestException)
         {
-            await CompleteAsync(deliveryId, tenantId, leaseToken, null, null, "Webhook transport failed.", cancellationToken);
+            deliveryError = "Webhook transport failed.";
         }
-        catch (TaskCanceledException) when (!cancellationToken.IsCancellationRequested)
+        catch (IOException)
         {
-            await CompleteAsync(deliveryId, tenantId, leaseToken, null, null, "Webhook request timed out.", cancellationToken);
+            deliveryError = "Webhook transport failed.";
         }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            deliveryError = "Webhook request timed out.";
+        }
+
+        await CompleteAsync(deliveryId, tenantId, leaseToken, statusCode, responseBody, deliveryError, cancellationToken);
 
         return true;
     }
