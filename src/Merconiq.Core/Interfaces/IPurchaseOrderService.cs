@@ -31,6 +31,9 @@ public interface IPurchaseOrderService
     /// <summary>Gets a purchase order and its existing lines for a controlled amendment form.</summary>
     Task<PurchaseOrder?> GetForAmendmentAsync(int id);
 
+    /// <summary>Gets server-derived lifecycle and line-obligation progress for a purchase order.</summary>
+    Task<PurchaseOrderReceivingProgress?> GetReceivingProgressAsync(int id, CancellationToken cancellationToken = default);
+
     /// <summary>Creates a new purchase order with its line items.</summary>
     /// <param name="purchaseOrder">The purchase order header.</param>
     /// <param name="details">The purchase order line items.</param>
@@ -53,6 +56,17 @@ public interface IPurchaseOrderService
     /// <exception cref="ArgumentException">Thrown when <paramref name="status"/> is not a known purchase order status.</exception>
     /// <exception cref="InvalidOperationException">Thrown when the requested status transition is not allowed.</exception>
     Task UpdateStatusAsync(int id, string status, PurchaseOrderStatusActor actor);
+
+    /// <summary>
+    /// Records incremental received/accepted/rejected counts for an approved charge line.
+    /// This does not create a goods receipt or post inventory or finance effects.
+    /// </summary>
+    Task RecordLineProgressAsync(
+        int purchaseOrderId,
+        int lineId,
+        PurchaseOrderLineProgressChange change,
+        PurchaseOrderStatusActor actor,
+        CancellationToken cancellationToken = default);
 
     /// <summary>Gets the newest recorded purchase-order status changes for an authorized detail view.</summary>
     Task<IReadOnlyList<PurchaseOrderStatusHistoryEntry>> GetStatusHistoryAsync(int id);
