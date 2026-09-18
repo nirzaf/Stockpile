@@ -13,7 +13,11 @@ public interface ICurrentUserAuthorization
     Task<bool> CanAccessCompanyAsync(ClaimsPrincipal principal, int companyId, CompanyCapability capability);
     Task<IReadOnlySet<int>> GetAccessibleCompanyIdsAsync(ClaimsPrincipal principal, CompanyCapability capability);
     Task<bool> CanAccessBranchAsync(ClaimsPrincipal principal, int branchId, CompanyCapability capability);
-    Task<bool> CanAccessLocationAsync(ClaimsPrincipal principal, int locationId, CompanyCapability capability);
+    Task<bool> CanAccessLocationAsync(
+        ClaimsPrincipal principal,
+        int locationId,
+        CompanyCapability capability,
+        CancellationToken cancellationToken = default);
     Task<bool> CanOverrideExpiredStockAtLocationAsync(ClaimsPrincipal principal, int locationId);
     Task<bool> CanOverrideQuarantinedStockAtLocationAsync(ClaimsPrincipal principal, int locationId);
     Task<int?> GetLocationCompanyIdAsync(ClaimsPrincipal principal, int locationId);
@@ -21,7 +25,8 @@ public interface ICurrentUserAuthorization
         ClaimsPrincipal principal,
         int fromLocationId,
         int toLocationId,
-        CompanyCapability capability);
+        CompanyCapability capability,
+        CancellationToken cancellationToken = default);
     Task<bool> CanAssignLocationBranchAsync(ClaimsPrincipal principal, int locationId, int? targetBranchId);
     Task<bool> CanCreateLocationInBranchAsync(ClaimsPrincipal principal, int branchId);
 }

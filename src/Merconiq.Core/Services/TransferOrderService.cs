@@ -453,7 +453,7 @@ public sealed class TransferOrderService(
                 if (!string.Equals(previous.RequestHash, requestHash, StringComparison.Ordinal))
                     throw new InvalidOperationException("The dispatch idempotency key was already used with a different request.");
                 if (mutationScope.CompanyId != previous.CompanyId ||
-                    mutationScope.Reauthorize is not null && !await mutationScope.Reauthorize())
+                    mutationScope.Reauthorize is not null && !await mutationScope.Reauthorize(cancellationToken))
                     throw new UnauthorizedAccessException("Company posting access is required to replay this dispatch.");
                 result = ToDispatchView(previous);
                 return;
@@ -474,7 +474,7 @@ public sealed class TransferOrderService(
                 throw new InvalidOperationException("Only an open transfer order can be dispatched.");
             if (mutationScope.CompanyId != order.CompanyId)
                 throw new UnauthorizedAccessException("The dispatch scope does not match the transfer-order company.");
-            if (mutationScope.Reauthorize is not null && !await mutationScope.Reauthorize())
+            if (mutationScope.Reauthorize is not null && !await mutationScope.Reauthorize(cancellationToken))
                 throw new UnauthorizedAccessException("Company posting access changed before dispatch.");
             if (checked(line.DispatchedQuantity + quantity) > line.Quantity)
                 throw new StockAvailabilityConflictException("Dispatch exceeds the transfer-order line quantity.");
@@ -618,7 +618,7 @@ public sealed class TransferOrderService(
                 if (!string.Equals(previous.RequestHash, requestHash, StringComparison.Ordinal))
                     throw new InvalidOperationException("The transit idempotency key was already used with a different request.");
                 if (mutationScope.CompanyId != previous.CompanyId ||
-                    mutationScope.Reauthorize is not null && !await mutationScope.Reauthorize())
+                    mutationScope.Reauthorize is not null && !await mutationScope.Reauthorize(cancellationToken))
                     throw new UnauthorizedAccessException("Company posting access is required to replay this settlement.");
                 result = ToSettlementView(previous);
                 return;
@@ -631,7 +631,7 @@ public sealed class TransferOrderService(
                 throw new KeyNotFoundException("Transfer transit entry not found.");
             if (mutationScope.CompanyId != entry.CompanyId)
                 throw new UnauthorizedAccessException("The settlement scope does not match the transfer company.");
-            if (mutationScope.Reauthorize is not null && !await mutationScope.Reauthorize())
+            if (mutationScope.Reauthorize is not null && !await mutationScope.Reauthorize(cancellationToken))
                 throw new UnauthorizedAccessException("Company posting access changed before settlement.");
 
             var order = (await orderRepository.FindAsync(candidate => candidate.Id == id, cancellationToken))

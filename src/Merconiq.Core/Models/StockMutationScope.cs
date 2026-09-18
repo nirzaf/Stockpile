@@ -10,7 +10,23 @@ namespace Merconiq.Core.Models;
 /// </summary>
 public readonly record struct StockMutationScope(
     int? CompanyId,
-    Func<Task<bool>>? Reauthorize = null,
+    Func<CancellationToken, Task<bool>>? Reauthorize = null,
     Func<Task<bool>>? ReauthorizeExpiredStockOverride = null,
     bool AllowControlledTransferReservation = false,
-    Func<Task<bool>>? ReauthorizeQuarantinedStockOverride = null);
+    Func<Task<bool>>? ReauthorizeQuarantinedStockOverride = null)
+{
+    public StockMutationScope(
+        int? CompanyId,
+        Func<Task<bool>> Reauthorize,
+        Func<Task<bool>>? ReauthorizeExpiredStockOverride = null,
+        bool AllowControlledTransferReservation = false,
+        Func<Task<bool>>? ReauthorizeQuarantinedStockOverride = null)
+        : this(
+            CompanyId,
+            _ => Reauthorize(),
+            ReauthorizeExpiredStockOverride,
+            AllowControlledTransferReservation,
+            ReauthorizeQuarantinedStockOverride)
+    {
+    }
+}

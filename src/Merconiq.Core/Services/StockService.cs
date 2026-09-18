@@ -295,7 +295,7 @@ public class StockService : IStockService
         {
             await _unitOfWork.AcquireLocationLocksAsync([locationId], cancellationToken);
             var location = await EnsureLocationUsableAsync(locationId, cancellationToken);
-            await EnsureAuthorizedCompanyScopeAsync(location, mutationScope);
+            await EnsureAuthorizedCompanyScopeAsync(location, mutationScope, cancellationToken);
             var existing = await GetByItemAndLocationAsync(
                 itemId, locationId, batchNumber, expiryDate, cancellationToken);
             if (existing != null)
@@ -490,7 +490,7 @@ public class StockService : IStockService
         {
             await _unitOfWork.AcquireLocationLocksAsync([locationId], cancellationToken);
             var location = await EnsureLocationUsableAsync(locationId, cancellationToken);
-            await EnsureAuthorizedCompanyScopeAsync(location, mutationScope);
+            await EnsureAuthorizedCompanyScopeAsync(location, mutationScope, cancellationToken);
             var initiallySelectedStock = await GetStockForRequestedLotAsync(
                 itemId, locationId, batchNumber, expiryDate);
             if (initiallySelectedStock is null)
@@ -664,8 +664,8 @@ public class StockService : IStockService
         var source = await EnsureLocationUsableAsync(initialReservation.LocationId, cancellationToken);
         var destination = await EnsureLocationUsableAsync(destinationLocationId, cancellationToken);
         await EnsureSameCompanyTransferAsync(source, destination);
-        await EnsureAuthorizedCompanyScopeAsync(source, mutationScope);
-        await EnsureAuthorizedCompanyScopeAsync(destination, mutationScope);
+        await EnsureAuthorizedCompanyScopeAsync(source, mutationScope, cancellationToken);
+        await EnsureAuthorizedCompanyScopeAsync(destination, mutationScope, cancellationToken);
 
         var reservation = await FindReservationAsync(normalizedSourceLine)
             ?? throw new KeyNotFoundException("Transfer reservation not found.");
@@ -752,8 +752,8 @@ public class StockService : IStockService
             var source = await EnsureLocationUsableAsync(request.FromLocationId, cancellationToken);
             var destination = await EnsureLocationUsableAsync(request.ToLocationId, cancellationToken);
             await EnsureSameCompanyTransferAsync(source, destination);
-            await EnsureAuthorizedCompanyScopeAsync(source, request.MutationScope);
-            await EnsureAuthorizedCompanyScopeAsync(destination, request.MutationScope);
+            await EnsureAuthorizedCompanyScopeAsync(source, request.MutationScope, cancellationToken);
+            await EnsureAuthorizedCompanyScopeAsync(destination, request.MutationScope, cancellationToken);
             if (IsExpiredStockLot(expiryDate))
                 await EnsureExpiredLotExceptionAsync(
                     expiryDate, request.MutationScope is { ReauthorizeExpiredStockOverride: not null }
@@ -1015,7 +1015,7 @@ public class StockService : IStockService
             cancellationToken.ThrowIfCancellationRequested();
             await _unitOfWork.AcquireLocationLocksAsync([request.LocationId], cancellationToken);
             var location = await EnsureLocationUsableAsync(request.LocationId, cancellationToken);
-            await EnsureAuthorizedCompanyScopeAsync(location, mutationScope);
+            await EnsureAuthorizedCompanyScopeAsync(location, mutationScope, cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
 
             if (transactionType == TransactionType.QuarantineRelease &&
@@ -2136,7 +2136,8 @@ public class StockService : IStockService
 
     private static async Task EnsureAuthorizedCompanyScopeAsync(
         Location location,
-        StockMutationScope? mutationScope)
+        StockMutationScope? mutationScope,
+        CancellationToken cancellationToken = default)
     {
         if (mutationScope is not StockMutationScope expected)
             return;
@@ -2148,7 +2149,7 @@ public class StockService : IStockService
                 "Location ownership changed while stock access was being authorized. Refresh access and retry.");
         }
 
-        if (expected.Reauthorize is not null && !await expected.Reauthorize())
+        if (expected.Reauthorize is not null && !await expected.Reauthorize(cancellationToken))
         {
             throw new UnauthorizedAccessException(
                 "Company posting access changed before the stock mutation could be committed.");

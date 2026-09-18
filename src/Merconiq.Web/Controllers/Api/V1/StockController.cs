@@ -125,10 +125,13 @@ public class StockController : ControllerBase
     [Authorize(Policy = CapabilityPolicies.Post)]
     public async Task<IActionResult> Receive([FromBody] ReceiveStockCommand command, [FromServices] IIdempotencyKeyStore idempotencyKeyStore, [FromServices] ITenantContext tenantContext)
     {
+        var cancellationToken = HttpContext.RequestAborted;
         var mutationScope = new StockMutationScope(
             await _authorization.GetLocationCompanyIdAsync(User, command.LocationId),
-            () => _authorization.CanAccessLocationAsync(User, command.LocationId, CompanyCapability.Post));
-        if (!await _authorization.CanAccessLocationAsync(User, command.LocationId, CompanyCapability.Post))
+            token => _authorization.CanAccessLocationAsync(
+                User, command.LocationId, CompanyCapability.Post, token));
+        if (!await _authorization.CanAccessLocationAsync(
+                User, command.LocationId, CompanyCapability.Post, cancellationToken))
         {
             return Forbid();
         }
@@ -150,8 +153,8 @@ public class StockController : ControllerBase
             scope,
             idempotencyKey,
             IdempotencyRequestHasher.Compute(command),
-            () => _mediator.Send(authorizedCommand, HttpContext.RequestAborted),
-            HttpContext.RequestAborted);
+            () => _mediator.Send(authorizedCommand, cancellationToken),
+            cancellationToken);
         return NoContent();
     }
 
@@ -237,10 +240,13 @@ public class StockController : ControllerBase
         [FromServices] IIdempotencyKeyStore idempotencyKeyStore,
         [FromServices] ITenantContext tenantContext)
     {
+        var cancellationToken = HttpContext.RequestAborted;
         var mutationScope = new StockMutationScope(
             await _authorization.GetLocationCompanyIdAsync(User, command.LocationId),
-            () => _authorization.CanAccessLocationAsync(User, command.LocationId, CompanyCapability.Post));
-        if (!await _authorization.CanAccessLocationAsync(User, command.LocationId, CompanyCapability.Post))
+            token => _authorization.CanAccessLocationAsync(
+                User, command.LocationId, CompanyCapability.Post, token));
+        if (!await _authorization.CanAccessLocationAsync(
+                User, command.LocationId, CompanyCapability.Post, cancellationToken))
         {
             return Forbid();
         }
@@ -290,17 +296,18 @@ public class StockController : ControllerBase
         [FromServices] IIdempotencyKeyStore idempotencyKeyStore,
         [FromServices] ITenantContext tenantContext)
     {
+        var cancellationToken = HttpContext.RequestAborted;
         var companyId = await _authorization.GetLocationCompanyIdAsync(User, request.LocationId);
         if (!companyId.HasValue || !await _authorization.CanAccessLocationAsync(
-                User, request.LocationId, CompanyCapability.Post))
+                User, request.LocationId, CompanyCapability.Post, cancellationToken))
         {
             return Forbid();
         }
 
         var mutationScope = new StockMutationScope(
             companyId,
-            () => _authorization.CanAccessLocationAsync(
-                User, request.LocationId, CompanyCapability.Post));
+            token => _authorization.CanAccessLocationAsync(
+                User, request.LocationId, CompanyCapability.Post, token));
         var command = new QuarantineStockCommand(
             request.ItemId,
             request.LocationId,
@@ -326,9 +333,10 @@ public class StockController : ControllerBase
         [FromServices] IIdempotencyKeyStore idempotencyKeyStore,
         [FromServices] ITenantContext tenantContext)
     {
+        var cancellationToken = HttpContext.RequestAborted;
         var companyId = await _authorization.GetLocationCompanyIdAsync(User, request.LocationId);
         if (!companyId.HasValue || !await _authorization.CanAccessLocationAsync(
-                User, request.LocationId, CompanyCapability.Post) ||
+                User, request.LocationId, CompanyCapability.Post, cancellationToken) ||
             !await _authorization.CanOverrideQuarantinedStockAtLocationAsync(User, request.LocationId))
         {
             return Forbid();
@@ -336,8 +344,8 @@ public class StockController : ControllerBase
 
         var mutationScope = new StockMutationScope(
             companyId,
-            () => _authorization.CanAccessLocationAsync(
-                User, request.LocationId, CompanyCapability.Post),
+            token => _authorization.CanAccessLocationAsync(
+                User, request.LocationId, CompanyCapability.Post, token),
             ReauthorizeQuarantinedStockOverride: () => _authorization.CanOverrideQuarantinedStockAtLocationAsync(
                 User, request.LocationId));
         var command = new ReleaseQuarantinedStockCommand(

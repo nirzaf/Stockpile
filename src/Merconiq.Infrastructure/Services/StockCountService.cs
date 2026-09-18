@@ -31,7 +31,7 @@ public sealed class StockCountService(
             if (location is null)
                 throw new KeyNotFoundException("The stock-count location was not found.");
 
-            await EnsureAuthorizedLocationAsync(location, mutationScope);
+            await EnsureAuthorizedLocationAsync(location, mutationScope, cancellationToken);
 
             var watermark = await context.StockTransactions
                 .Where(transaction => transaction.FromLocationId == locationId
@@ -174,7 +174,7 @@ public sealed class StockCountService(
             if (count is null || count.Location.Branch?.CompanyId != count.CompanyId)
                 return;
 
-            await EnsureAuthorizedLocationAsync(count.Location, mutationScope);
+            await EnsureAuthorizedLocationAsync(count.Location, mutationScope, cancellationToken);
             var line = count.Lines.SingleOrDefault(candidate => candidate.Id == lineId);
             if (line is null)
                 return;
@@ -208,7 +208,8 @@ public sealed class StockCountService(
 
     private async Task EnsureAuthorizedLocationAsync(
         Location location,
-        StockMutationScope mutationScope)
+        StockMutationScope mutationScope,
+        CancellationToken cancellationToken)
     {
         if (location.Branch?.CompanyId != mutationScope.CompanyId)
         {
@@ -216,7 +217,7 @@ public sealed class StockCountService(
                 "Location company ownership changed; reauthorize the stock-count operation.");
         }
 
-        if (mutationScope.Reauthorize is not null && !await mutationScope.Reauthorize())
+        if (mutationScope.Reauthorize is not null && !await mutationScope.Reauthorize(cancellationToken))
             throw new UnauthorizedAccessException("The stock-count operation is not authorized.");
     }
 

@@ -30,15 +30,15 @@ public sealed class StockCountsController(
         CancellationToken cancellationToken)
     {
         if (!await authorization.CanAccessLocationAsync(
-                User, request.LocationId, CompanyCapability.Post))
+                User, request.LocationId, CompanyCapability.Post, cancellationToken))
         {
             return Forbid();
         }
 
         var scope = new StockMutationScope(
             await authorization.GetLocationCompanyIdAsync(User, request.LocationId),
-            () => authorization.CanAccessLocationAsync(
-                User, request.LocationId, CompanyCapability.Post));
+            token => authorization.CanAccessLocationAsync(
+                User, request.LocationId, CompanyCapability.Post, token));
         var count = await stockCounts.StartAsync(request.LocationId, scope, cancellationToken);
 
         return CreatedAtRoute(
@@ -82,15 +82,15 @@ public sealed class StockCountsController(
             return NotFound(ApiResponse<object>.CreateFailure("Stock count not found."));
 
         if (!await authorization.CanAccessLocationAsync(
-                User, access.LocationId, CompanyCapability.Post))
+                User, access.LocationId, CompanyCapability.Post, cancellationToken))
         {
             return Forbid();
         }
 
         var scope = new StockMutationScope(
             access.CompanyId,
-            () => authorization.CanAccessLocationAsync(
-                User, access.LocationId, CompanyCapability.Post));
+            token => authorization.CanAccessLocationAsync(
+                User, access.LocationId, CompanyCapability.Post, token));
         var line = await stockCounts.RecordObservationAsync(
             countId,
             lineId,

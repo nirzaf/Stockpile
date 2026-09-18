@@ -229,8 +229,8 @@ public sealed class TransferOrdersController(
         int fromLocationId,
         int toLocationId,
         CompanyCapability capability) =>
-        new(companyId, () => authorization.CanAccessTransferAsync(
-            User, fromLocationId, toLocationId, capability));
+        new(companyId, cancellationToken => authorization.CanAccessTransferAsync(
+            User, fromLocationId, toLocationId, capability, cancellationToken));
 
     private async Task<bool> CanEditTransferAsync(int fromLocationId, int toLocationId, int companyId) =>
         await authorization.CanAccessTransferAsync(User, fromLocationId, toLocationId, CompanyCapability.Edit) &&
