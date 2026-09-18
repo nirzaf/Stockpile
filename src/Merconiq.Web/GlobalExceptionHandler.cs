@@ -2,6 +2,7 @@ using System.Net;
 using System.Text.Json;
 using FluentValidation;
 using Merconiq.Core.Exceptions;
+using Merconiq.Core.Models;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.Mvc;
@@ -75,6 +76,7 @@ public class GlobalExceptionHandler : IExceptionHandler
         var (statusCode, title) = exception switch
         {
             ForecastResourceLimitExceededException => (HttpStatusCode.BadRequest, "Forecast resource limit exceeded"),
+            WebhookPayloadTooLargeException => (HttpStatusCode.RequestEntityTooLarge, "Webhook payload too large"),
             ArgumentException => (HttpStatusCode.BadRequest, "Invalid argument"),
             StockAvailabilityConflictException => (HttpStatusCode.Conflict, "Stock availability conflict"),
             InvalidOperationException => (HttpStatusCode.Conflict, "Operation failed"),
@@ -97,9 +99,12 @@ public class GlobalExceptionHandler : IExceptionHandler
                 Title = title,
                 // These domain errors contain safe, actionable details; other exceptions
                 // keep a stable generic response while the full error is logged above.
-                Detail = exception is ForecastResourceLimitExceededException or StockAvailabilityConflictException
-                    ? exception.Message
-                    : title,
+                Detail = exception switch
+                {
+                    WebhookPayloadTooLargeException => WebhookPayloadPolicy.OversizedEnvelopeDiagnostic,
+                    ForecastResourceLimitExceededException or StockAvailabilityConflictException => exception.Message,
+                    _ => title
+                },
                 Instance = httpContext.Request.Path
             };
 

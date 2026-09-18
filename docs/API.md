@@ -195,8 +195,19 @@ Tenant administrators can inspect recent delivery metadata at
 `GET /api/v1/webhooks/deliveries?page=1&pageSize=50`. Pages are returned newest
 first; `pageSize` is limited to 100 and the response includes `hasMore`. The
 endpoint uses the active tenant filter and returns only delivery IDs, event type,
-status, attempt timing and HTTP status. It never returns payloads, target URLs,
-subscription secrets, lease tokens, raw response bodies or diagnostic text.
+status, attempt timing and HTTP status. Its `failureReason` is normally `null`;
+the only exposed reason is the fixed message
+`Serialized webhook event envelope exceeds the 256 KiB UTF-8 limit.` for an
+oversized persisted event. Arbitrary diagnostic text is never returned. The
+endpoint never returns payloads, target URLs, subscription secrets, lease
+tokens or raw response bodies.
+
+Serialized outbound webhook event envelopes are limited to 256 KiB (262,144
+UTF-8 bytes). Enqueueing rejects a larger envelope before creating any outbox
+rows; the payload is never truncated. A persisted oversized record—including
+one created before this limit was enforced—is not sent: the worker marks it
+dead-lettered and records the fixed safe reason shown above. Direct dispatch
+also rejects an oversized envelope before contacting any endpoint.
 
 The item list validates `page >= 1` and `1 <= pageSize <= 100`. Item update
 also requires the route ID and body ID to match. Request validation failures

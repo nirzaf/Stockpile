@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using FluentAssertions;
 using Merconiq.Core.Entities;
+using Merconiq.Core.Models;
 using Merconiq.Infrastructure.Data;
 using Merconiq.Web.Tenancy;
 using Microsoft.AspNetCore.Identity;
@@ -103,6 +104,10 @@ public sealed class ApiContractTests : IClassFixture<CustomWebApplicationFactory
     public async Task Webhook_delivery_diagnostics_are_bounded_tenant_scoped_and_redacted()
     {
         var eventType = $"Test.Delivery.{Guid.NewGuid():N}";
+        var oversizedEventType = $"{eventType}.OversizedPayload";
+        var privateEventId = Guid.NewGuid();
+        var oversizedEventId = Guid.NewGuid();
+        var createdAt = DateTimeOffset.UtcNow;
         using (var scope = _factory.Services.CreateScope())
         {
             var db = scope.ServiceProvider.GetRequiredService<InventoryDbContext>();
@@ -110,7 +115,7 @@ public sealed class ApiContractTests : IClassFixture<CustomWebApplicationFactory
                 new WebhookDelivery
                 {
                     TenantId = "test-tenant",
-                    EventId = Guid.NewGuid(),
+                    EventId = privateEventId,
                     SubscriptionId = 10,
                     EventType = eventType,
                     Payload = "private-payload-marker",
@@ -118,7 +123,19 @@ public sealed class ApiContractTests : IClassFixture<CustomWebApplicationFactory
                     AttemptCount = 5,
                     LastStatusCode = 503,
                     LastResponse = "private-response-marker",
-                    LastError = "private-error-marker"
+                    LastError = "private-error-marker",
+                    CreatedAt = createdAt
+                },
+                new WebhookDelivery
+                {
+                    TenantId = "test-tenant",
+                    EventId = oversizedEventId,
+                    SubscriptionId = 12,
+                    EventType = oversizedEventType,
+                    Payload = "oversized-payload-private-marker",
+                    Status = WebhookDeliveryStatus.DeadLetter,
+                    LastError = WebhookPayloadPolicy.OversizedEnvelopeDiagnostic,
+                    CreatedAt = createdAt.AddSeconds(1)
                 });
             await db.SaveChangesAsync();
 
@@ -144,18 +161,27 @@ public sealed class ApiContractTests : IClassFixture<CustomWebApplicationFactory
         (await adminClient.GetAsync("/api/v1/webhooks/deliveries?pageSize=101")).StatusCode
             .Should().Be(HttpStatusCode.BadRequest);
 
-        using var response = await adminClient.GetAsync("/api/v1/webhooks/deliveries?page=1&pageSize=1");
+        using var response = await adminClient.GetAsync("/api/v1/webhooks/deliveries?page=1&pageSize=100");
         response.StatusCode.Should().Be(HttpStatusCode.OK);
         var body = await response.Content.ReadAsStringAsync();
         body.Should().Contain(eventType);
+        body.Should().Contain(oversizedEventType);
         body.Should().NotContain("cross-tenant-event-marker");
         body.Should().NotContain("private-payload-marker");
         body.Should().NotContain("private-response-marker");
         body.Should().NotContain("private-error-marker");
+        body.Should().NotContain("oversized-payload-private-marker");
         body.Should().NotContain("cross-tenant-payload-marker");
         using var document = JsonDocument.Parse(body);
         var page = document.RootElement.GetProperty("data");
-        page.GetProperty("deliveries").GetArrayLength().Should().Be(1);
-        page.GetProperty("hasMore").GetBoolean().Should().BeFalse();
+        var deliveries = page.GetProperty("deliveries").EnumerateArray().ToArray();
+        var privateDelivery = deliveries.Single(delivery =>
+            delivery.GetProperty("eventId").GetGuid() == privateEventId);
+        privateDelivery.GetProperty("failureReason").ValueKind.Should().Be(JsonValueKind.Null);
+        var oversizedDelivery = deliveries.Single(delivery =>
+            delivery.GetProperty("eventId").GetGuid() == oversizedEventId);
+        oversizedDelivery.GetProperty("failureReason").GetString()
+            .Should().Be(WebhookPayloadPolicy.OversizedEnvelopeDiagnostic);
+        WebhookPayloadPolicy.OversizedEnvelopeDiagnostic.Length.Should().BeLessThan(4096);
     }
 }
