@@ -138,7 +138,19 @@ public class Repository<T> : IRepository<T> where T : class
     /// <inheritdoc />
     public virtual Task DeleteAsync(T entity)
     {
-        _dbSet.Remove(entity);
+        var entityType = _context.Model.FindEntityType(typeof(T));
+        var key = entityType?.FindPrimaryKey();
+        var incoming = _context.Entry(entity);
+        var tracked = key is null || incoming.State != EntityState.Detached
+            ? null
+            : _context.ChangeTracker.Entries<T>().FirstOrDefault(entry =>
+                !ReferenceEquals(entry.Entity, entity) &&
+                key.Properties.All(property =>
+                    Equals(entry.Property(property.Name).CurrentValue,
+                        incoming.Property(property.Name).CurrentValue)));
+        // A no-tracking read may return a detached duplicate while this context already tracks the key.
+        // Remove the tracked instance instead of attaching a second entity with the same key.
+        _dbSet.Remove(tracked?.Entity ?? entity);
         return Task.CompletedTask;
     }
 
