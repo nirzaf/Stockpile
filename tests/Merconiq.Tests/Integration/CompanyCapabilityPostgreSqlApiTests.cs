@@ -106,6 +106,61 @@ public sealed class CompanyCapabilityPostgreSqlApiTests(PostgreSqlIntegrationFix
     }
 
     [PostgreSqlFact]
+    public async Task Reservation_reference_reads_and_cancellation_are_company_scoped()
+    {
+        fixture.EnsureEnabled();
+        var suffix = Guid.NewGuid().ToString("N");
+        var tenant = await SeedCompanyStockAsync(fixture, suffix);
+        var operatorA = await CreatePersonaAsync(
+            "Operator", CompanyCapability.View | CompanyCapability.Post, suffix, tenant.CompanyAId);
+        var operatorB = await CreatePersonaAsync(
+            "Operator", CompanyCapability.View | CompanyCapability.Post, $"{suffix}-b", tenant.CompanyBId);
+        using var companyAClient = operatorA.Client;
+        using var companyBClient = operatorB.Client;
+        var foreignReference = $"foreign-company-reservation-{suffix}";
+
+        var created = await companyBClient.PostAsJsonAsync("/api/v1/stock/reservations", new
+        {
+            itemId = tenant.ItemId,
+            locationId = tenant.LocationBId,
+            quantity = 1,
+            sourceLineReference = foreignReference
+        });
+        created.StatusCode.Should().Be(HttpStatusCode.NoContent);
+        (await companyBClient.GetAsync(
+                $"/api/v1/stock/reservations/{Uri.EscapeDataString(foreignReference)}"))
+            .StatusCode.Should().Be(HttpStatusCode.OK, "the positive control can read its own company's reservation");
+
+        var foreignRead = await companyAClient.GetAsync(
+            $"/api/v1/stock/reservations/{Uri.EscapeDataString(foreignReference)}");
+        var missingRead = await companyAClient.GetAsync(
+            $"/api/v1/stock/reservations/{Uri.EscapeDataString($"missing-{suffix}")}");
+        foreignRead.StatusCode.Should().Be(HttpStatusCode.NotFound);
+        missingRead.StatusCode.Should().Be(HttpStatusCode.NotFound,
+            "a caller without company B access must not learn whether a reservation reference exists there");
+
+        var foreignCancellation = await companyAClient.PostAsJsonAsync(
+            "/api/v1/stock/reservations/cancel",
+            new { sourceLineReference = foreignReference, reason = "unauthorized synthetic attempt" });
+        var missingCancellation = await companyAClient.PostAsJsonAsync(
+            "/api/v1/stock/reservations/cancel",
+            new { sourceLineReference = $"missing-{suffix}", reason = "missing synthetic reference" });
+        foreignCancellation.StatusCode.Should().Be(HttpStatusCode.NotFound);
+        missingCancellation.StatusCode.Should().Be(HttpStatusCode.NotFound,
+            "cross-company cancellation and a missing reference must have the same response");
+
+        await using var verify = fixture.CreateContext(tenant.TenantId);
+        var persisted = await verify.StockReservations.SingleAsync(
+            row => row.SourceLineReference == foreignReference);
+        persisted.Status.Should().Be(StockReservationStatus.Active,
+            "the denied cancellation must leave the foreign-company reservation unchanged");
+        persisted.ConsumedQuantity.Should().Be(0);
+        (await verify.StockInHand.SingleAsync(row =>
+            row.ItemId == tenant.ItemId && row.LocationId == tenant.LocationBId))
+            .ReservedQuantity.Should().Be(1);
+    }
+
+    [PostgreSqlFact]
     public async Task Real_jwt_can_import_locations_only_for_a_company_it_administers()
     {
         fixture.EnsureEnabled();
