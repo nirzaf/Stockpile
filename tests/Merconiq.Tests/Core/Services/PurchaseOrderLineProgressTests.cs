@@ -195,6 +195,9 @@ public sealed class PurchaseOrderLineProgressTests
         unitOfWork.Setup(work => work.SaveChangesAsAsync(
                 It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(1);
+        unitOfWork.Setup(work => work.ExecuteInReadSnapshotAsync(
+                It.IsAny<Func<Task>>(), It.IsAny<CancellationToken>()))
+            .Returns((Func<Task> operation, CancellationToken _) => operation());
 
         var service = new PurchaseOrderService(
             orderRepository.Object,

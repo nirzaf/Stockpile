@@ -1,3 +1,4 @@
+using System.Data.Common;
 using FluentAssertions;
 using Merconiq.Core.Entities;
 using Merconiq.Core.Exceptions;
@@ -22,6 +23,107 @@ namespace Merconiq.Tests.Integration;
 public sealed class PurchaseOrderLineProgressPostgreSqlTests(PostgreSqlIntegrationFixture fixture)
 {
     private static readonly PurchaseOrderStatusActor TestActor = new("line-progress-user", "Line Progress User");
+
+    [PostgreSqlFact]
+    public async Task Receiving_progress_reads_order_revision_and_lines_from_one_repeatable_read_snapshot()
+    {
+        fixture.EnsureEnabled();
+        var tenantId = $"po-progress-snapshot-{Guid.NewGuid():N}";
+        int orderId;
+        int lineId;
+
+        await using (var setup = fixture.CreateContext(tenantId))
+        {
+            var company = new Company
+            {
+                Code = $"PPS-{Guid.NewGuid():N}"[..15],
+                LegalName = "PO progress snapshot company",
+                BaseCurrency = "USD"
+            };
+            var supplier = new Supplier { Name = "PO progress snapshot supplier" };
+            var item = new Item
+            {
+                ItemCode = $"PPSI-{Guid.NewGuid():N}"[..18],
+                Description = "PO progress snapshot item",
+                Rate = 1m
+            };
+            setup.AddRange(company, supplier, item);
+            await setup.SaveChangesAsync();
+
+            var number = $"PO-PGS-{Guid.NewGuid():N}"[..22];
+            var order = new PurchaseOrder
+            {
+                PONumber = number,
+                OrderDate = new DateTime(2026, 9, 19, 0, 0, 0, DateTimeKind.Utc),
+                SupplierId = supplier.Id,
+                Status = PurchaseOrderStatus.Approved,
+                CommercialVersion = 1,
+                ApprovedCommercialVersion = 1,
+                ApprovedCommercialSnapshotJson = "{\"schemaVersion\":1}",
+                CurrencyScale = 2
+            };
+            var document = DocumentIdentity.Create(
+                order.DocumentId,
+                tenantId,
+                company.Id,
+                "PurchaseOrder",
+                number,
+                2026,
+                DocumentLifecycleStatus.Active,
+                "PurchaseOrderLineProgressPostgreSqlTests");
+            document.PurchaseOrder = order;
+            order.DocumentIdentity = document;
+            setup.DocumentIdentities.Add(document);
+            setup.PurchaseOrders.Add(order);
+            var line = AddLine(setup, order, item.Id, quantity: 5);
+            await setup.SaveChangesAsync();
+            orderId = order.Id;
+            lineId = line.Id;
+        }
+
+        var pause = new PauseAfterPurchaseOrderReadInterceptor();
+        await using var readContext = fixture.CreateContext(tenantId, interceptors: pause);
+        var readTask = CreateService(readContext, tenantId).GetReceivingProgressAsync(orderId);
+        PurchaseOrderReceivingProgress? progress = null;
+        try
+        {
+            await pause.Paused.WaitAsync(TimeSpan.FromSeconds(15));
+
+            await using var writeContext = fixture.CreateContext(tenantId);
+            await CreateService(writeContext, tenantId).RecordLineProgressAsync(
+                orderId,
+                lineId,
+                new PurchaseOrderLineProgressChange(2, 1, 0),
+                TestActor);
+
+            pause.Release();
+            progress = await readTask.WaitAsync(TimeSpan.FromSeconds(15));
+        }
+        finally
+        {
+            pause.Release();
+            try
+            {
+                await readTask.WaitAsync(TimeSpan.FromSeconds(15));
+            }
+            catch
+            {
+                // Preserve the original test failure; the snapshot read is released for cleanup.
+            }
+        }
+
+        progress.Should().NotBeNull();
+        progress!.Revision.Should().Be(0);
+        progress.ReceivedQuantity.Should().Be(0);
+        progress.AcceptedQuantity.Should().Be(0);
+
+        await using var verifyContext = fixture.CreateContext(tenantId);
+        var committed = await CreateService(verifyContext, tenantId).GetReceivingProgressAsync(orderId);
+        committed.Should().NotBeNull();
+        committed!.Revision.Should().Be(1);
+        committed.ReceivedQuantity.Should().Be(2);
+        committed.AcceptedQuantity.Should().Be(1);
+    }
 
     [PostgreSqlFact]
     public async Task Line_progress_rolls_back_on_write_failure_serializes_concurrent_over_receipt_and_replays_duplicates()
@@ -224,6 +326,33 @@ public sealed class PurchaseOrderLineProgressPostgreSqlTests(PostgreSqlIntegrati
         catch (ConcurrencyException)
         {
             return false;
+        }
+    }
+
+    private sealed class PauseAfterPurchaseOrderReadInterceptor : DbCommandInterceptor
+    {
+        private readonly TaskCompletionSource _paused = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _release = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private int _pauseStarted;
+
+        public Task Paused => _paused.Task;
+
+        public void Release() => _release.TrySetResult();
+
+        public override async ValueTask<DbDataReader> ReaderExecutedAsync(
+            DbCommand command,
+            CommandExecutedEventData eventData,
+            DbDataReader result,
+            CancellationToken cancellationToken = default)
+        {
+            if (command.CommandText.Contains("FROM \"PurchaseOrders\"", StringComparison.OrdinalIgnoreCase) &&
+                Interlocked.Exchange(ref _pauseStarted, 1) == 0)
+            {
+                _paused.TrySetResult();
+                await _release.Task.WaitAsync(cancellationToken);
+            }
+
+            return result;
         }
     }
 

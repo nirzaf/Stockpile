@@ -77,6 +77,23 @@ public sealed class PurchaseOrderProgressApiTests(CustomWebApplicationFactory fa
             .StatusCode.Should().BeOneOf(HttpStatusCode.Forbidden, HttpStatusCode.Unauthorized);
     }
 
+    [Fact]
+    public async Task Line_progress_api_checks_company_scope_before_rejecting_invalid_quantities()
+    {
+        using var client = factory.CreateAuthenticatedClient("Manager");
+        var seeded = await SeedScopeAsync(Guid.NewGuid().ToString("N")[..8]);
+        var path = LineProgressPath(seeded.CompanyBId, seeded.OrderBId, seeded.LineBId);
+
+        using var response = await PostProgressAsync(
+            client,
+            path,
+            "unauthorized-invalid-quantities",
+            new PurchaseOrderLineProgressChange(ReceivedQuantity: -1, AcceptedQuantity: 0, RejectedQuantity: 0));
+
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden,
+            await response.Content.ReadAsStringAsync());
+    }
+
     private async Task<TestScope> SeedScopeAsync(string suffix)
     {
         using var scope = factory.Services.CreateScope();
@@ -121,7 +138,13 @@ public sealed class PurchaseOrderProgressApiTests(CustomWebApplicationFactory fa
         var orderB = AddApprovedOrder(db, companyB.Id, supplier.Id, item.Id, suffix + "B");
         await db.SaveChangesAsync();
 
-        return new TestScope(companyA.Id, companyB.Id, orderA.Order.Id, orderA.Line.Id, orderB.Order.Id);
+        return new TestScope(
+            companyA.Id,
+            companyB.Id,
+            orderA.Order.Id,
+            orderA.Line.Id,
+            orderB.Order.Id,
+            orderB.Line.Id);
     }
 
     private static (PurchaseOrder Order, OrderDetail Line) AddApprovedOrder(
@@ -202,5 +225,11 @@ public sealed class PurchaseOrderProgressApiTests(CustomWebApplicationFactory fa
         return client.SendAsync(request);
     }
 
-    private sealed record TestScope(int CompanyAId, int CompanyBId, int OrderAId, int LineAId, int OrderBId);
+    private sealed record TestScope(
+        int CompanyAId,
+        int CompanyBId,
+        int OrderAId,
+        int LineAId,
+        int OrderBId,
+        int LineBId);
 }

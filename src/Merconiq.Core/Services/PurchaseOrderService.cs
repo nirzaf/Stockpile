@@ -97,79 +97,85 @@ public class PurchaseOrderService : IPurchaseOrderService
         int id,
         CancellationToken cancellationToken = default)
     {
-        var order = await _poRepo.GetByIdAsync(id, cancellationToken);
-        if (order is null)
-            return null;
-
-        var lines = (await RequireRepository(_orderDetailRepository)
-                .FindAsync(line => line.PurchaseOrderId == id, cancellationToken))
-            .OrderBy(line => line.Id)
-            .ToArray();
-        var itemIds = lines.Select(line => line.ItemId).Distinct().ToArray();
-        var items = itemIds.Length == 0
-            ? new Dictionary<int, Item>()
-            : (await RequireRepository(_itemRepository)
-                    .FindAsync(item => itemIds.Contains(item.Id), cancellationToken))
-                .ToDictionary(item => item.Id);
-
-        var lineProgress = lines.Select(line =>
+        PurchaseOrderReceivingProgress? progress = null;
+        await _unitOfWork.ExecuteInReadSnapshotAsync(async () =>
         {
-            items.TryGetValue(line.ItemId, out var item);
-            var ordered = line.Direction == DocumentLineDirection.Charge
-                ? Math.Max(0, line.Quantity)
-                : 0;
-            var outstanding = line.Direction == DocumentLineDirection.Charge
-                ? line.OutstandingQuantity
-                : 0;
-            var awaitingInspection = line.AwaitingInspectionQuantity;
-            if (line.ReceivedQuantity < 0 || line.AcceptedQuantity < 0 || line.RejectedQuantity < 0 ||
-                line.ReceivedQuantity > ordered || awaitingInspection < 0)
+            var order = await _poRepo.GetByIdAsync(id, cancellationToken);
+            if (order is null)
+                return;
+
+            var lines = (await RequireRepository(_orderDetailRepository)
+                    .FindAsync(line => line.PurchaseOrderId == id, cancellationToken))
+                .OrderBy(line => line.Id)
+                .ToArray();
+            var itemIds = lines.Select(line => line.ItemId).Distinct().ToArray();
+            var items = itemIds.Length == 0
+                ? new Dictionary<int, Item>()
+                : (await RequireRepository(_itemRepository)
+                        .FindAsync(item => itemIds.Contains(item.Id), cancellationToken))
+                    .ToDictionary(item => item.Id);
+
+            var lineProgress = lines.Select(line =>
             {
-                throw new InvalidOperationException(
-                    $"Purchase-order line {line.Id} has inconsistent receiving quantities.");
-            }
+                items.TryGetValue(line.ItemId, out var item);
+                var ordered = line.Direction == DocumentLineDirection.Charge
+                    ? Math.Max(0, line.Quantity)
+                    : 0;
+                var outstanding = line.Direction == DocumentLineDirection.Charge
+                    ? line.OutstandingQuantity
+                    : 0;
+                var awaitingInspection = line.AwaitingInspectionQuantity;
+                if (line.ReceivedQuantity < 0 || line.AcceptedQuantity < 0 || line.RejectedQuantity < 0 ||
+                    line.ReceivedQuantity > ordered || awaitingInspection < 0)
+                {
+                    throw new InvalidOperationException(
+                        $"Purchase-order line {line.Id} has inconsistent receiving quantities.");
+                }
 
-            return new PurchaseOrderLineProgress(
-                line.Id,
-                line.ItemId,
-                item?.ItemCode,
-                item?.Description,
-                ordered,
-                line.ReceivedQuantity,
-                line.AcceptedQuantity,
-                line.RejectedQuantity,
-                outstanding,
-                awaitingInspection);
-        }).ToArray();
+                return new PurchaseOrderLineProgress(
+                    line.Id,
+                    line.ItemId,
+                    item?.ItemCode,
+                    item?.Description,
+                    ordered,
+                    line.ReceivedQuantity,
+                    line.AcceptedQuantity,
+                    line.RejectedQuantity,
+                    outstanding,
+                    awaitingInspection);
+            }).ToArray();
 
-        var orderedQuantity = lineProgress.Sum(line => (long)line.OrderedQuantity);
-        var receivedQuantity = lineProgress.Sum(line => (long)line.ReceivedQuantity);
-        var acceptedQuantity = lineProgress.Sum(line => (long)line.AcceptedQuantity);
-        var rejectedQuantity = lineProgress.Sum(line => (long)line.RejectedQuantity);
-        var outstandingQuantity = lineProgress.Sum(line => (long)line.OutstandingQuantity);
-        var awaitingInspectionQuantity = lineProgress.Sum(line => (long)line.AwaitingInspectionQuantity);
-        var progressState = order.Status == PurchaseOrderStatus.Received && receivedQuantity == 0
-            ? PurchaseOrderProgressState.LegacyReceivedWithoutLineProgress
-            : receivedQuantity == 0
-                ? PurchaseOrderProgressState.NotStarted
-                : outstandingQuantity == 0 && awaitingInspectionQuantity == 0
-                    ? PurchaseOrderProgressState.AllReceivedAndClassified
-                    : outstandingQuantity == 0
-                        ? PurchaseOrderProgressState.InspectionPending
-                        : PurchaseOrderProgressState.PartiallyReceived;
+            var orderedQuantity = lineProgress.Sum(line => (long)line.OrderedQuantity);
+            var receivedQuantity = lineProgress.Sum(line => (long)line.ReceivedQuantity);
+            var acceptedQuantity = lineProgress.Sum(line => (long)line.AcceptedQuantity);
+            var rejectedQuantity = lineProgress.Sum(line => (long)line.RejectedQuantity);
+            var outstandingQuantity = lineProgress.Sum(line => (long)line.OutstandingQuantity);
+            var awaitingInspectionQuantity = lineProgress.Sum(line => (long)line.AwaitingInspectionQuantity);
+            var progressState = order.Status == PurchaseOrderStatus.Received && receivedQuantity == 0
+                ? PurchaseOrderProgressState.LegacyReceivedWithoutLineProgress
+                : receivedQuantity == 0
+                    ? PurchaseOrderProgressState.NotStarted
+                    : outstandingQuantity == 0 && awaitingInspectionQuantity == 0
+                        ? PurchaseOrderProgressState.AllReceivedAndClassified
+                        : outstandingQuantity == 0
+                            ? PurchaseOrderProgressState.InspectionPending
+                            : PurchaseOrderProgressState.PartiallyReceived;
 
-        return new PurchaseOrderReceivingProgress(
-            order.Id,
-            order.Status,
-            order.ReceivingRevision,
-            progressState,
-            orderedQuantity,
-            receivedQuantity,
-            acceptedQuantity,
-            rejectedQuantity,
-            outstandingQuantity,
-            awaitingInspectionQuantity,
-            lineProgress);
+            progress = new PurchaseOrderReceivingProgress(
+                order.Id,
+                order.Status,
+                order.ReceivingRevision,
+                progressState,
+                orderedQuantity,
+                receivedQuantity,
+                acceptedQuantity,
+                rejectedQuantity,
+                outstandingQuantity,
+                awaitingInspectionQuantity,
+                lineProgress);
+        }, cancellationToken);
+
+        return progress;
     }
 
     /// <inheritdoc />

@@ -61,6 +61,11 @@ public sealed class PurchaseOrderProgressController(
         [FromBody] PurchaseOrderLineProgressChange request,
         CancellationToken cancellationToken)
     {
+        var scopeFailure = await ValidateCompanyScopeAsync(
+            companyId, purchaseOrderId, CompanyCapability.Post, cancellationToken);
+        if (scopeFailure is not null)
+            return scopeFailure;
+
         if (request is null || request.ReceivedQuantity < 0 ||
             request.AcceptedQuantity < 0 || request.RejectedQuantity < 0 ||
             (request.ReceivedQuantity == 0 && request.AcceptedQuantity == 0 && request.RejectedQuantity == 0))
@@ -68,11 +73,6 @@ public sealed class PurchaseOrderProgressController(
             return BadRequest(ApiResponse<object>.CreateFailure(
                 "At least one non-negative receiving outcome quantity must be positive."));
         }
-
-        var scopeFailure = await ValidateCompanyScopeAsync(
-            companyId, purchaseOrderId, CompanyCapability.Post, cancellationToken);
-        if (scopeFailure is not null)
-            return scopeFailure;
 
         var lineBelongsToOrder = await db.OrderDetails.AnyAsync(
             line => line.Id == lineId && line.PurchaseOrderId == purchaseOrderId,
