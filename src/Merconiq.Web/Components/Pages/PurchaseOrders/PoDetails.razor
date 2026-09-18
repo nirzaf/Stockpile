@@ -1,6 +1,8 @@
 @page "/PurchaseOrders/Details/{Id:int}"
 @using Microsoft.AspNetCore.Authorization
 @using Microsoft.AspNetCore.Components.Authorization
+@using System.Security.Claims
+@using Merconiq.Core.Models
 @using Merconiq.Web.Security
 @attribute [Authorize(Policy = CapabilityPolicies.TenantAdministrator)]
 @inject IPurchaseOrderService POService
@@ -110,6 +112,29 @@ else
         </RowTemplate>
     </MudTable>
 
+    <MudText Typo="Typo.h6" Class="mt-4 mb-3">@L["Purchase-order status history"]</MudText>
+    @if (_statusHistory.Count == 0)
+    {
+        <MudText Color="Color.Secondary">@L["No purchase-order status changes have been recorded."]</MudText>
+    }
+    else
+    {
+        <MudTable Items="@_statusHistory" Dense="true" Hover="true" Striped="true" Elevation="1" aria-label="@L["Purchase-order status history"]">
+            <HeaderContent>
+                <MudTh>@L["Previous status"]</MudTh>
+                <MudTh>@L["New status"]</MudTh>
+                <MudTh>@L["Changed by"]</MudTh>
+                <MudTh>@L["Changed at (UTC)"]</MudTh>
+            </HeaderContent>
+            <RowTemplate>
+                <MudTd DataLabel="@L["Previous status"]">@context.PreviousStatus</MudTd>
+                <MudTd DataLabel="@L["New status"]">@context.Status</MudTd>
+                <MudTd DataLabel="@L["Changed by"]">@context.Actor</MudTd>
+                <MudTd DataLabel="@L["Changed at (UTC)"]">@context.TimestampUtc.ToString("yyyy-MM-dd HH:mm:ss 'UTC'")</MudTd>
+            </RowTemplate>
+        </MudTable>
+    }
+
     <div class="document-actions mt-4 d-flex gap-2">
         @if (_po.Status == PurchaseOrderStatus.Pending)
         {
@@ -157,6 +182,7 @@ else
     public int Id { get; set; }
 
     private PurchaseOrder? _po;
+    private IReadOnlyList<PurchaseOrderStatusHistoryEntry> _statusHistory = Array.Empty<PurchaseOrderStatusHistoryEntry>();
     private bool _isUpdatingStatus;
     private bool _showStatusReload;
     private bool _focusStatusFeedback;
@@ -185,6 +211,10 @@ else
         }
 
         _po = await POService.GetByIdAsync(Id);
+        if (_po is not null)
+        {
+            _statusHistory = await POService.GetStatusHistoryAsync(_po.Id);
+        }
     }
 
     private Color GetStatusColor(PurchaseOrderStatus status)
@@ -220,7 +250,24 @@ else
                 return;
             }
 
-            await POService.UpdateStatusAsync(_po.Id, newStatus.ToString());
+            var actorId = principal.FindFirstValue(ClaimTypes.NameIdentifier);
+            if (string.IsNullOrWhiteSpace(actorId))
+            {
+                SetStatusFeedback(
+                    L["The authenticated user identity is unavailable. Sign in again before changing this purchase order."],
+                    Severity.Error);
+                return;
+            }
+
+            var purchaseOrderId = _po.Id;
+            await POService.UpdateStatusAsync(
+                purchaseOrderId,
+                newStatus.ToString(),
+                new PurchaseOrderStatusActor(actorId, principal.Identity?.Name));
+            _po = await POService.GetByIdAsync(purchaseOrderId);
+            _statusHistory = _po is null
+                ? Array.Empty<PurchaseOrderStatusHistoryEntry>()
+                : await POService.GetStatusHistoryAsync(purchaseOrderId);
             SetStatusFeedback(L["Purchase-order status updated."], Severity.Success);
         }
         catch (Exception exception)

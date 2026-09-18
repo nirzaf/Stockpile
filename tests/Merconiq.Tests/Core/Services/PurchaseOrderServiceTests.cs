@@ -3,6 +3,7 @@ using AutoFixture;
 using FluentAssertions;
 using Merconiq.Core.Entities;
 using Merconiq.Core.Interfaces;
+using Merconiq.Core.Models;
 using Merconiq.Core.Services;
 using Merconiq.Tests.Common;
 using Merconiq.Tests.Infrastructure;
@@ -24,6 +25,8 @@ public class PurchaseOrderServiceTests
     private readonly Mock<IRepository<Item>> _itemRepoMock = new();
     private readonly Mock<IRepository<UnitOfMeasure>> _unitRepoMock = new();
     private readonly Mock<IRepository<DocumentIdentity>> _documentRepoMock = new();
+    private readonly Mock<IRepository<AuditLog>> _auditLogRepoMock = new();
+    private static readonly PurchaseOrderStatusActor TestActor = new("test-user-id", "Test User");
     private readonly PurchaseOrderService _sut;
     private List<OrderDetail> _testLines = [];
     private List<Supplier> _testSuppliers = [];
@@ -40,6 +43,7 @@ public class PurchaseOrderServiceTests
             _webhookDispatcherMock.Object,
             new TestTenantContext("test-tenant"),
             NullLogger<PurchaseOrderService>.Instance,
+            _auditLogRepoMock.Object,
             _taxRuleRepoMock.Object,
             _orderDetailRepoMock.Object,
             _supplierRepoMock.Object,
@@ -78,6 +82,10 @@ public class PurchaseOrderServiceTests
                 It.IsAny<DocumentLifecycleStatus>(),
                 It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
+        _uowMock
+            .Setup(unitOfWork => unitOfWork.SaveChangesAsAsync(
+                It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(1);
         _uowMock
             .Setup(unitOfWork => unitOfWork.ExecuteInReadSnapshotAsync(
                 It.IsAny<Func<Task>>(), It.IsAny<CancellationToken>()))
@@ -356,7 +364,7 @@ public class PurchaseOrderServiceTests
         _poRepoMock.Setup(r => r.GetByIdAsync(id)).ReturnsAsync((PurchaseOrder?)null);
 
         // Act
-        var act = async () => await _sut.UpdateStatusAsync(id, "Approved");
+        var act = async () => await _sut.UpdateStatusAsync(id, "Approved", TestActor);
 
         // Assert
         await act.Should().ThrowAsync<InvalidOperationException>()
@@ -375,14 +383,14 @@ public class PurchaseOrderServiceTests
         SetupSnapshotData(po, new OrderDetail { Id = 1, PurchaseOrderId = po.Id, ItemId = 10, Quantity = 2, UnitPrice = 4m });
 
         // Act
-        await _sut.UpdateStatusAsync(po.Id, "Approved");
+        await _sut.UpdateStatusAsync(po.Id, "Approved", TestActor);
 
         // Assert
         po.Status.Should().Be(PurchaseOrderStatus.Approved);
         po.ApprovedCommercialVersion.Should().Be(po.CommercialVersion);
         po.ApprovedCommercialSnapshotJson.Should().Contain("\"supplierName\"");
         _poRepoMock.Verify(r => r.UpdateAsync(It.IsAny<PurchaseOrder>()), Times.Never);
-        _uowMock.Verify(u => u.SaveChangesAsync(default), Times.Once);
+        _uowMock.Verify(u => u.SaveChangesAsAsync(TestActor.AuditUsername, default), Times.Once);
     }
 
     [Fact]
@@ -397,7 +405,7 @@ public class PurchaseOrderServiceTests
         };
         _poRepoMock.Setup(repository => repository.GetByIdAsync(po.Id)).ReturnsAsync(po);
 
-        var act = () => _sut.UpdateStatusAsync(po.Id, nameof(PurchaseOrderStatus.Approved));
+        var act = () => _sut.UpdateStatusAsync(po.Id, nameof(PurchaseOrderStatus.Approved), TestActor);
 
         await act.Should().ThrowAsync<InvalidOperationException>()
             .WithMessage("A purchase order must contain at least one line before it can be approved.");
@@ -417,7 +425,7 @@ public class PurchaseOrderServiceTests
             .Create();
         _poRepoMock.Setup(r => r.GetByIdAsync(po.Id)).ReturnsAsync(po);
 
-        await _sut.UpdateStatusAsync(po.Id, nameof(PurchaseOrderStatus.Pending));
+        await _sut.UpdateStatusAsync(po.Id, nameof(PurchaseOrderStatus.Pending), TestActor);
 
         po.Status.Should().Be(PurchaseOrderStatus.Pending);
         _poRepoMock.Verify(r => r.UpdateAsync(It.IsAny<PurchaseOrder>()), Times.Never);
@@ -435,7 +443,7 @@ public class PurchaseOrderServiceTests
         var po = _fixture.Build<PurchaseOrder>().Without(p => p.DocumentIdentity).With(p => p.Status, current).Create();
         _poRepoMock.Setup(r => r.GetByIdAsync(po.Id)).ReturnsAsync(po);
 
-        var act = async () => await _sut.UpdateStatusAsync(po.Id, requested.ToString());
+        var act = async () => await _sut.UpdateStatusAsync(po.Id, requested.ToString(), TestActor);
 
         await act.Should().ThrowAsync<InvalidOperationException>()
             .WithMessage($"Invalid purchase order status transition: {current} -> {requested}");
@@ -465,7 +473,7 @@ public class PurchaseOrderServiceTests
         po.DocumentIdentity = documentIdentity;
         _poRepoMock.Setup(repository => repository.GetByIdAsync(po.Id)).ReturnsAsync(po);
 
-        var act = () => _sut.UpdateStatusAsync(po.Id, nameof(PurchaseOrderStatus.Received));
+        var act = () => _sut.UpdateStatusAsync(po.Id, nameof(PurchaseOrderStatus.Received), TestActor);
 
         await act.Should().ThrowAsync<InvalidOperationException>()
             .WithMessage("Invalid purchase order status transition: Approved -> Received");
@@ -501,7 +509,7 @@ public class PurchaseOrderServiceTests
                 return po;
             });
 
-        var act = () => _sut.UpdateStatusAsync(po.Id, nameof(PurchaseOrderStatus.Approved));
+        var act = () => _sut.UpdateStatusAsync(po.Id, nameof(PurchaseOrderStatus.Approved), TestActor);
 
         await act.Should().ThrowAsync<InvalidOperationException>()
             .WithMessage("Purchase order changed after approval started; review the latest commercial version before approving.");
@@ -524,7 +532,7 @@ public class PurchaseOrderServiceTests
         SetupSnapshotData(po, new OrderDetail { Id = 1, PurchaseOrderId = po.Id, ItemId = 10, Quantity = 2, UnitPrice = 4m });
 
         // Act
-        await _sut.UpdateStatusAsync(po.Id, "Approved");
+        await _sut.UpdateStatusAsync(po.Id, "Approved", TestActor);
 
         // Assert
         var invocation = _webhookDispatcherMock.Invocations
@@ -553,7 +561,7 @@ public class PurchaseOrderServiceTests
         _poRepoMock.Setup(r => r.GetByIdAsync(po.Id)).ReturnsAsync(po);
 
         // Act
-        await _sut.UpdateStatusAsync(po.Id, "Pending");
+        await _sut.UpdateStatusAsync(po.Id, "Pending", TestActor);
 
         // Assert
         _webhookDispatcherMock.Invocations.Should().BeEmpty();
@@ -567,7 +575,7 @@ public class PurchaseOrderServiceTests
         _poRepoMock.Setup(r => r.GetByIdAsync(po.Id)).ReturnsAsync(po);
 
         // Act
-        var act = async () => await _sut.UpdateStatusAsync(po.Id, "InvalidStatus");
+        var act = async () => await _sut.UpdateStatusAsync(po.Id, "InvalidStatus", TestActor);
 
         // Assert
         await act.Should().ThrowAsync<ArgumentException>()
@@ -769,7 +777,7 @@ public class PurchaseOrderServiceTests
         var po = _fixture.Build<PurchaseOrder>().Without(order => order.DocumentIdentity).With(order => order.Status, current).Create();
         _poRepoMock.Setup(repository => repository.GetByIdAsync(po.Id)).ReturnsAsync(po);
 
-        await _sut.UpdateStatusAsync(po.Id, nameof(PurchaseOrderStatus.Voided));
+        await _sut.UpdateStatusAsync(po.Id, nameof(PurchaseOrderStatus.Voided), TestActor);
 
         po.Status.Should().Be(PurchaseOrderStatus.Voided);
         _documentIdentityMock.Verify(service => service.TransitionLifecycleAsync(
@@ -785,7 +793,7 @@ public class PurchaseOrderServiceTests
         var po = _fixture.Build<PurchaseOrder>().Without(order => order.DocumentIdentity).With(order => order.Status, PurchaseOrderStatus.Received).Create();
         _poRepoMock.Setup(repository => repository.GetByIdAsync(po.Id)).ReturnsAsync(po);
 
-        var act = () => _sut.UpdateStatusAsync(po.Id, nameof(PurchaseOrderStatus.Voided));
+        var act = () => _sut.UpdateStatusAsync(po.Id, nameof(PurchaseOrderStatus.Voided), TestActor);
 
         await act.Should().ThrowAsync<InvalidOperationException>()
             .WithMessage("Invalid purchase order status transition: Received -> Voided");

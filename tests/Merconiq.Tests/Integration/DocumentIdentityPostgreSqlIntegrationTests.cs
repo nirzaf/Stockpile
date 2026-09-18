@@ -422,6 +422,7 @@ public sealed class DocumentIdentityPostgreSqlIntegrationTests(PostgreSqlIntegra
             new Mock<IWebhookDispatcher>().Object,
             new TestTenantContext(tenantId),
             NullLogger<PurchaseOrderService>.Instance,
+            new Repository<AuditLog>(context),
             taxRules);
         var order = new PurchaseOrder
         {
@@ -461,6 +462,7 @@ public sealed class DocumentIdentityPostgreSqlIntegrationTests(PostgreSqlIntegra
                 new Mock<IWebhookDispatcher>().Object,
                 new TestTenantContext(tenantId),
                 NullLogger<PurchaseOrderService>.Instance,
+                new Repository<AuditLog>(replayContext),
                 new Repository<TaxRule>(replayContext));
             var replay = await replayService.CreateAsync(
                 new PurchaseOrder

@@ -49,9 +49,13 @@ public interface IPurchaseOrderService
     /// </summary>
     /// <param name="id">The purchase order identifier.</param>
     /// <param name="status">The requested status. Receipt status must come from a posted goods receipt.</param>
+    /// <param name="actor">The authenticated identity of the user requesting the transition.</param>
     /// <exception cref="ArgumentException">Thrown when <paramref name="status"/> is not a known purchase order status.</exception>
     /// <exception cref="InvalidOperationException">Thrown when the requested status transition is not allowed.</exception>
-    Task UpdateStatusAsync(int id, string status);
+    Task UpdateStatusAsync(int id, string status, PurchaseOrderStatusActor actor);
+
+    /// <summary>Gets the newest recorded purchase-order status changes for an authorized detail view.</summary>
+    Task<IReadOnlyList<PurchaseOrderStatusHistoryEntry>> GetStatusHistoryAsync(int id);
 
     /// <summary>
     /// Applies commercial changes to an approved PO's existing lines. A material change

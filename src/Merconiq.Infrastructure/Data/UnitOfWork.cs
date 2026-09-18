@@ -44,6 +44,25 @@ public class UnitOfWork : IUnitOfWork
         }
     }
 
+    public async Task<int> SaveChangesAsAsync(
+        string auditUsername,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            return await _context.SaveChangesAsAsync(auditUsername, cancellationToken);
+        }
+        catch (DbUpdateConcurrencyException ex)
+        {
+            if (_executionStrategyTransactionActive)
+            {
+                throw;
+            }
+
+            throw new ConcurrencyException("A concurrency conflict occurred while saving changes.", ex);
+        }
+    }
+
     public async Task BeginTransactionAsync(CancellationToken cancellationToken = default)
     {
         if (_currentTransaction != null || _context.Database.ProviderName == "Microsoft.EntityFrameworkCore.InMemory")

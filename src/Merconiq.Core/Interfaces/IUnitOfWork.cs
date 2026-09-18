@@ -14,6 +14,11 @@ public interface IUnitOfWork
     /// <returns>The number of state entries written to the database.</returns>
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
 
+    /// <summary>Persists pending changes while recording the supplied authenticated actor in audit rows.</summary>
+    /// <param name="auditUsername">A server-derived identity label, not client-provided text.</param>
+    /// <param name="cancellationToken">A token to cancel the operation.</param>
+    Task<int> SaveChangesAsAsync(string auditUsername, CancellationToken cancellationToken = default);
+
     /// <summary>Begins a new database transaction. Call <see cref="CommitTransactionAsync"/> to commit.</summary>
     /// <param name="cancellationToken">A token to cancel the operation.</param>
     Task BeginTransactionAsync(CancellationToken cancellationToken = default);

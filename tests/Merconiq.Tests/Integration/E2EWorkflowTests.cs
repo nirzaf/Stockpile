@@ -355,7 +355,10 @@ public class PurchaseOrderWorkflowTests : IClassFixture<CustomWebApplicationFact
         }, [new OrderDetail { ItemId = item.Id, Quantity = 1, UnitPrice = 25m }], $"po-create-{Guid.NewGuid():N}");
 
         // Update status
-        await poService.UpdateStatusAsync(po.Id, nameof(PurchaseOrderStatus.Approved));
+        await poService.UpdateStatusAsync(
+            po.Id,
+            nameof(PurchaseOrderStatus.Approved),
+            new PurchaseOrderStatusActor("e2e-approver", "E2E Approver"));
 
         var updated = await db.PurchaseOrders.AsNoTracking().FirstAsync(p => p.Id == po.Id);
         updated.Status.Should().Be(PurchaseOrderStatus.Approved);
@@ -377,7 +380,10 @@ public class PurchaseOrderWorkflowTests : IClassFixture<CustomWebApplicationFact
             SupplierId = supplier.Id
         }, [], $"po-create-{Guid.NewGuid():N}");
 
-        await FluentActions.Invoking(() => poService.UpdateStatusAsync(po.Id, "NotAStatus"))
+        await FluentActions.Invoking(() => poService.UpdateStatusAsync(
+                po.Id,
+                "NotAStatus",
+                new PurchaseOrderStatusActor("e2e-approver", "E2E Approver")))
             .Should().ThrowAsync<ArgumentException>();
     }
 
@@ -387,7 +393,10 @@ public class PurchaseOrderWorkflowTests : IClassFixture<CustomWebApplicationFact
         using var scope = _factory.Services.CreateScope();
         var poService = scope.ServiceProvider.GetRequiredService<IPurchaseOrderService>();
 
-        await FluentActions.Invoking(() => poService.UpdateStatusAsync(int.MaxValue, nameof(PurchaseOrderStatus.Approved)))
+        await FluentActions.Invoking(() => poService.UpdateStatusAsync(
+                int.MaxValue,
+                nameof(PurchaseOrderStatus.Approved),
+                new PurchaseOrderStatusActor("e2e-approver", "E2E Approver")))
             .Should().ThrowAsync<InvalidOperationException>()
             .WithMessage("Purchase order not found");
     }

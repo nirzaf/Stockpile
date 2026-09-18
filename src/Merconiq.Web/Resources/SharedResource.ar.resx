@@ -28,6 +28,13 @@
   <data name="Dismiss" xml:space="preserve"><value>إغلاق</value></data>
   <data name="Updating purchase-order status…" xml:space="preserve"><value>جارٍ تحديث حالة أمر الشراء…</value></data>
   <data name="Purchase-order status updated." xml:space="preserve"><value>تم تحديث حالة أمر الشراء.</value></data>
+  <data name="Purchase-order status history" xml:space="preserve"><value>سجل حالات أمر الشراء</value></data>
+  <data name="No purchase-order status changes have been recorded." xml:space="preserve"><value>لم يتم تسجيل أي تغييرات على حالة أمر الشراء.</value></data>
+  <data name="Previous status" xml:space="preserve"><value>الحالة السابقة</value></data>
+  <data name="New status" xml:space="preserve"><value>الحالة الجديدة</value></data>
+  <data name="Changed by" xml:space="preserve"><value>تم التغيير بواسطة</value></data>
+  <data name="Changed at (UTC)" xml:space="preserve"><value>وقت التغيير (UTC)</value></data>
+  <data name="The authenticated user identity is unavailable. Sign in again before changing this purchase order." xml:space="preserve"><value>تعذر تحديد هوية المستخدم المصادق عليه. سجل الدخول مجدداً قبل تغيير أمر الشراء.</value></data>
   <data name="The purchase order changed while you were viewing it. Reload the current purchase order before trying again." xml:space="preserve"><value>تغيّر أمر الشراء أثناء عرضك له. أعد تحميل أمر الشراء الحالي قبل إعادة المحاولة.</value></data>
   <data name="The status change was not accepted. Reload the current purchase order and review its status before taking another action." xml:space="preserve"><value>لم يتم قبول تغيير الحالة. أعد تحميل أمر الشراء الحالي وراجع حالته قبل اتخاذ إجراء آخر.</value></data>
   <data name="We could not confirm the current purchase-order status. Reload the latest details before trying again." xml:space="preserve"><value>تعذر التأكد من حالة أمر الشراء الحالية. أعد تحميل أحدث التفاصيل قبل إعادة المحاولة.</value></data>

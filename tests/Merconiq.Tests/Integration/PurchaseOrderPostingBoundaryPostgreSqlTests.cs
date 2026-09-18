@@ -16,6 +16,8 @@ namespace Merconiq.Tests.Integration;
 [Trait("Category", "PostgreSQL")]
 public sealed class PurchaseOrderPostingBoundaryPostgreSqlTests(PostgreSqlIntegrationFixture fixture)
 {
+    private static readonly PurchaseOrderStatusActor TestActor = new("posting-test-user", "Posting Test User");
+
     [PostgreSqlFact]
     public async Task Purchase_order_status_change_rolls_back_identity_and_order_together_before_retry()
     {
@@ -71,9 +73,10 @@ public sealed class PurchaseOrderPostingBoundaryPostgreSqlTests(PostgreSqlIntegr
                 new DocumentIdentityService(context, unitOfWork, new DocumentNumberService(context, unitOfWork)),
                 new NoOpWebhookDispatcher(),
                 new TestTenantContext(tenantId),
-                Microsoft.Extensions.Logging.Abstractions.NullLogger<PurchaseOrderService>.Instance);
+                Microsoft.Extensions.Logging.Abstractions.NullLogger<PurchaseOrderService>.Instance,
+                new Repository<AuditLog>(context));
 
-            var failed = () => service.UpdateStatusAsync(purchaseOrderId, nameof(PurchaseOrderStatus.Cancelled));
+            var failed = () => service.UpdateStatusAsync(purchaseOrderId, nameof(PurchaseOrderStatus.Cancelled), TestActor);
             await failed.Should().ThrowAsync<DbUpdateException>();
 
             await using (var failedRead = fixture.CreateContext(tenantId))
@@ -85,7 +88,7 @@ public sealed class PurchaseOrderPostingBoundaryPostgreSqlTests(PostgreSqlIntegr
             }
 
             await DropFailureTriggerAsync(functionName, triggerName);
-            await service.UpdateStatusAsync(purchaseOrderId, nameof(PurchaseOrderStatus.Cancelled));
+            await service.UpdateStatusAsync(purchaseOrderId, nameof(PurchaseOrderStatus.Cancelled), TestActor);
 
             await using var successfulRead = fixture.CreateContext(tenantId);
             var successfulOrder = await successfulRead.PurchaseOrders.SingleAsync(order => order.Id == purchaseOrderId);

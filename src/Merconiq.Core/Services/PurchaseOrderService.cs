@@ -21,6 +21,7 @@ public class PurchaseOrderService : IPurchaseOrderService
     private readonly IWebhookDispatcher _webhookDispatcher;
     private readonly ITenantContext _tenantContext;
     private readonly ILogger<PurchaseOrderService> _logger;
+    private readonly IRepository<AuditLog> _auditLogRepository;
     private readonly IRepository<TaxRule>? _taxRuleRepository;
     private readonly IRepository<OrderDetail>? _orderDetailRepository;
     private readonly IRepository<Supplier>? _supplierRepository;
@@ -35,6 +36,7 @@ public class PurchaseOrderService : IPurchaseOrderService
         IWebhookDispatcher webhookDispatcher,
         ITenantContext tenantContext,
         ILogger<PurchaseOrderService> logger,
+        IRepository<AuditLog> auditLogRepository,
         IRepository<TaxRule>? taxRuleRepository = null,
         IRepository<OrderDetail>? orderDetailRepository = null,
         IRepository<Supplier>? supplierRepository = null,
@@ -48,6 +50,7 @@ public class PurchaseOrderService : IPurchaseOrderService
         _webhookDispatcher = webhookDispatcher;
         _tenantContext = tenantContext;
         _logger = logger;
+        _auditLogRepository = auditLogRepository;
         _taxRuleRepository = taxRuleRepository;
         _orderDetailRepository = orderDetailRepository;
         _supplierRepository = supplierRepository;
@@ -231,8 +234,9 @@ public class PurchaseOrderService : IPurchaseOrderService
     }
 
     /// <inheritdoc />
-    public async Task UpdateStatusAsync(int id, string status)
+    public async Task UpdateStatusAsync(int id, string status, PurchaseOrderStatusActor actor)
     {
+        ArgumentNullException.ThrowIfNull(actor);
         if (!Enum.TryParse<PurchaseOrderStatus>(status, ignoreCase: true, out var parsedStatus))
             throw new ArgumentException($"Invalid status: {status}");
 
@@ -283,7 +287,7 @@ public class PurchaseOrderService : IPurchaseOrderService
                     Status = parsedStatus.ToString()
                 }));
             }
-            await _unitOfWork.SaveChangesAsync();
+            await _unitOfWork.SaveChangesAsAsync(actor.AuditUsername);
             _logger.LogInformation("Updated PO {Id} status to {Status}", id, parsedStatus);
         };
 
@@ -295,6 +299,84 @@ public class PurchaseOrderService : IPurchaseOrderService
         {
             await _unitOfWork.ExecuteInTransactionAsync(updateStatus);
         }
+    }
+
+    /// <inheritdoc />
+    public async Task<IReadOnlyList<PurchaseOrderStatusHistoryEntry>> GetStatusHistoryAsync(int id)
+    {
+        var keyValues = JsonSerializer.Serialize(new Dictionary<string, object>
+        {
+            [nameof(PurchaseOrder.Id)] = id
+        });
+        var auditRows = await _auditLogRepository.FindPageAsync(
+            audit => audit.TenantId == _tenantContext.TenantId &&
+                     audit.EntityName == nameof(PurchaseOrder) &&
+                     audit.Action == "Update" &&
+                     audit.KeyValues == keyValues &&
+                     audit.ChangedColumns != null &&
+                     audit.ChangedColumns.Contains("\"Status\""),
+            rows => rows.OrderByDescending(audit => audit.Timestamp).ThenByDescending(audit => audit.Id),
+            maxResults: 100);
+
+        return auditRows
+            .Select(TryCreateStatusHistoryEntry)
+            .Where(entry => entry is not null)
+            .Cast<PurchaseOrderStatusHistoryEntry>()
+            .ToArray();
+    }
+
+    private static PurchaseOrderStatusHistoryEntry? TryCreateStatusHistoryEntry(AuditLog audit)
+    {
+        if (string.IsNullOrWhiteSpace(audit.OldValues) || string.IsNullOrWhiteSpace(audit.NewValues))
+        {
+            return null;
+        }
+
+        try
+        {
+            using var oldValues = JsonDocument.Parse(audit.OldValues);
+            using var newValues = JsonDocument.Parse(audit.NewValues);
+            var previousStatus = ReadStatus(oldValues.RootElement);
+            var status = ReadStatus(newValues.RootElement);
+            if (!previousStatus.HasValue || !status.HasValue || previousStatus == status ||
+                string.IsNullOrWhiteSpace(audit.Username))
+            {
+                return null;
+            }
+
+            return new PurchaseOrderStatusHistoryEntry(
+                DateTime.SpecifyKind(audit.Timestamp, DateTimeKind.Utc),
+                previousStatus.Value,
+                status.Value,
+                audit.Username);
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    private static PurchaseOrderStatus? ReadStatus(JsonElement values)
+    {
+        if (!values.TryGetProperty(nameof(PurchaseOrder.Status), out var statusValue))
+        {
+            return null;
+        }
+
+        if (statusValue.ValueKind == JsonValueKind.Number &&
+            statusValue.TryGetInt32(out var numericStatus) &&
+            Enum.IsDefined(typeof(PurchaseOrderStatus), numericStatus))
+        {
+            return (PurchaseOrderStatus)numericStatus;
+        }
+
+        if (statusValue.ValueKind == JsonValueKind.String &&
+            Enum.TryParse<PurchaseOrderStatus>(statusValue.GetString(), ignoreCase: true, out var stringStatus))
+        {
+            return stringStatus;
+        }
+
+        return null;
     }
 
     /// <inheritdoc />
