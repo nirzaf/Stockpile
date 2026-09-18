@@ -86,7 +86,7 @@ until an owner-approved mapping is supplied. Stock/location foreign keys also
 carry `TenantId`, preserving existing integer IDs while making a tenant-mixed
 reference invalid at the database boundary.
 
-## Document identity and legacy purchase orders
+## Document identity and modeled document scope
 
 The document-identity migration assigns every existing purchase order a new,
 stable internal UUID and preserves its existing `PONumber` verbatim as the
@@ -103,8 +103,16 @@ change must supply and validate that mapping explicitly.
 
 Purchase-order create retries use a tenant-scoped idempotency key and a hash of
 the business request; replaying the same key and request returns the retained
-purchase order, while reusing it for different content is rejected. Cancellation
-and voiding change lifecycle state but retain the document identity, human
-number, and line records. The current implementation covers purchase orders;
-it does not claim document identity or lineage support for receipts, invoices,
-payments, or other business documents that are not yet modeled.
+purchase order, while reusing it for different content is rejected. Supported
+purchase-order cancellation/void transitions and transfer-order cancellation
+change lifecycle state without deleting the document identity, assigned human
+number, or line records. Assigned numbers are retained after cancellation or
+void; this is a no-reuse policy, not a legal guarantee of a gapless series.
+Jurisdiction-specific numbering requirements remain a separate compliance
+decision.
+
+Typed document identities and stable line identities are currently modeled for
+purchase orders and transfer orders. Receipts, invoices, and payments are not
+yet modeled as typed business documents for document identity or source-line
+lineage; the existing identity/link primitives do not imply those workflows are
+implemented.

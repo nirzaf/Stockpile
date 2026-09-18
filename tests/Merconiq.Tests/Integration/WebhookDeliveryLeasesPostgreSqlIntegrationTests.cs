@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Data.Common;
 using System.Net;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
 using FluentAssertions;
@@ -188,14 +189,43 @@ public sealed class WebhookDeliveryLeasesPostgreSqlIntegrationTests(PostgreSqlIn
             delivery.LeaseUntil.Should().BeNull();
 
             var commands = commandCapture.Commands.ToArray();
-            var claimProjection = commands.Single(command =>
-                command.Contains("PayloadByteLength", StringComparison.Ordinal));
-            claimProjection.Should().Contain("octet_length(convert_to(\"Payload\", 'UTF8'))");
-            Regex.IsMatch(
-                claimProjection,
-                "(?:\\bSELECT|,)\\s*(?:[\\w\\\".]+\\.)?\\\"Payload\\\"(?:\\s|,)",
-                RegexOptions.IgnoreCase)
-                .Should().BeFalse("the metadata projection must not return the Payload column");
+            var deliveryReads = commands
+                .Where(command => command.Contains("WebhookDeliveries", StringComparison.OrdinalIgnoreCase) &&
+                    Regex.IsMatch(command, @"\bSELECT\b", RegexOptions.IgnoreCase))
+                .ToArray();
+            deliveryReads.Should().NotBeEmpty("the worker must read deliveries through SQL projections");
+
+            var claimProjections = deliveryReads
+                .Where(command => command.Contains("PayloadByteLength", StringComparison.Ordinal))
+                .ToArray();
+            claimProjections.Should().NotBeEmpty("the worker must inspect the payload size before loading it");
+            foreach (var deliveryRead in deliveryReads)
+            {
+                var selectProjections = Regex.Matches(
+                    deliveryRead,
+                    @"\bSELECT\s+(?<projection>.*?)\s+FROM\s+(?:[\w"".]+\.)?""?WebhookDeliveries""?",
+                    RegexOptions.IgnoreCase | RegexOptions.Singleline);
+                selectProjections.Should().NotBeEmpty("every delivery SELECT must be inspected");
+
+                foreach (Match selectProjection in selectProjections)
+                {
+                    var projection = selectProjection.Groups["projection"].Value;
+                    projection.Should().NotContain("*",
+                        "delivery reads must use an explicit bounded projection, including DISTINCT/ALL queries");
+
+                    var projectionWithoutPayloadLength = Regex.Replace(
+                        projection,
+                        @"octet_length\s*\(\s*convert_to\s*\(\s*""Payload""\s*,\s*'UTF8'\s*\)\s*\)\s+AS\s+""PayloadByteLength""",
+                        string.Empty,
+                        RegexOptions.IgnoreCase | RegexOptions.Singleline);
+                    projectionWithoutPayloadLength.Should().NotContain("\"Payload\"",
+                        "payload may be referenced only to calculate its bounded UTF-8 size");
+                }
+            }
+
+            claimProjections.Should().OnlyContain(command =>
+                command.Contains("octet_length(convert_to(\"Payload\", 'UTF8'))", StringComparison.Ordinal),
+                "the bounded claim projection must derive UTF-8 payload length in PostgreSQL");
 
             var deadLetterUpdate = commands.Single(command =>
                 command.Contains("UPDATE \"WebhookDeliveries\"", StringComparison.Ordinal) &&
@@ -213,6 +243,180 @@ public sealed class WebhookDeliveryLeasesPostgreSqlIntegrationTests(PostgreSqlIn
         }
     }
 
+    [PostgreSqlFact]
+    public async Task Worker_dead_letters_signature_mismatch_without_receiver_business_effect()
+    {
+        fixture.EnsureEnabled();
+        var tenantId = UniqueTenant();
+        var eventId = Guid.NewGuid();
+        const string secret = "synthetic-webhook-secret";
+        var payload = $$"""{"eventId":"{{eventId:D}}","eventType":"Stock.Received","itemId":42}""";
+        var receiver = new SignatureValidatingIdempotentReceiver(secret);
+        long deliveryId;
+
+        await using (var setup = fixture.CreateContext(tenantId))
+        {
+            var subscription = new WebhookSubscription
+            {
+                TenantId = tenantId,
+                Url = "https://8.8.8.8/webhook",
+                EventType = "Stock.Received",
+                Secret = secret
+            };
+            setup.WebhookSubscriptions.Add(subscription);
+            await setup.SaveChangesAsync();
+
+            var delivery = NewDelivery(tenantId, PostgreSqlTimestampNow());
+            delivery.SubscriptionId = subscription.Id;
+            delivery.EventId = eventId;
+            delivery.EventType = "Stock.Received";
+            delivery.Payload = payload;
+            setup.WebhookDeliveries.Add(delivery);
+            await setup.SaveChangesAsync();
+            deliveryId = delivery.Id;
+        }
+
+        var services = new ServiceCollection();
+        services.AddScoped<TenantContext>();
+        services.AddScoped<Merconiq.Infrastructure.Data.InventoryDbContext>(
+            _ => fixture.CreateContext(tenantId));
+        services.AddHttpClient("Webhooks")
+            .AddHttpMessageHandler(() => new CorruptFirstWebhookSignatureHandler())
+            .ConfigurePrimaryHttpMessageHandler(() => receiver);
+        await using var provider = services.BuildServiceProvider();
+
+        var worker = CreateWorker(provider);
+        await worker.StartAsync(CancellationToken.None);
+        WebhookDelivery deadLetter;
+        try
+        {
+            deadLetter = await WaitForDeadLetterAsync(tenantId, deliveryId);
+        }
+        finally
+        {
+            using var stopTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            await worker.StopAsync(stopTimeout.Token);
+        }
+
+        var requests = receiver.Requests.ToArray();
+        requests.Should().ContainSingle();
+        requests[0].EventId.Should().Be(eventId);
+        requests[0].Payload.Should().Be(payload);
+        requests[0].Signature.Should().NotBeNull();
+        requests[0].SignatureValid.Should().BeFalse("the receiver must reject a mismatched signature before processing the event");
+
+        using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(secret));
+        var expectedSignature = Convert.ToHexString(hmac.ComputeHash(Encoding.UTF8.GetBytes(payload))).ToLowerInvariant();
+        requests[0].Signature.Should().NotBe(expectedSignature);
+        receiver.BusinessEffectCount.Should().Be(0);
+
+        deadLetter.Status.Should().Be(WebhookDeliveryStatus.DeadLetter);
+        deadLetter.AttemptCount.Should().Be(1);
+        deadLetter.LastStatusCode.Should().Be((int)HttpStatusCode.Unauthorized);
+        deadLetter.DeliveredAt.Should().BeNull();
+        deadLetter.LeaseToken.Should().BeNull();
+    }
+
+    [PostgreSqlFact]
+    public async Task Worker_retries_response_stream_failure_and_reuses_event_identity_for_receiver_deduplication()
+    {
+        fixture.EnsureEnabled();
+        var tenantId = UniqueTenant();
+        var eventId = Guid.NewGuid();
+        const string secret = "synthetic-webhook-secret";
+        var payload = $$"""{"eventId":"{{eventId:D}}","eventType":"Stock.Received","itemId":42}""";
+        var receiver = new SignatureValidatingIdempotentReceiver(secret);
+        long deliveryId;
+
+        await using (var setup = fixture.CreateContext(tenantId))
+        {
+            var subscription = new WebhookSubscription
+            {
+                TenantId = tenantId,
+                Url = "https://8.8.8.8/webhook",
+                EventType = "Stock.Received",
+                Secret = secret
+            };
+            setup.WebhookSubscriptions.Add(subscription);
+            await setup.SaveChangesAsync();
+
+            var delivery = NewDelivery(tenantId, PostgreSqlTimestampNow());
+            delivery.SubscriptionId = subscription.Id;
+            delivery.EventId = eventId;
+            delivery.EventType = "Stock.Received";
+            delivery.Payload = payload;
+            setup.WebhookDeliveries.Add(delivery);
+            await setup.SaveChangesAsync();
+            deliveryId = delivery.Id;
+        }
+
+        var services = new ServiceCollection();
+        services.AddScoped<TenantContext>();
+        services.AddScoped<Merconiq.Infrastructure.Data.InventoryDbContext>(
+            _ => fixture.CreateContext(tenantId));
+        services.AddHttpClient("Webhooks")
+            .ConfigurePrimaryHttpMessageHandler(() => receiver);
+        await using var provider = services.BuildServiceProvider();
+
+        var firstWorker = CreateWorker(provider);
+        await firstWorker.StartAsync(CancellationToken.None);
+        try
+        {
+            var retry = await WaitForDeliveryAsync(
+                tenantId,
+                deliveryId,
+                item => item.Status == WebhookDeliveryStatus.Pending && item.AttemptCount == 1);
+
+            retry.LastError.Should().Be("Webhook transport failed.");
+            retry.LastStatusCode.Should().Be((int)HttpStatusCode.OK);
+            retry.LeaseToken.Should().BeNull();
+            firstWorker.ExecuteTask.Should().NotBeNull();
+            firstWorker.ExecuteTask!.IsCompleted.Should().BeFalse(
+                "a receiver disconnect while reading its response must not stop the hosted delivery worker");
+        }
+        finally
+        {
+            using var stopTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            await firstWorker.StopAsync(stopTimeout.Token);
+        }
+
+        await using (var advanceRetry = fixture.CreateContext(tenantId))
+        {
+            var delivery = await advanceRetry.WebhookDeliveries.SingleAsync(item => item.Id == deliveryId);
+            delivery.NextAttemptAt = PostgreSqlTimestampNow().AddSeconds(-1);
+            await advanceRetry.SaveChangesAsync();
+        }
+
+        var restartedWorker = CreateWorker(provider);
+        await restartedWorker.StartAsync(CancellationToken.None);
+        WebhookDelivery delivered;
+        try
+        {
+            delivered = await WaitForDeliveryAsync(
+                tenantId,
+                deliveryId,
+                item => item.Status == WebhookDeliveryStatus.Delivered);
+        }
+        finally
+        {
+            using var stopTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            await restartedWorker.StopAsync(stopTimeout.Token);
+        }
+
+        var requests = receiver.Requests.ToArray();
+        requests.Should().HaveCount(2);
+        requests.Should().OnlyContain(request =>
+            request.EventId == eventId && request.Payload == payload && request.SignatureValid);
+        using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(secret));
+        var expectedSignature = Convert.ToHexString(hmac.ComputeHash(Encoding.UTF8.GetBytes(payload))).ToLowerInvariant();
+        requests.Should().OnlyContain(request => request.Signature == expectedSignature);
+        receiver.BusinessEffectCount.Should().Be(1, "the synthetic receiver applies the business effect only for a new event ID");
+        delivered.AttemptCount.Should().Be(2);
+        delivered.DeliveredAt.Should().NotBeNull();
+        delivered.LastStatusCode.Should().Be((int)HttpStatusCode.OK);
+        delivered.LastError.Should().BeNull();
+    }
+
     private async Task<WebhookDelivery> WaitForDeadLetterAsync(string tenantId, long deliveryId)
     {
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
@@ -228,6 +432,30 @@ public sealed class WebhookDeliveryLeasesPostgreSqlIntegrationTests(PostgreSqlIn
             await Task.Delay(TimeSpan.FromMilliseconds(25), timeout.Token);
         }
     }
+
+    private async Task<WebhookDelivery> WaitForDeliveryAsync(
+        string tenantId,
+        long deliveryId,
+        Func<WebhookDelivery, bool> condition)
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        while (true)
+        {
+            await using var verify = fixture.CreateContext(tenantId);
+            var delivery = await verify.WebhookDeliveries.SingleAsync(item => item.Id == deliveryId);
+            if (condition(delivery))
+            {
+                return delivery;
+            }
+
+            await Task.Delay(TimeSpan.FromMilliseconds(25), timeout.Token);
+        }
+    }
+
+    private static WebhookDeliveryBackgroundService CreateWorker(IServiceProvider provider) => new(
+        provider.GetRequiredService<IServiceScopeFactory>(),
+        provider.GetRequiredService<IHttpClientFactory>(),
+        NullLogger<WebhookDeliveryBackgroundService>.Instance);
 
     private static WebhookDelivery NewDelivery(string tenantId, DateTimeOffset now) => new()
     {
@@ -288,5 +516,130 @@ public sealed class WebhookDeliveryLeasesPostgreSqlIntegrationTests(PostgreSqlIn
             Interlocked.Increment(ref _sendCount);
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK));
         }
+    }
+
+    private sealed class CorruptFirstWebhookSignatureHandler : DelegatingHandler
+    {
+        private int _corrupted;
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            if (Interlocked.Exchange(ref _corrupted, 1) == 0)
+            {
+                var signature = request.Headers.GetValues("X-Inventory-Signature").Single();
+                var invalidSignature = signature.ToCharArray();
+                invalidSignature[0] = invalidSignature[0] == '0' ? '1' : '0';
+                request.Headers.Remove("X-Inventory-Signature");
+                request.Headers.Add("X-Inventory-Signature", new string(invalidSignature));
+            }
+
+            return base.SendAsync(request, cancellationToken);
+        }
+    }
+
+    private sealed class SignatureValidatingIdempotentReceiver(string secret) : HttpMessageHandler
+    {
+        private readonly ConcurrentQueue<ReceivedWebhook> _requests = new();
+        private readonly ConcurrentDictionary<Guid, byte> _processedEvents = new();
+        private int _requestCount;
+        private int _businessEffectCount;
+
+        public IReadOnlyCollection<ReceivedWebhook> Requests => _requests.ToArray();
+        public int BusinessEffectCount => Volatile.Read(ref _businessEffectCount);
+
+        protected override async Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            var eventId = Guid.Parse(request.Headers.GetValues("X-Inventory-Event-Id").Single());
+            var payloadBytes = await request.Content!.ReadAsByteArrayAsync(cancellationToken);
+            var payload = Encoding.UTF8.GetString(payloadBytes);
+            var signature = request.Headers.TryGetValues("X-Inventory-Signature", out var signatures)
+                ? signatures.SingleOrDefault()
+                : null;
+            var signatureValid = HasValidSignature(payloadBytes, secret, signature);
+            _requests.Enqueue(new ReceivedWebhook(eventId, payload, signature, signatureValid));
+            if (!signatureValid)
+            {
+                return new HttpResponseMessage(HttpStatusCode.Unauthorized);
+            }
+
+            if (_processedEvents.TryAdd(eventId, 0))
+            {
+                Interlocked.Increment(ref _businessEffectCount);
+            }
+
+            if (Interlocked.Increment(ref _requestCount) == 1)
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StreamContent(new FailingResponseBodyStream())
+                };
+            }
+
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("accepted", Encoding.UTF8, "text/plain")
+            };
+        }
+
+        private static bool HasValidSignature(ReadOnlySpan<byte> rawBody, string signingSecret, string? signature)
+        {
+            if (string.IsNullOrEmpty(signingSecret) || signature is null || signature.Length != 64)
+            {
+                return false;
+            }
+
+            byte[] supplied;
+            try
+            {
+                supplied = Convert.FromHexString(signature);
+            }
+            catch (FormatException)
+            {
+                return false;
+            }
+
+            if (supplied.Length != 32)
+            {
+                return false;
+            }
+
+            Span<byte> expected = stackalloc byte[32];
+            HMACSHA256.HashData(Encoding.UTF8.GetBytes(signingSecret), rawBody, expected);
+            return CryptographicOperations.FixedTimeEquals(expected, supplied);
+        }
+    }
+
+    private sealed record ReceivedWebhook(Guid EventId, string Payload, string? Signature, bool SignatureValid);
+
+    private sealed class FailingResponseBodyStream : Stream
+    {
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position
+        {
+            get => throw new NotSupportedException();
+            set => throw new NotSupportedException();
+        }
+
+        public override void Flush() => throw new NotSupportedException();
+        public override int Read(byte[] buffer, int offset, int count) => throw CreateReadFailure();
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default) =>
+            ValueTask.FromException<int>(CreateReadFailure());
+        public override Task<int> ReadAsync(
+            byte[] buffer,
+            int offset,
+            int count,
+            CancellationToken cancellationToken) => Task.FromException<int>(CreateReadFailure());
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+
+        private static IOException CreateReadFailure() => new("Synthetic receiver response connection closed.");
     }
 }
