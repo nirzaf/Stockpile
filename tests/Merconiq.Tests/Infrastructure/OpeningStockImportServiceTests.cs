@@ -219,6 +219,86 @@ public sealed class OpeningStockImportServiceTests
         (await context.OpeningStockImportLines.SingleAsync()).StockTransactionId.Should().Be(entry.StockTransactionId);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ReplayAsync_RejectsCutoverBeforeExistingTransferMovementWithoutMutation(bool movementArrivesAtLocation)
+    {
+        await using var context = CreateContext();
+        var item = new Item { ExternalId = "item-1", ItemCode = "SKU-1", Description = "Widget", IsActive = true };
+        var source = new Location { Id = 7, Name = "Source" };
+        var destination = new Location { Id = 8, Name = "Destination" };
+        context.Items.Add(item);
+        context.Locations.AddRange(source, destination);
+        context.StockInHand.Add(new StockInHand { Item = item, Location = destination, Quantity = 10 });
+        await context.SaveChangesAsync();
+
+        var cutoverAt = new DateTime(2026, 9, 16, 12, 0, 0, DateTimeKind.Utc);
+        context.StockTransactions.Add(new StockTransaction
+        {
+            ItemId = item.Id,
+            FromLocationId = movementArrivesAtLocation ? source.Id : destination.Id,
+            ToLocationId = movementArrivesAtLocation ? destination.Id : source.Id,
+            Quantity = 10,
+            TransactionType = TransactionType.Transfer,
+            TransactionDate = cutoverAt.AddSeconds(1)
+        });
+        await context.SaveChangesAsync();
+
+        await FluentActions.Invoking(() => CreateService(context).ReplayAsync(new(
+            "external_reference,item_external_id,location_id,quantity,unit_cost\nopen-1,item-1,8,10,12.5",
+            "import-1",
+            "approval-1",
+            cutoverAt)))
+            .Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("*cannot precede or coincide with an existing stock movement*");
+
+        (await context.StockInHand.SingleAsync()).Quantity.Should().Be(10);
+        (await context.StockTransactions.CountAsync()).Should().Be(1);
+        (await context.OpeningStockImports.CountAsync()).Should().Be(0);
+        (await context.StockValuationBuckets.CountAsync()).Should().Be(0);
+        (await context.StockValuationEntries.CountAsync()).Should().Be(0);
+    }
+
+    [Fact]
+    public async Task ReplayAsync_AllowsLaterQuarantineBecauseItDoesNotChangeOnHandQuantity()
+    {
+        await using var context = CreateContext();
+        var item = new Item { ExternalId = "item-1", ItemCode = "SKU-1", Description = "Widget", IsActive = true };
+        var location = new Location { Id = 7, Name = "Main" };
+        context.Items.Add(item);
+        context.Locations.Add(location);
+        context.StockInHand.Add(new StockInHand
+        {
+            Item = item,
+            Location = location,
+            Quantity = 10,
+            QuarantinedQuantity = 2
+        });
+        await context.SaveChangesAsync();
+
+        var cutoverAt = new DateTime(2026, 9, 16, 12, 0, 0, DateTimeKind.Utc);
+        context.StockTransactions.Add(new StockTransaction
+        {
+            ItemId = item.Id,
+            FromLocationId = location.Id,
+            Quantity = 2,
+            TransactionType = TransactionType.Quarantine,
+            TransactionDate = cutoverAt.AddSeconds(1)
+        });
+        await context.SaveChangesAsync();
+
+        var result = await CreateService(context).ReplayAsync(new(
+            "external_reference,item_external_id,location_id,quantity,unit_cost\nopen-1,item-1,7,10,12.5",
+            "import-1",
+            "approval-1",
+            cutoverAt));
+
+        result.AppliedRows.Should().Be(1);
+        (await context.StockInHand.SingleAsync()).Quantity.Should().Be(10);
+        (await context.StockTransactions.CountAsync()).Should().Be(2);
+    }
+
     [Fact]
     public async Task ReplayAsync_RejectsUnreconciledExistingQuantityWithoutMutation()
     {

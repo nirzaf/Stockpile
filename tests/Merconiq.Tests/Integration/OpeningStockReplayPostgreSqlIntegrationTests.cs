@@ -108,6 +108,64 @@ public sealed class OpeningStockReplayPostgreSqlIntegrationTests
     }
 
     [PostgreSqlFact]
+    public async Task Opening_cutover_before_existing_transfer_into_location_is_rejected_atomically()
+    {
+        _fixture.EnsureEnabled();
+        var tenantId = $"opening-cutover-order-{Guid.NewGuid():N}";
+        int itemId;
+        int sourceLocationId;
+        int destinationLocationId;
+        var cutoverAt = DateTime.UtcNow.AddDays(-2);
+
+        await using (var setup = _fixture.CreateContext(tenantId))
+        {
+            var item = new Item { ExternalId = "item-1", ItemCode = "OPEN-1", Description = "Opening item", IsActive = true };
+            var source = new Location { Name = "Source" };
+            var destination = new Location { Name = "Destination" };
+            setup.Items.Add(item);
+            setup.Locations.AddRange(source, destination);
+            await setup.SaveChangesAsync();
+            itemId = item.Id;
+            sourceLocationId = source.Id;
+            destinationLocationId = destination.Id;
+
+            setup.StockInHand.Add(new StockInHand
+            {
+                ItemId = itemId,
+                LocationId = destinationLocationId,
+                Quantity = 10
+            });
+            setup.StockTransactions.Add(new StockTransaction
+            {
+                ItemId = itemId,
+                FromLocationId = sourceLocationId,
+                ToLocationId = destinationLocationId,
+                Quantity = 10,
+                TransactionType = TransactionType.Transfer,
+                TransactionDate = cutoverAt.AddDays(1)
+            });
+            await setup.SaveChangesAsync();
+        }
+
+        await using var context = _fixture.CreateContext(tenantId);
+        await FluentActions.Invoking(() => CreateService(context, tenantId).ReplayAsync(new(
+            $"external_reference,item_external_id,location_id,quantity,unit_cost\nopen-1,item-1,{destinationLocationId},10,12.5",
+            "import-1",
+            "approval-1",
+            cutoverAt)))
+            .Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("*cannot precede or coincide with an existing stock movement*");
+
+        await using var verify = _fixture.CreateContext(tenantId);
+        (await verify.StockInHand.SingleAsync(stock => stock.ItemId == itemId && stock.LocationId == destinationLocationId))
+            .Quantity.Should().Be(10);
+        (await verify.StockTransactions.CountAsync()).Should().Be(1);
+        (await verify.OpeningStockImports.CountAsync()).Should().Be(0);
+        (await verify.StockValuationBuckets.CountAsync()).Should().Be(0);
+        (await verify.StockValuationEntries.CountAsync()).Should().Be(0);
+    }
+
+    [PostgreSqlFact]
     public async Task Approved_baseline_can_be_reversed_once_with_forward_stock_effects()
     {
         _fixture.EnsureEnabled();
