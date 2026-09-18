@@ -71,6 +71,8 @@ public sealed class TransferOrderService(
         var documentIds = orders.Select(order => order.DocumentId).Distinct().ToArray();
         var lines = await lineRepository.FindAsync(
             line => orderIds.Contains(line.TransferOrderId), cancellationToken);
+        var transitEntries = await transitRepository.FindAsync(
+            entry => orderIds.Contains(entry.TransferOrderId), cancellationToken);
         var identities = await documentRepository.FindAsync(
             document => documentIds.Contains(document.Id), cancellationToken);
         var settlements = _settlementRepository is null
@@ -84,6 +86,7 @@ public sealed class TransferOrderService(
             .Where(settlement => settlement.SettlementType != TransferTransitSettlementType.Returned)
             .GroupBy(settlement => settlement.TransferOrderLineId)
             .ToDictionary(group => group.Key, group => group.Sum(settlement => settlement.Quantity));
+        var transitEntriesByLine = ToTransitEntriesByLine(transitEntries, settlements);
 
         return orders.Select(order => ToView(
                 order,
@@ -93,7 +96,8 @@ public sealed class TransferOrderService(
                 linesByOrder.TryGetValue(order.Id, out var orderLines)
                     ? orderLines
                     : Array.Empty<TransferOrderLine>(),
-                settledByLine))
+                settledByLine,
+                transitEntriesByLine))
             .ToArray();
     }
 
@@ -818,6 +822,8 @@ public sealed class TransferOrderService(
         var lines = (await lineRepository.FindAsync(line => line.TransferOrderId == order.Id))
             .OrderBy(line => line.Id)
             .ToArray();
+        var transitEntries = await transitRepository.FindAsync(
+            entry => entry.TransferOrderId == order.Id, cancellationToken);
         var settlements = _settlementRepository is null
             ? Array.Empty<TransferTransitSettlement>()
             : (await _settlementRepository.FindAsync(
@@ -826,14 +832,63 @@ public sealed class TransferOrderService(
             .Where(settlement => settlement.SettlementType != TransferTransitSettlementType.Returned)
             .GroupBy(settlement => settlement.TransferOrderLineId)
             .ToDictionary(group => group.Key, group => group.Sum(settlement => settlement.Quantity));
-        return ToView(order, identity, lines, settledByLine);
+        var transitEntriesByLine = ToTransitEntriesByLine(transitEntries, settlements);
+        return ToView(order, identity, lines, settledByLine, transitEntriesByLine);
+    }
+
+    private static IReadOnlyDictionary<int, IReadOnlyList<TransferTransitEntryView>> ToTransitEntriesByLine(
+        IEnumerable<TransferTransitEntry> transitEntries,
+        IEnumerable<TransferTransitSettlement> settlements)
+    {
+        var settlementsByEntry = settlements
+            .GroupBy(settlement => settlement.TransferTransitEntryId)
+            .ToDictionary(group => group.Key, group => group.ToArray());
+
+        return transitEntries
+            .OrderBy(entry => entry.DispatchedAt)
+            .ThenBy(entry => entry.Id)
+            .GroupBy(entry => entry.TransferOrderLineId)
+            .ToDictionary(
+                group => group.Key,
+                group => (IReadOnlyList<TransferTransitEntryView>)group.Select(entry =>
+                {
+                    var entrySettlements = settlementsByEntry.TryGetValue(entry.Id, out var recorded)
+                        ? recorded
+                        : Array.Empty<TransferTransitSettlement>();
+                    var received = entrySettlements
+                        .Where(settlement => settlement.SettlementType == TransferTransitSettlementType.Received)
+                        .Sum(settlement => settlement.Quantity);
+                    var quarantined = entrySettlements
+                        .Where(settlement => settlement.SettlementType == TransferTransitSettlementType.Quarantined)
+                        .Sum(settlement => settlement.Quantity);
+                    var returned = entrySettlements
+                        .Where(settlement => settlement.SettlementType == TransferTransitSettlementType.Returned)
+                        .Sum(settlement => settlement.Quantity);
+
+                    return new TransferTransitEntryView(
+                        entry.Id,
+                        entry.SourceDocumentLineId.Value,
+                        entry.Quantity,
+                        received,
+                        quarantined,
+                        returned,
+                        entry.Quantity - received - quarantined - returned,
+                        entry.BatchNumber,
+                        entry.ExpiryDate,
+                        entry.UnitCost,
+                        entry.TotalValue,
+                        entry.TotalValue - entrySettlements.Sum(settlement => settlement.TotalValue),
+                        entry.DispatchedBy,
+                        entry.DispatchedAt);
+                }).ToArray());
     }
 
     private static TransferOrderView ToView(
         TransferOrder order,
         DocumentIdentity identity,
         IReadOnlyCollection<TransferOrderLine> lines,
-        IReadOnlyDictionary<int, int>? settledByLine = null) =>
+        IReadOnlyDictionary<int, int>? settledByLine = null,
+        IReadOnlyDictionary<int, IReadOnlyList<TransferTransitEntryView>>? transitEntriesByLine = null) =>
         new(
             order.Id,
             order.DocumentId.Value,
@@ -855,7 +910,13 @@ public sealed class TransferOrderService(
                 line.DispatchedQuantity,
                 settledByLine is not null && settledByLine.TryGetValue(line.Id, out var receivedQuantity)
                     ? receivedQuantity
-                    : 0)).ToArray());
+                    : 0)
+            {
+                TransitEntries = transitEntriesByLine is not null &&
+                                 transitEntriesByLine.TryGetValue(line.Id, out var lineTransitEntries)
+                    ? lineTransitEntries
+                    : Array.Empty<TransferTransitEntryView>()
+            }).ToArray());
 
     private IRepository<TransferTransitSettlement> _settlementRepositoryOrThrow() =>
         _settlementRepository ?? throw new InvalidOperationException(
