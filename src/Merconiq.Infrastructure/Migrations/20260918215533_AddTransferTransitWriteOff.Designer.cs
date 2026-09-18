@@ -3,6 +3,7 @@ using System;
 using Merconiq.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace Merconiq.Infrastructure.Migrations
 {
     [DbContext(typeof(InventoryDbContext))]
-    partial class InventoryDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260918215533_AddTransferTransitWriteOff")]
+    partial class AddTransferTransitWriteOff
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -214,82 +217,6 @@ namespace Merconiq.Infrastructure.Migrations
                         .IsUnique();
 
                     b.ToTable("Branches");
-                });
-
-            modelBuilder.Entity("Merconiq.Core.Entities.ChartOfAccount", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer");
-
-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
-
-                    b.Property<string>("AccountCode")
-                        .IsRequired()
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)");
-
-                    b.Property<string>("AccountType")
-                        .IsRequired()
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)");
-
-                    b.Property<int>("CompanyId")
-                        .HasColumnType("integer");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("CreatedBy")
-                        .HasColumnType("text");
-
-                    b.Property<bool>("IsActive")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("boolean")
-                        .HasDefaultValue(true);
-
-                    b.Property<bool>("IsGroupAccount")
-                        .HasColumnType("boolean");
-
-                    b.Property<string>("Name")
-                        .IsRequired()
-                        .HasMaxLength(200)
-                        .HasColumnType("character varying(200)");
-
-                    b.Property<int?>("ParentAccountId")
-                        .HasColumnType("integer");
-
-                    b.Property<string>("TenantId")
-                        .IsRequired()
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)");
-
-                    b.Property<DateTime?>("UpdatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("UpdatedBy")
-                        .HasColumnType("text");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("CompanyId", "TenantId");
-
-                    b.HasIndex("ParentAccountId", "CompanyId", "TenantId");
-
-                    b.HasIndex("TenantId", "CompanyId", "AccountCode")
-                        .IsUnique()
-                        .HasDatabaseName("UX_ChartAccounts_Tenant_Company_Code");
-
-                    b.ToTable("ChartOfAccounts", null, t =>
-                        {
-                            t.HasCheckConstraint("CK_ChartAccounts_AccountCode", "\"AccountCode\" <> '' AND \"AccountCode\" = btrim(\"AccountCode\")");
-
-                            t.HasCheckConstraint("CK_ChartAccounts_AccountType", "\"AccountType\" <> '' AND \"AccountType\" = btrim(\"AccountType\")");
-
-                            t.HasCheckConstraint("CK_ChartAccounts_Name", "\"Name\" <> '' AND \"Name\" = btrim(\"Name\")");
-
-                            t.HasCheckConstraint("CK_ChartAccounts_NoSelfParent", "\"ParentAccountId\" IS NULL OR \"ParentAccountId\" <> \"Id\"");
-                        });
                 });
 
             modelBuilder.Entity("Merconiq.Core.Entities.Company", b =>
@@ -2947,24 +2874,6 @@ namespace Merconiq.Infrastructure.Migrations
                     b.Navigation("Company");
                 });
 
-            modelBuilder.Entity("Merconiq.Core.Entities.ChartOfAccount", b =>
-                {
-                    b.HasOne("Merconiq.Core.Entities.Company", null)
-                        .WithMany()
-                        .HasForeignKey("CompanyId", "TenantId")
-                        .HasPrincipalKey("Id", "TenantId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-
-                    b.HasOne("Merconiq.Core.Entities.ChartOfAccount", "ParentAccount")
-                        .WithMany("ChildAccounts")
-                        .HasForeignKey("ParentAccountId", "CompanyId", "TenantId")
-                        .HasPrincipalKey("Id", "CompanyId", "TenantId")
-                        .OnDelete(DeleteBehavior.Restrict);
-
-                    b.Navigation("ParentAccount");
-                });
-
             modelBuilder.Entity("Merconiq.Core.Entities.CompanyMembership", b =>
                 {
                     b.HasOne("Merconiq.Core.Entities.Company", "Company")
@@ -3678,11 +3587,6 @@ namespace Merconiq.Infrastructure.Migrations
             modelBuilder.Entity("Merconiq.Core.Entities.Branch", b =>
                 {
                     b.Navigation("Locations");
-                });
-
-            modelBuilder.Entity("Merconiq.Core.Entities.ChartOfAccount", b =>
-                {
-                    b.Navigation("ChildAccounts");
                 });
 
             modelBuilder.Entity("Merconiq.Core.Entities.Company", b =>

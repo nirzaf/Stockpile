@@ -93,6 +93,37 @@ else
 
     <MudText Typo="Typo.h6" HtmlTag="h2" Class="mb-3">Line Items</MudText>
 
+    @if (_obligations is not null)
+    {
+        <MudPaper Elevation="1" Class="pa-4 my-4" aria-label="Purchase-order line obligations">
+            <MudText Typo="Typo.h6" HtmlTag="h2">Ordered-line obligations</MudText>
+            <MudText Typo="Typo.body2" Class="mt-2">
+                @PurchaseOrderObligationsPresentation.GetOrderedSummary(_obligations)
+            </MudText>
+            <MudAlert Severity="Severity.Info" Variant="Variant.Outlined" Class="mb-3">
+                @PurchaseOrderObligationsPresentation.ReceiptScopeNotice
+            </MudAlert>
+            @if (_obligations.Lines.Count == 0)
+            {
+                <MudText Color="Color.Secondary">No charge lines have ordered quantities.</MudText>
+            }
+            else
+            {
+                <MudTable Items="@_obligations.Lines" Dense="true" Hover="true" Striped="true"
+                          Breakpoint="Breakpoint.Xs" Elevation="0" aria-label="Purchase-order line obligations">
+                    <HeaderContent>
+                        <MudTh>Item</MudTh>
+                        <MudTh Style="text-align:right">Ordered</MudTh>
+                    </HeaderContent>
+                    <RowTemplate>
+                        <MudTd DataLabel="Item">@context.ItemCode - @context.ItemDescription</MudTd>
+                        <MudTd DataLabel="Ordered" Style="text-align:right">@context.OrderedQuantity</MudTd>
+                    </RowTemplate>
+                </MudTable>
+            }
+        </MudPaper>
+    }
+
     <MudTable Items="@_po.OrderDetails" Dense="true" Hover="true" Striped="true" Elevation="1">
         <HeaderContent>
             <MudTh>Item</MudTh>
@@ -182,6 +213,7 @@ else
     public int Id { get; set; }
 
     private PurchaseOrder? _po;
+    private PurchaseOrderLineObligations? _obligations;
     private IReadOnlyList<PurchaseOrderStatusHistoryEntry> _statusHistory = Array.Empty<PurchaseOrderStatusHistoryEntry>();
     private bool _isUpdatingStatus;
     private bool _showStatusReload;
@@ -213,6 +245,7 @@ else
         _po = await POService.GetByIdAsync(Id);
         if (_po is not null)
         {
+            _obligations = await POService.GetLineObligationsAsync(_po.Id);
             _statusHistory = await POService.GetStatusHistoryAsync(_po.Id);
         }
     }
@@ -265,6 +298,9 @@ else
                 newStatus.ToString(),
                 new PurchaseOrderStatusActor(actorId, principal.Identity?.Name));
             _po = await POService.GetByIdAsync(purchaseOrderId);
+            _obligations = _po is null
+                ? null
+                : await POService.GetLineObligationsAsync(purchaseOrderId);
             _statusHistory = _po is null
                 ? Array.Empty<PurchaseOrderStatusHistoryEntry>()
                 : await POService.GetStatusHistoryAsync(purchaseOrderId);

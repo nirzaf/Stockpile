@@ -93,6 +93,52 @@ public class PurchaseOrderService : IPurchaseOrderService
     }
 
     /// <inheritdoc />
+    public async Task<PurchaseOrderLineObligations?> GetLineObligationsAsync(
+        int id,
+        CancellationToken cancellationToken = default)
+    {
+        PurchaseOrderLineObligations? obligations = null;
+        await _unitOfWork.ExecuteInReadSnapshotAsync(async () =>
+        {
+            var order = await _poRepo.GetByIdAsync(id, cancellationToken);
+            if (order is null)
+                return;
+
+            var lines = (await RequireRepository(_orderDetailRepository)
+                    .FindAsync(line => line.PurchaseOrderId == id, cancellationToken))
+                .Where(line => line.Direction == DocumentLineDirection.Charge && line.Quantity > 0)
+                .OrderBy(line => line.Id)
+                .ToArray();
+            var itemIds = lines.Select(line => line.ItemId).Distinct().ToArray();
+            var items = itemIds.Length == 0
+                ? new Dictionary<int, Item>()
+                : (await RequireRepository(_itemRepository)
+                        .FindAsync(item => itemIds.Contains(item.Id), cancellationToken))
+                    .ToDictionary(item => item.Id);
+
+            var lineObligations = lines.Select(line =>
+            {
+                items.TryGetValue(line.ItemId, out var item);
+                var ordered = line.Quantity;
+                return new PurchaseOrderLineObligation(
+                    line.Id,
+                    line.ItemId,
+                    item?.ItemCode,
+                    item?.Description,
+                    ordered);
+            }).ToArray();
+
+            var orderedQuantity = lineObligations.Sum(line => (long)line.OrderedQuantity);
+            obligations = new PurchaseOrderLineObligations(
+                order.Id,
+                orderedQuantity,
+                lineObligations);
+        }, cancellationToken);
+
+        return obligations;
+    }
+
+    /// <inheritdoc />
     public async Task<PurchaseOrder> CreateAsync(
         PurchaseOrder purchaseOrder,
         List<OrderDetail> details,

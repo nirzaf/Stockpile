@@ -630,6 +630,65 @@ public class PurchaseOrderServiceTests
     }
 
     [Fact]
+    public async Task AmendApprovedAsync_WhenOrderIsReceived_RejectsWithoutChangingCommercialOrLineIdentity()
+    {
+        var originalSnapshot = "{\"schemaVersion\":1,\"approved\":true}";
+        var po = new PurchaseOrder
+        {
+            Id = 57,
+            PONumber = "PO-57",
+            SupplierId = 7,
+            Status = PurchaseOrderStatus.Received,
+            CommercialVersion = 3,
+            ApprovedCommercialVersion = 3,
+            ApprovedCommercialSnapshotJson = originalSnapshot,
+            CurrencyScale = 2,
+            DeliveryTerms = "Deliver to Dock 1"
+        };
+        var line = new OrderDetail
+        {
+            Id = 12,
+            PurchaseOrderId = po.Id,
+            ItemId = 21,
+            Quantity = 4,
+            UnitPrice = 4m,
+            CurrencyScale = 2
+        };
+        var stableLineId = line.DocumentLineId;
+        var originalVersion = po.Version;
+        _poRepoMock.Setup(repository => repository.GetByIdAsync(po.Id)).ReturnsAsync(po);
+        SetupSnapshotData(po, line);
+
+        var act = () => _sut.AmendApprovedAsync(po.Id, new PurchaseOrderAmendment(
+            ExpectedCommercialVersion: 3,
+            SupplierId: po.SupplierId,
+            DeliveryTerms: "Deliver to Dock 2",
+            Notes: null,
+            CurrencyScale: 2,
+            Lines: [new PurchaseOrderAmendmentLine(
+                line.Id, line.ItemId, 5, 6m, line.DiscountPercent,
+                line.TaxRuleId, line.TaxRatePercent, line.TaxCategory, line.TaxMode, line.Direction)]));
+
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("Only an approved purchase order can be amended.");
+
+        po.Status.Should().Be(PurchaseOrderStatus.Received);
+        po.Version.Should().Be(originalVersion);
+        po.CommercialVersion.Should().Be(3);
+        po.ApprovedCommercialVersion.Should().Be(3);
+        po.ApprovedCommercialSnapshotJson.Should().Be(originalSnapshot);
+        po.SupplierId.Should().Be(7);
+        po.DeliveryTerms.Should().Be("Deliver to Dock 1");
+        line.Id.Should().Be(12);
+        line.DocumentLineId.Should().Be(stableLineId);
+        line.PurchaseOrderId.Should().Be(po.Id);
+        line.ItemId.Should().Be(21);
+        line.Quantity.Should().Be(4);
+        line.UnitPrice.Should().Be(4m);
+        _uowMock.Verify(unitOfWork => unitOfWork.SaveChangesAsync(default), Times.Never);
+    }
+
+    [Fact]
     public async Task AmendApprovedAsync_PreservesHistoricalTaxSnapshotWhenSelectedRuleIsNoLongerActive()
     {
         var effectiveFrom = new DateTime(2024, 1, 1, 0, 0, 0, DateTimeKind.Utc);

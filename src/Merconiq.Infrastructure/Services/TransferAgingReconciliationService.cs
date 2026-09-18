@@ -107,6 +107,9 @@ public sealed class TransferAgingReconciliationService(InventoryDbContext db)
                 group.Sum(settlement => settlement.SettlementType == TransferTransitSettlementType.Returned
                     ? settlement.Quantity
                     : 0),
+                group.Sum(settlement => settlement.SettlementType == TransferTransitSettlementType.WrittenOff
+                    ? settlement.Quantity
+                    : 0),
                 group.Sum(settlement => settlement.Quantity),
                 group.Sum(settlement => settlement.SettlementType == TransferTransitSettlementType.Received
                     ? settlement.TotalValue
@@ -115,6 +118,9 @@ public sealed class TransferAgingReconciliationService(InventoryDbContext db)
                     ? settlement.TotalValue
                     : 0m),
                 group.Sum(settlement => settlement.SettlementType == TransferTransitSettlementType.Returned
+                    ? settlement.TotalValue
+                    : 0m),
+                group.Sum(settlement => settlement.SettlementType == TransferTransitSettlementType.WrittenOff
                     ? settlement.TotalValue
                     : 0m),
                 group.Sum(settlement => settlement.TotalValue)))
@@ -138,9 +144,9 @@ public sealed class TransferAgingReconciliationService(InventoryDbContext db)
             .ToListAsync(cancellationToken);
 
         var settlementTransactionVariances = await (
-                from settlement in settlementEntries
+                from settlement in settlementEntries.Where(settlement => settlement.StockTransactionId.HasValue)
                 join stock in db.StockTransactions.AsNoTracking()
-                    on new { settlement.StockTransactionId, settlement.TenantId }
+                    on new { StockTransactionId = settlement.StockTransactionId!.Value, settlement.TenantId }
                     equals new { StockTransactionId = stock.Id, stock.TenantId }
                 group new { Settlement = settlement, Stock = stock } by settlement.TransferOrderLineId into g
                 select new QuantityVariance(
@@ -207,11 +213,11 @@ public sealed class TransferAgingReconciliationService(InventoryDbContext db)
             .ToListAsync(cancellationToken);
 
         var settlementValuationVariances = await (
-                from settlement in settlementEntries
+                from settlement in settlementEntries.Where(settlement => settlement.StockTransactionId.HasValue)
                 join posting in valuationEntries
                     on new
                     {
-                        settlement.StockTransactionId,
+                        StockTransactionId = settlement.StockTransactionId!.Value,
                         settlement.TenantId,
                         EntryType = settlement.SettlementType == TransferTransitSettlementType.Returned
                             ? StockValuationEntryType.TransferReturn
@@ -275,11 +281,7 @@ public sealed class TransferAgingReconciliationService(InventoryDbContext db)
             At = settlement.SettledAt,
             Priority = 1,
             settlement.Id,
-            Name = settlement.SettlementType == TransferTransitSettlementType.Received
-                ? "Received"
-                : settlement.SettlementType == TransferTransitSettlementType.Quarantined
-                    ? "Quarantined"
-                    : "Returned",
+            Name = settlement.SettlementType.ToString(),
             Actor = settlement.SettledBy
         });
         var latestActionRows = await dispatchActions.Concat(settlementActions)
@@ -344,18 +346,20 @@ public sealed class TransferAgingReconciliationService(InventoryDbContext db)
                 settled.ReceivedQuantity,
                 settled.QuarantinedQuantity,
                 settled.ReturnedQuantity,
+                settled.WrittenOffQuantity,
                 outstandingQuantity,
                 dispatched.Quantity - settled.ReceivedQuantity - settled.QuarantinedQuantity -
-                settled.ReturnedQuantity - outstandingQuantity,
+                settled.ReturnedQuantity - settled.WrittenOffQuantity - outstandingQuantity,
                 dispatched.Quantity == 0 ? null : RoundCost(dispatched.Value / dispatched.Quantity),
                 outstandingQuantity <= 0 ? null : RoundCost(outstandingValue / outstandingQuantity),
                 dispatched.Value,
                 settled.ReceivedValue,
                 settled.QuarantinedValue,
                 settled.ReturnedValue,
+                settled.WrittenOffValue,
                 outstandingValue,
                 dispatched.Value - settled.ReceivedValue - settled.QuarantinedValue -
-                settled.ReturnedValue - outstandingValue,
+                settled.ReturnedValue - settled.WrittenOffValue - outstandingValue,
                 dispatchTransaction?.Difference ?? 0,
                 dispatchValuation?.ValueVariance ?? 0m,
                 dispatchValuation?.PostingCountVariance ?? 0,
@@ -399,14 +403,16 @@ public sealed class TransferAgingReconciliationService(InventoryDbContext db)
         int ReceivedQuantity,
         int QuarantinedQuantity,
         int ReturnedQuantity,
+        int WrittenOffQuantity,
         int Quantity,
         decimal ReceivedValue,
         decimal QuarantinedValue,
         decimal ReturnedValue,
+        decimal WrittenOffValue,
         decimal Value)
     {
         public static SettlementTotal Empty(int transferOrderLineId) =>
-            new(transferOrderLineId, 0, 0, 0, 0, 0, 0m, 0m, 0m, 0m);
+            new(transferOrderLineId, 0, 0, 0, 0, 0, 0, 0m, 0m, 0m, 0m, 0m);
     }
 
     private sealed record QuantityVariance(int TransferOrderLineId, int Difference);

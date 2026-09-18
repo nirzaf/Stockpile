@@ -133,14 +133,18 @@ delivery happens asynchronously after commit and cannot undo a committed movemen
 
 A receipt or quarantine creates a valued `TransferIn` entry at the destination
 from the dispatch-captured transit value. A source-linked return creates a
-valued `TransferReturn` entry at the source from that same captured value.
+valued `TransferReturn` entry at the source from that same captured value. An
+approver write-off requires the existing company-scoped `Approve` capability
+and a mandatory reason. It is a source-linked transit settlement that records
+the apportioned dispatch-captured value without a physical stock movement or
+stock transaction; it does not post a GL journal, which remains in M06.
 Partial settlements allocate value from the captured total; the last settlement
 takes the exact remaining value so rounding cannot create or destroy transit
 value. Settlement rows are append-only and reference the transit entry,
-transfer-order line, source document line, and stock transaction. Partial
-settlement leaves the balance in transit. Quarantine is an interim custody
-state only; it does not authorize a write-off or disposition, which must use a
-separately approved M03 workflow. Transit settlement retains the source batch and
-expiry identity while carrying the dispatch-captured item/location moving average;
+transfer-order line, and source document line; physical receive, quarantine,
+and return events also reference their stock transaction. A write-off has no
+stock transaction by design. Partial settlement leaves the unallocated balance
+in transit. Transit settlement retains the source batch and expiry identity
+while carrying the dispatch-captured item/location moving average;
 it does not create lot-specific costing. Quantity-only dispatch remains unvalued
 and is rejected at this valued-transit boundary.
