@@ -170,18 +170,21 @@ public sealed class OpeningStockReplayPostgreSqlIntegrationTests
     {
         _fixture.EnsureEnabled();
         var tenantId = $"opening-valued-cutover-{Guid.NewGuid():N}";
-        int itemId;
+        int earlierItemId;
+        int laterItemId;
         int locationId;
         var cutoverAt = new DateTime(DateTime.UtcNow.AddDays(-2).Ticks / 10 * 10, DateTimeKind.Utc);
 
         await using (var setup = _fixture.CreateContext(tenantId))
         {
-            var item = new Item { ExternalId = "item-1", ItemCode = "OPEN-1", Description = "Opening item", IsActive = true };
+            var earlierItem = new Item { ExternalId = "early-item", ItemCode = "OPEN-EARLY", Description = "Earlier opening item", IsActive = true };
+            var laterItem = new Item { ExternalId = "later-item", ItemCode = "OPEN-LATER", Description = "Later opening item", IsActive = true };
             var location = new Location { Name = "Opening location" };
-            setup.Items.Add(item);
+            setup.Items.AddRange(earlierItem, laterItem);
             setup.Locations.Add(location);
             await setup.SaveChangesAsync();
-            itemId = item.Id;
+            earlierItemId = earlierItem.Id;
+            laterItemId = laterItem.Id;
             locationId = location.Id;
         }
 
@@ -189,13 +192,16 @@ public sealed class OpeningStockReplayPostgreSqlIntegrationTests
         {
             var unitOfWork = new UnitOfWork(receiptContext);
             await CreateStockService(receiptContext, tenantId, unitOfWork)
-                .ReceiveStockAsync(itemId, locationId, 10, "later valued receipt", unitCost: 12.5m);
+                .ReceiveStockAsync(laterItemId, locationId, 10, "later valued receipt", unitCost: 12.5m);
         }
 
         await using (var importContext = _fixture.CreateContext(tenantId))
         {
+            // Keep the valid group first so rejection proves it cannot leave staged earlier-group writes behind.
             await FluentActions.Invoking(() => CreateService(importContext, tenantId).ReplayAsync(new(
-                    $"external_reference,item_external_id,location_id,quantity,unit_cost\nopen-1,item-1,{locationId},10,12.5",
+                    $"external_reference,item_external_id,location_id,quantity,unit_cost\n" +
+                    $"open-early,early-item,{locationId},5,10\n" +
+                    $"open-later,later-item,{locationId},10,12.5",
                     "import-before-valued-receipt",
                     "approval-before-valued-receipt",
                     cutoverAt)))
@@ -204,9 +210,12 @@ public sealed class OpeningStockReplayPostgreSqlIntegrationTests
         }
 
         await using var verify = _fixture.CreateContext(tenantId);
-        var stock = await verify.StockInHand.SingleAsync(candidate => candidate.ItemId == itemId && candidate.LocationId == locationId);
+        (await verify.StockInHand.CountAsync(candidate => candidate.ItemId == earlierItemId && candidate.LocationId == locationId))
+            .Should().Be(0);
+        var stock = await verify.StockInHand.SingleAsync(candidate => candidate.ItemId == laterItemId && candidate.LocationId == locationId);
         stock.Quantity.Should().Be(10);
-        var bucket = await verify.StockValuationBuckets.SingleAsync(candidate => candidate.ItemId == itemId && candidate.LocationId == locationId);
+        (await verify.StockValuationBuckets.CountAsync()).Should().Be(1);
+        var bucket = await verify.StockValuationBuckets.SingleAsync(candidate => candidate.ItemId == laterItemId && candidate.LocationId == locationId);
         bucket.Quantity.Should().Be(10);
         bucket.Value.Should().Be(125m);
         var transaction = await verify.StockTransactions.SingleAsync();
