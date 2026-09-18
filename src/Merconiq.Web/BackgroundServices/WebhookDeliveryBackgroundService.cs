@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Text;
 using Merconiq.Core.Entities;
 using Merconiq.Core.Diagnostics;
+using Merconiq.Core.Models;
 using Merconiq.Infrastructure.Data;
 using Merconiq.Web.Tenancy;
 using Merconiq.Web.Security;
@@ -47,21 +48,52 @@ public sealed class WebhookDeliveryBackgroundService(
         {
             var db = scope.ServiceProvider.GetRequiredService<InventoryDbContext>();
             var now = DateTimeOffset.UtcNow;
-            var delivery = await WebhookDeliveryLeaseStore.ClaimNextAsync(
+            var claim = await WebhookDeliveryLeaseStore.ClaimNextAsync(
                 db,
                 now,
                 TimeSpan.FromMinutes(2),
                 cancellationToken);
 
-            if (delivery is null)
+            if (claim is null)
             {
                 return false;
             }
 
-            if (delivery.LeaseToken is not Guid claimedLeaseToken ||
-                !WebhookDeliveryLeaseStore.IsOwnedBy(delivery, claimedLeaseToken))
+            if (claim.LeaseToken is not Guid claimedLeaseToken ||
+                !WebhookDeliveryLeaseStore.IsOwnedBy(claim, claimedLeaseToken))
             {
                 throw new InvalidOperationException("The claimed webhook delivery did not receive a valid lease token.");
+            }
+
+            if (claim.PayloadByteLength > WebhookPayloadPolicy.MaximumSerializedEnvelopeBytes)
+            {
+                if (await WebhookDeliveryLeaseStore.TryDeadLetterOversizedAsync(db, claim, now, cancellationToken))
+                {
+                    InventoryTelemetry.WebhookFailures.Add(1);
+                    logger.LogWarning(
+                        "Webhook delivery {DeliveryId} was dead-lettered because its payload exceeds {MaximumBytes} UTF-8 bytes.",
+                        claim.Id,
+                        WebhookPayloadPolicy.MaximumSerializedEnvelopeBytes);
+                }
+
+                return true;
+            }
+
+            var delivery = await WebhookDeliveryLeaseStore.FindOwnedWithinPayloadLimitAsync(
+                db,
+                claim.Id,
+                claim.TenantId,
+                claimedLeaseToken,
+                WebhookPayloadPolicy.MaximumSerializedEnvelopeBytes,
+                cancellationToken);
+            if (delivery is null)
+            {
+                return true;
+            }
+
+            if (!WebhookDeliveryLeaseStore.IsOwnedBy(delivery, claimedLeaseToken))
+            {
+                throw new InvalidOperationException("The loaded webhook delivery is not owned by the current lease.");
             }
 
             var subscription = await db.WebhookSubscriptions

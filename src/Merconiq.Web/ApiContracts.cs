@@ -17,7 +17,8 @@ public sealed record WebhookDeliveryDiagnosticResponse(
     DateTimeOffset? LastAttemptAt,
     int? LastStatusCode,
     DateTimeOffset? DeliveredAt,
-    DateTimeOffset CreatedAt);
+    DateTimeOffset CreatedAt,
+    string? FailureReason);
 
 public sealed record WebhookDeliveryDiagnosticsPageResponse(
     int Page,

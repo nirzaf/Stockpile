@@ -4,6 +4,7 @@ using FluentAssertions;
 using FluentValidation;
 using FluentValidation.Results;
 using Merconiq.Core.Exceptions;
+using Merconiq.Core.Models;
 using Merconiq.Web;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
@@ -98,6 +99,21 @@ public class GlobalExceptionHandlerTests
         var problem = await ReadProblemDetails(context);
         problem!.Title.Should().Be("Forecast resource limit exceeded");
         problem.Detail.Should().Contain("251 records match");
+    }
+
+    [Fact]
+    public async Task TryHandleAsync_WebhookPayloadTooLarge_ApiPath_ReturnsFixed413ProblemDetails()
+    {
+        var (context, _) = CreateHttpContext("/api/v1/stock/reservations");
+        var exception = new WebhookPayloadTooLargeException();
+
+        var handled = await _sut.TryHandleAsync(context, exception, CancellationToken.None);
+
+        handled.Should().BeTrue();
+        context.Response.StatusCode.Should().Be(StatusCodes.Status413PayloadTooLarge);
+        var problem = await ReadProblemDetails(context);
+        problem!.Title.Should().Be("Webhook payload too large");
+        problem.Detail.Should().Be(WebhookPayloadPolicy.OversizedEnvelopeDiagnostic);
     }
 
     [Fact]
