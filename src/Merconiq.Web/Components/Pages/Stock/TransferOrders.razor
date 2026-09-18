@@ -1,6 +1,7 @@
 @page "/Stock/TransferOrders"
 @using Microsoft.AspNetCore.Authorization
 @using Microsoft.AspNetCore.Components.Authorization
+@using System.Security.Claims
 @using Merconiq.Core.Entities
 @using Merconiq.Core.Models
 @using Merconiq.Web.Security
@@ -20,7 +21,7 @@
 <MudStack Spacing="1" Class="mb-4">
     <MudText Typo="Typo.h4">Transfer orders</MudText>
     <MudText Typo="Typo.body2" Color="Color.Secondary">
-        Request and approve same-company stock transfers. Approved orders reserve stock; they do not move it.
+        Approve an order to reserve stock, then dispatch outstanding quantities into transit. A dispatched quantity cannot be cancelled.
     </MudText>
 </MudStack>
 
@@ -114,17 +115,62 @@ else
                         <MudText Typo="Typo.caption" Color="Color.Secondary">Lines (@order.Lines.Count)</MudText>
                         @foreach (var line in order.Lines)
                         {
-                            <MudText Typo="Typo.body2">
-                                @ItemLabel(line.ItemId) — @line.Quantity
-                                @if (!string.IsNullOrWhiteSpace(line.BatchNumber))
-                                {
-                                    <span> · Batch @line.BatchNumber</span>
-                                }
-                                @if (line.ExpiryDate.HasValue)
-                                {
-                                    <span> · Expires @line.ExpiryDate.Value.ToString("d")</span>
-                                }
-                            </MudText>
+                            var remainingQuantity = Math.Max(0, line.Quantity - line.DispatchedQuantity);
+                            var dispatchDraft = DispatchDraftFor(order, line, remainingQuantity);
+                            <MudPaper @key="line.Id" Outlined="true" Class="pa-3 mt-2">
+                                <MudStack Spacing="1">
+                                    <MudText Typo="Typo.subtitle2">@ItemLabel(line.ItemId) — @line.Quantity units</MudText>
+                                    <MudText Typo="Typo.body2" Color="Color.Secondary">
+                                        Dispatched @line.DispatchedQuantity of @line.Quantity
+                                        @if (!string.IsNullOrWhiteSpace(line.BatchNumber))
+                                        {
+                                            <span> · Batch @line.BatchNumber</span>
+                                        }
+                                        @if (line.ExpiryDate.HasValue)
+                                        {
+                                            <span> · Expires @line.ExpiryDate.Value.ToString("d")</span>
+                                        }
+                                    </MudText>
+                                    @if (CanDispatchOrder(order) && remainingQuantity > 0 && !string.IsNullOrWhiteSpace(line.BatchNumber))
+                                    {
+                                        <MudAlert Severity="Severity.Warning" Variant="Variant.Outlined" Class="mt-1">
+                                            Lot-tracked dispatch is not supported yet; this quantity remains reserved until that valuation path is available.
+                                        </MudAlert>
+                                    }
+                                    else if (CanDispatchOrder(order) && remainingQuantity > 0)
+                                    {
+                                        <MudGrid Spacing="2" Class="mt-1">
+                                            <MudItem xs="12" sm="5" md="4">
+                                                <MudNumericField T="int" @bind-Value="dispatchDraft.Quantity"
+                                                                 Label="Quantity to dispatch" Min="1"
+                                                                 Max="@remainingQuantity" Required="true"
+                                                                 HelperText="@($"Enter 1 to {remainingQuantity} units.")"
+                                                                 Disabled="@(_saving || dispatchDraft.IdempotencyKey is not null)" />
+                                            </MudItem>
+                                            <MudItem xs="12" sm="7" md="5">
+                                                <MudButton Variant="Variant.Filled" Color="Color.Primary"
+                                                           StartIcon="@Icons.Material.Filled.LocalShipping"
+                                                           Disabled="@(_saving || dispatchDraft.Quantity < 1 || dispatchDraft.Quantity > remainingQuantity)"
+                                                           OnClick="@(() => DispatchAsync(order, line, dispatchDraft))">
+                                                    @if (_saving)
+                                                    {
+                                                        <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="me-2" />
+                                                    }
+                                                    Dispatch to transit
+                                                </MudButton>
+                                            </MudItem>
+                                            @if (dispatchDraft.IdempotencyKey is not null)
+                                            {
+                                                <MudItem xs="12">
+                                                    <MudText Typo="Typo.caption" Color="Color.Warning" aria-live="polite">
+                                                        The previous attempt may have committed. Retry this same quantity to safely recover its result.
+                                                    </MudText>
+                                                </MudItem>
+                                            }
+                                        </MudGrid>
+                                    }
+                                </MudStack>
+                            </MudPaper>
                         }
                     </MudItem>
                     @if (!string.IsNullOrWhiteSpace(order.Notes))
@@ -256,6 +302,7 @@ else
     private readonly Dictionary<int, string> _companyLabels = [];
     private readonly Dictionary<int, string> _locationLabels = [];
     private readonly Dictionary<int, string> _itemLabels = [];
+    private readonly Dictionary<(int OrderId, int LineId), TransferDispatchDraft> _dispatchDrafts = [];
     private IReadOnlySet<int> _viewCompanyIds = new HashSet<int>();
     private IReadOnlySet<int> _editableCompanyIds = new HashSet<int>();
     private IReadOnlySet<int> _postableCompanyIds = new HashSet<int>();
@@ -541,6 +588,131 @@ else
         }
     }
 
+    private async Task DispatchAsync(
+        TransferOrderView displayedOrder,
+        TransferOrderLineView displayedLine,
+        TransferDispatchDraft draft)
+    {
+        var requestedQuantity = draft.Quantity;
+        var displayedRemaining = Math.Max(0, displayedLine.Quantity - displayedLine.DispatchedQuantity);
+        if (requestedQuantity <= 0 || requestedQuantity > displayedRemaining)
+        {
+            SnackbarError($"Enter a quantity from 1 to {displayedRemaining}.");
+            return;
+        }
+
+        if (!await JS.InvokeAsync<bool>(
+                "confirm",
+                $"Dispatch {requestedQuantity} {ItemLabel(displayedLine.ItemId)} units from {LocationLabel(displayedOrder.FromLocationId)}? The stock will leave the source and cannot be cancelled after dispatch."))
+        {
+            return;
+        }
+
+        draft.IdempotencyKey ??= Guid.NewGuid().ToString("N");
+        _saving = true;
+        try
+        {
+            var user = (await AuthenticationStateProvider.GetAuthenticationStateAsync()).User;
+            var current = await TransferOrderService.GetByIdAsync(displayedOrder.Id);
+            var currentLine = current?.Lines.SingleOrDefault(candidate => candidate.Id == displayedLine.Id);
+            if (current is null || currentLine is null || !_postableCompanyIds.Contains(current.CompanyId) ||
+                !await CurrentUserAuthorization.CanAccessTransferAsync(
+                    user, current.FromLocationId, current.ToLocationId, CompanyCapability.Post))
+            {
+                SnackbarError("You no longer have posting access to both locations in this company.");
+                return;
+            }
+
+            var priorDispatch = await TransferOrderService.GetDispatchByKeyAsync(
+                current.Id, currentLine.Id, draft.IdempotencyKey);
+            if (priorDispatch is not null)
+            {
+                if (priorDispatch.Quantity != requestedQuantity)
+                {
+                    SnackbarError("The saved dispatch attempt does not match this quantity. Refresh the order before continuing.");
+                    return;
+                }
+
+                _dispatchDrafts.Remove((displayedOrder.Id, displayedLine.Id));
+                await LoadAsync();
+                SnackbarSuccess($"Recovered the earlier dispatch of {priorDispatch.Quantity} units to transit.");
+                return;
+            }
+
+            if (!CanDispatchStatus(current.Status))
+            {
+                SnackbarError("This transfer order is no longer available for dispatch.");
+                await LoadAsync();
+                return;
+            }
+
+            var remainingQuantity = Math.Max(0, currentLine.Quantity - currentLine.DispatchedQuantity);
+            if (requestedQuantity > remainingQuantity)
+            {
+                SnackbarError($"Only {remainingQuantity} units remain to dispatch. The order has been refreshed.");
+                await LoadAsync();
+                return;
+            }
+
+            var dispatcher = user.FindFirstValue(ClaimTypes.NameIdentifier) ??
+                             user.FindFirstValue("sub") ??
+                             user.Identity?.Name;
+            if (string.IsNullOrWhiteSpace(dispatcher))
+            {
+                SnackbarError("An authenticated dispatcher identity is required.");
+                return;
+            }
+
+            var scope = new StockMutationScope(
+                current.CompanyId,
+                cancellationToken => CurrentUserAuthorization.CanAccessTransferAsync(
+                    user,
+                    current.FromLocationId,
+                    current.ToLocationId,
+                    CompanyCapability.Post,
+                    cancellationToken));
+            await TransferOrderService.DispatchAsync(
+                current.Id,
+                currentLine.Id,
+                requestedQuantity,
+                draft.IdempotencyKey,
+                dispatcher.Trim(),
+                scope);
+
+            _dispatchDrafts.Remove((displayedOrder.Id, displayedLine.Id));
+            await LoadAsync();
+            SnackbarSuccess($"Dispatched {requestedQuantity} units to transit. The source stock is no longer available for sale.");
+        }
+        catch (Exception exception)
+        {
+            Logger.LogWarning(exception, "Unable to dispatch transfer order {TransferOrderId}, line {LineId}.", displayedOrder.Id, displayedLine.Id);
+            SnackbarError("Dispatch could not be confirmed. Retry the same quantity; a committed request will be safely recovered.");
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private TransferDispatchDraft DispatchDraftFor(
+        TransferOrderView order,
+        TransferOrderLineView line,
+        int remainingQuantity)
+    {
+        var key = (order.Id, line.Id);
+        if (!_dispatchDrafts.TryGetValue(key, out var draft))
+        {
+            draft = new TransferDispatchDraft { Quantity = Math.Max(1, remainingQuantity) };
+            _dispatchDrafts.Add(key, draft);
+        }
+        else if (draft.IdempotencyKey is null && remainingQuantity > 0 && draft.Quantity > remainingQuantity)
+        {
+            draft.Quantity = remainingQuantity;
+        }
+
+        return draft;
+    }
+
     private string? ValidateEditor()
     {
         if (_companyId <= 0 || !_viewCompanyIds.Contains(_companyId))
@@ -564,6 +736,12 @@ else
 
     private bool CanCancelOrder(TransferOrderView order) =>
         _editableCompanyIds.Contains(order.CompanyId) && _postableCompanyIds.Contains(order.CompanyId);
+
+    private bool CanDispatchOrder(TransferOrderView order) =>
+        CanDispatchStatus(order.Status) && _postableCompanyIds.Contains(order.CompanyId);
+
+    private static bool CanDispatchStatus(TransferOrderStatus status) =>
+        status is TransferOrderStatus.Approved or TransferOrderStatus.InTransit or TransferOrderStatus.PartiallyReceived;
 
     private void AddLine()
     {
@@ -609,5 +787,11 @@ else
         public int Quantity { get; set; } = 1;
         public string? BatchNumber { get; set; }
         public DateTime? ExpiryDate { get; set; }
+    }
+
+    private sealed class TransferDispatchDraft
+    {
+        public int Quantity { get; set; }
+        public string? IdempotencyKey { get; set; }
     }
 }
