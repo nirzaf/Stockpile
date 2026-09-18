@@ -307,9 +307,9 @@ public class StockService : IStockService
                 var existingQuantity = existing?.Quantity ?? 0;
                 var valuedQuantity = await GetValuedLotQuantityAsync(
                     itemId, locationId, batchNumber, expiryDate, cancellationToken);
-                if (valuedQuantity != existingQuantity)
+                if (valuedQuantity != 0 && valuedQuantity != existingQuantity)
                     throw new StockAvailabilityConflictException(
-                        "The tracked lot's valued quantity does not match its on-hand balance.");
+                        "The tracked lot's valued quantity must be zero or match its on-hand balance.");
                 if (existingQuantity > 0 && unitCost.HasValue != (valuedQuantity == existingQuantity))
                     throw new StockAvailabilityConflictException(
                         "A tracked lot position must remain consistently valued or unvalued; receive stock with matching valuation status.");
