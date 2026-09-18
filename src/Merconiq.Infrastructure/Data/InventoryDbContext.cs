@@ -913,6 +913,9 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
                 table.HasCheckConstraint("CK_TransferTransitSettlements_PositiveQuantity", "\"Quantity\" > 0");
                 table.HasCheckConstraint("CK_TransferTransitSettlements_NonNegativeValue", "\"UnitCost\" >= 0 AND \"TotalValue\" >= 0");
                 table.HasCheckConstraint(
+                    "CK_TransferTransitSettlements_StockTransactionDisposition",
+                    "(\"SettlementType\" = 'WrittenOff' AND \"StockTransactionId\" IS NULL) OR (\"SettlementType\" <> 'WrittenOff' AND \"StockTransactionId\" IS NOT NULL)");
+                table.HasCheckConstraint(
                     "CK_TransferTransitSettlements_DocumentIdentityPair",
                     "(\"DocumentId\" IS NULL AND \"DocumentLineId\" IS NULL) OR (\"DocumentId\" IS NOT NULL AND \"DocumentLineId\" IS NOT NULL)");
             });

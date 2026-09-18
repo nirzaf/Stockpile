@@ -236,6 +236,157 @@ public sealed class TransferAgingReconciliationPostgreSqlApiTests(
     }
 
     [PostgreSqlFact]
+    public async Task Approver_can_write_off_transit_through_idempotent_api_and_report_without_stock_movement()
+    {
+        fixture.EnsureEnabled();
+        var suffix = Guid.NewGuid().ToString("N");
+        var company = await SeedCompanyAsync(_factory, fixture, "test-tenant", $"W{suffix}", 1);
+        var manager = await _factory.EnsurePersonaUserAsync("Manager", suffix);
+        var accountant = await _factory.EnsurePersonaUserAsync("Accountant", suffix);
+        await using (var grantContext = fixture.CreateContext("test-tenant"))
+        {
+            grantContext.CompanyMemberships.AddRange(
+                new CompanyMembership
+                {
+                    CompanyId = company.CompanyId,
+                    UserId = manager.Id,
+                    Capabilities = CompanyCapability.View | CompanyCapability.Post,
+                    IsActive = true
+                },
+                new CompanyMembership
+                {
+                    CompanyId = company.CompanyId,
+                    UserId = accountant.Id,
+                    Capabilities = CompanyCapability.View | CompanyCapability.Approve,
+                    IsActive = true
+                });
+            await grantContext.SaveChangesAsync();
+        }
+
+        var order = await CreateOrderAsync(
+            _factory,
+            company,
+            [new TransferOrderLineRequest(company.ItemIds[0], 10)],
+            $"write-off-order-{suffix}",
+            approve: true);
+        var line = order.Lines.Single();
+        TransferDispatchView dispatch;
+        await using (var operation = _factory.Services.CreateAsyncScope())
+        {
+            var transferOrders = operation.ServiceProvider.GetRequiredService<ITransferOrderService>();
+            dispatch = await transferOrders.DispatchAsync(
+                order.Id,
+                line.Id,
+                10,
+                $"write-off-dispatch-{suffix}",
+                "dispatcher-42",
+                new StockMutationScope(company.CompanyId, _ => Task.FromResult(true)));
+        }
+
+        await using var snapshotContext = fixture.CreateContext("test-tenant");
+        var transactionCountBefore = await snapshotContext.StockTransactions.CountAsync(transaction =>
+            transaction.ItemId == company.ItemIds[0]);
+        var valuationEntryCountBefore = await snapshotContext.StockValuationEntries.CountAsync(entry =>
+            entry.ItemId == company.ItemIds[0]);
+        var stockBefore = await snapshotContext.StockInHand.AsNoTracking()
+            .Where(stock => stock.ItemId == company.ItemIds[0])
+            .OrderBy(stock => stock.LocationId)
+            .Select(stock => new { stock.LocationId, stock.Quantity, stock.ReservedQuantity, stock.QuarantinedQuantity })
+            .ToListAsync();
+        var valuationBucketsBefore = await snapshotContext.StockValuationBuckets.AsNoTracking()
+            .Where(bucket => bucket.ItemId == company.ItemIds[0])
+            .OrderBy(bucket => bucket.LocationId)
+            .Select(bucket => new { bucket.LocationId, bucket.Quantity, bucket.Value })
+            .ToListAsync();
+
+        var route = $"/api/v1/transfer-orders/{order.Id}/lines/{line.Id}/transit/{dispatch.Id}/write-off";
+        static HttpRequestMessage CreateWriteOffRequest(string path, string key)
+        {
+            var request = new HttpRequestMessage(HttpMethod.Post, path)
+            {
+                Content = JsonContent.Create(new TransferTransitSettlementRequest(
+                    4,
+                    TransferTransitSettlementType.WrittenOff,
+                    Reason: "Lost during carrier handoff"))
+            };
+            request.Headers.Add("Idempotency-Key", key);
+            return request;
+        }
+
+        using var managerClient = _factory.CreateAuthenticatedClient(manager, "Manager");
+        using (var denied = await managerClient.SendAsync(CreateWriteOffRequest(route, $"write-off-denied-{suffix}")))
+            denied.StatusCode.Should().Be(HttpStatusCode.Forbidden,
+                "posting access without the existing Approve capability must not authorize a transit write-off");
+
+        using var approverClient = _factory.CreateAuthenticatedClient(accountant, "Accountant");
+        var idempotencyKey = $"write-off-api-{suffix}";
+        using var response = await approverClient.SendAsync(CreateWriteOffRequest(route, idempotencyKey));
+        response.StatusCode.Should().Be(
+            HttpStatusCode.OK,
+            "write-off response was: {0}",
+            await response.Content.ReadAsStringAsync());
+        var envelope = await response.Content.ReadFromJsonAsync<ApiResponse<TransferTransitSettlementView>>();
+        envelope.Should().NotBeNull();
+        envelope!.Success.Should().BeTrue();
+        envelope.Data.Should().NotBeNull();
+        envelope.Data!.SettlementType.Should().Be(TransferTransitSettlementType.WrittenOff);
+        envelope.Data.StockTransactionId.Should().BeNull();
+        envelope.Data.TotalValue.Should().Be(50m);
+        envelope.Data.Reason.Should().Be("Lost during carrier handoff");
+        envelope.Data.SourceDocumentLineId.Should().Be(line.DocumentLineId);
+
+        using var replayResponse = await approverClient.SendAsync(CreateWriteOffRequest(route, idempotencyKey));
+        replayResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+        var replay = await replayResponse.Content.ReadFromJsonAsync<
+            ApiResponse<TransferTransitSettlementView>>();
+        replay!.Data!.Id.Should().Be(envelope.Data.Id);
+        replay.Data.StockTransactionId.Should().BeNull();
+
+        using var reportResponse = await approverClient.GetAsync(
+            $"/api/v1/transfer-orders/aging?companyId={company.CompanyId}&pageSize=10");
+        reportResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+        var reportEnvelope = await reportResponse.Content
+            .ReadFromJsonAsync<ApiResponse<TransferAgingReconciliationPage>>();
+        var report = reportEnvelope!.Data!.Lines.Should().ContainSingle().Subject;
+        report.DispatchedQuantity.Should().Be(10);
+        report.WrittenOffQuantity.Should().Be(4);
+        report.OutstandingTransitQuantity.Should().Be(6);
+        report.DispatchedValue.Should().Be(125m);
+        report.WrittenOffValue.Should().Be(50m);
+        report.OutstandingTransitValue.Should().Be(75m);
+        report.QuantityConservationVariance.Should().Be(0);
+        report.ValueConservationVariance.Should().Be(0m);
+        report.SettlementLedgerQuantityVariance.Should().Be(0);
+        report.SettlementLedgerValueVariance.Should().Be(0m);
+        report.SettlementValuationPostingCountVariance.Should().Be(0);
+        report.SettlementValuationQuantityVariance.Should().Be(0);
+
+        await using var verify = fixture.CreateContext("test-tenant");
+        (await verify.TransferTransitSettlements
+            .Where(settlement => settlement.TransferOrderId == order.Id)
+            .ToListAsync()).Should().ContainSingle()
+            .Which.Should().Match<TransferTransitSettlement>(settlement =>
+                settlement.StockTransactionId == null &&
+                settlement.SettlementType == TransferTransitSettlementType.WrittenOff &&
+                settlement.Quantity == 4 && settlement.TotalValue == 50m &&
+                settlement.SourceDocumentLineId == new DocumentLineIdentityId(line.DocumentLineId));
+        (await verify.StockTransactions.CountAsync(transaction => transaction.ItemId == company.ItemIds[0]))
+            .Should().Be(transactionCountBefore);
+        (await verify.StockValuationEntries.CountAsync(entry => entry.ItemId == company.ItemIds[0]))
+            .Should().Be(valuationEntryCountBefore);
+        (await verify.StockInHand.AsNoTracking()
+            .Where(stock => stock.ItemId == company.ItemIds[0])
+            .OrderBy(stock => stock.LocationId)
+            .Select(stock => new { stock.LocationId, stock.Quantity, stock.ReservedQuantity, stock.QuarantinedQuantity })
+            .ToListAsync()).Should().BeEquivalentTo(stockBefore);
+        (await verify.StockValuationBuckets.AsNoTracking()
+            .Where(bucket => bucket.ItemId == company.ItemIds[0])
+            .OrderBy(bucket => bucket.LocationId)
+            .Select(bucket => new { bucket.LocationId, bucket.Quantity, bucket.Value })
+            .ToListAsync()).Should().BeEquivalentTo(valuationBucketsBefore);
+    }
+
+    [PostgreSqlFact]
     public async Task Fragmented_transit_and_settlement_history_is_aggregated_without_dropping_totals()
     {
         fixture.EnsureEnabled();

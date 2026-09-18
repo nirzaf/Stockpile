@@ -23,8 +23,8 @@ public sealed class TransferAgingController(
     /// <summary>Reads a bounded page of company-authorized transfer-order lines, including closed order states.</summary>
     /// <remarks>
     /// Transit age is whole elapsed days from the oldest still-outstanding dispatch. Conservation compares
-    /// immutable dispatch/settlement rows, while separate variances compare those rows to stock transaction
-    /// and valuation entries. Branch responsibility and write-offs are not inferred by this report.
+    /// immutable dispatch/settlement rows, including separately reported write-off quantity and value. Physical
+    /// ledger variances exclude write-offs that intentionally have no stock transaction or valuation entry.
     /// </remarks>
     [HttpGet]
     [Authorize(Policy = CapabilityPolicies.View)]
