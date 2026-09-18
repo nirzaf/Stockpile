@@ -25,4 +25,12 @@
   <data name="An unhandled error has occurred." xml:space="preserve"><value>حدث خطأ غير متوقع.</value></data>
   <data name="Reload" xml:space="preserve"><value>إعادة تحميل</value></data>
   <data name="Dismiss" xml:space="preserve"><value>إغلاق</value></data>
+  <data name="Updating purchase-order status…" xml:space="preserve"><value>جارٍ تحديث حالة أمر الشراء…</value></data>
+  <data name="Purchase-order status updated." xml:space="preserve"><value>تم تحديث حالة أمر الشراء.</value></data>
+  <data name="The purchase order changed while you were viewing it. Reload the current purchase order before trying again." xml:space="preserve"><value>تغيّر أمر الشراء أثناء عرضك له. أعد تحميل أمر الشراء الحالي قبل إعادة المحاولة.</value></data>
+  <data name="The status change was not accepted. Reload the current purchase order and review its status before taking another action." xml:space="preserve"><value>لم يتم قبول تغيير الحالة. أعد تحميل أمر الشراء الحالي وراجع حالته قبل اتخاذ إجراء آخر.</value></data>
+  <data name="We could not confirm the current purchase-order status. Reload the latest details before trying again." xml:space="preserve"><value>تعذر التأكد من حالة أمر الشراء الحالية. أعد تحميل أحدث التفاصيل قبل إعادة المحاولة.</value></data>
+  <data name="Reload current purchase order" xml:space="preserve"><value>إعادة تحميل أمر الشراء الحالي</value></data>
+  <data name="Reloading purchase-order details…" xml:space="preserve"><value>جارٍ إعادة تحميل تفاصيل أمر الشراء…</value></data>
+  <data name="Tenant administrator access is required for tenant-wide purchase orders." xml:space="preserve"><value>يتطلب هذا الإجراء صلاحية مسؤول المستأجر لأوامر الشراء على مستوى المستأجر.</value></data>
 </root>

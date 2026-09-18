@@ -1,0 +1,10 @@
+.document-actions ::deep .document-action:focus-visible,
+.document-status-feedback ::deep .document-action:focus-visible {
+    outline: 2px solid var(--mud-palette-primary);
+    outline-offset: 3px;
+}
+
+.status-feedback-focus:focus {
+    outline: 2px solid var(--mud-palette-primary);
+    outline-offset: 3px;
+}
