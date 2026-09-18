@@ -93,6 +93,68 @@ public sealed class CompanyCapabilityPostgreSqlApiTests(PostgreSqlIntegrationFix
     }
 
     [PostgreSqlFact]
+    public async Task Existing_jwt_loses_stock_post_permission_when_company_membership_post_capability_is_removed()
+    {
+        fixture.EnsureEnabled();
+        var suffix = Guid.NewGuid().ToString("N");
+        var tenant = await SeedCompanyStockAsync(fixture, suffix);
+        var poster = await CreatePersonaAsync(
+            "Operator", CompanyCapability.View | CompanyCapability.Post, suffix, tenant.CompanyAId);
+        var signedJwt = poster.Client.DefaultRequestHeaders.Authorization!.Parameter;
+
+        await using (var initial = fixture.CreateContext(tenant.TenantId))
+        {
+            (await initial.StockInHand.SingleAsync(stock =>
+                stock.ItemId == tenant.ItemId && stock.LocationId == tenant.LocationAId))
+                .Quantity.Should().Be(10);
+            (await initial.StockTransactions.CountAsync(transaction => transaction.ItemId == tenant.ItemId))
+                .Should().Be(0);
+        }
+
+        var receipt = new
+        {
+            ItemId = tenant.ItemId,
+            LocationId = tenant.LocationAId,
+            Quantity = 2,
+            Notes = "authorized post before capability reduction"
+        };
+        var authorizedResponse = await poster.Client.PostAsJsonAsync("/api/v1/stock/receive", receipt);
+        authorizedResponse.StatusCode.Should().Be(HttpStatusCode.NoContent);
+
+        await using (var afterAuthorizedPost = fixture.CreateContext(tenant.TenantId))
+        {
+            (await afterAuthorizedPost.StockInHand.SingleAsync(stock =>
+                stock.ItemId == tenant.ItemId && stock.LocationId == tenant.LocationAId))
+                .Quantity.Should().Be(12, "the authorized receive must persist before the grant changes");
+            (await afterAuthorizedPost.StockTransactions.CountAsync(transaction => transaction.ItemId == tenant.ItemId))
+                .Should().Be(1, "the authorized receive must create exactly one stock transaction");
+        }
+
+        await using (var revokePost = fixture.CreateContext(tenant.TenantId))
+        {
+            var membership = await revokePost.CompanyMemberships.SingleAsync(candidate =>
+                candidate.CompanyId == tenant.CompanyAId && candidate.UserId == poster.User.Id);
+            membership.IsActive.Should().BeTrue();
+            membership.Capabilities.Should().Be(CompanyCapability.View | CompanyCapability.Post);
+            membership.Capabilities = CompanyCapability.View;
+            await revokePost.SaveChangesAsync();
+        }
+
+        poster.Client.DefaultRequestHeaders.Authorization!.Parameter.Should().Be(signedJwt,
+            "the retry uses the same already-issued signed JWT");
+        var forbiddenRetry = await poster.Client.PostAsJsonAsync("/api/v1/stock/receive", receipt);
+        forbiddenRetry.StatusCode.Should().Be(HttpStatusCode.Forbidden,
+            "the active membership retains View but no longer grants Post");
+
+        await using var final = fixture.CreateContext(tenant.TenantId);
+        (await final.StockInHand.SingleAsync(stock =>
+            stock.ItemId == tenant.ItemId && stock.LocationId == tenant.LocationAId))
+            .Quantity.Should().Be(12, "the forbidden retry must not apply another stock movement");
+        (await final.StockTransactions.CountAsync(transaction => transaction.ItemId == tenant.ItemId))
+            .Should().Be(1, "the forbidden retry must not persist a second stock transaction");
+    }
+
+    [PostgreSqlFact]
     public async Task Real_jwt_persona_matrix_filters_companies_and_enforces_transfer_approval_separation()
     {
         fixture.EnsureEnabled();
