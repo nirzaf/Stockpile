@@ -37,6 +37,9 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
 
     /// <summary>Current stock-in-hand per item per location.</summary>
     public DbSet<StockInHand> StockInHand { get; set; } = null!;
+    public DbSet<StockCount> StockCounts { get; set; } = null!;
+    public DbSet<StockCountLine> StockCountLines { get; set; } = null!;
+    public DbSet<StockCountObservation> StockCountObservations { get; set; } = null!;
 
     /// <summary>Tenant-scoped stock reservations.</summary>
     public DbSet<StockReservation> StockReservations { get; set; } = null!;
@@ -106,6 +109,7 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
         EnsureValuationEntriesAreAppendOnly();
         EnsureDocumentLineLinksAreAppendOnly();
         EnsureStockTransactionsAreAppendOnly();
+        EnsureStockCountRecordsAreAppendOnly();
         EnsureTransferTransitEntriesAreAppendOnly();
         EnsureTransferTransitSettlementsAreAppendOnly();
         NormalizeStockLotExpiryDates();
@@ -119,6 +123,7 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
         EnsureValuationEntriesAreAppendOnly();
         EnsureDocumentLineLinksAreAppendOnly();
         EnsureStockTransactionsAreAppendOnly();
+        EnsureStockCountRecordsAreAppendOnly();
         EnsureTransferTransitEntriesAreAppendOnly();
         EnsureTransferTransitSettlementsAreAppendOnly();
         NormalizeStockLotExpiryDates();
@@ -144,6 +149,7 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
         EnsureValuationEntriesAreAppendOnly();
         EnsureDocumentLineLinksAreAppendOnly();
         EnsureStockTransactionsAreAppendOnly();
+        EnsureStockCountRecordsAreAppendOnly();
         EnsureTransferTransitEntriesAreAppendOnly();
         EnsureTransferTransitSettlementsAreAppendOnly();
         NormalizeStockLotExpiryDates();
@@ -216,6 +222,16 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
             .Any(entry => entry.State is EntityState.Modified or EntityState.Deleted))
         {
             throw new InvalidOperationException("Stock transactions are append-only and cannot be updated or deleted.");
+        }
+    }
+
+    private void EnsureStockCountRecordsAreAppendOnly()
+    {
+        if (ChangeTracker.Entries<StockCount>().Any(entry => entry.State is EntityState.Modified or EntityState.Deleted)
+            || ChangeTracker.Entries<StockCountLine>().Any(entry => entry.State is EntityState.Modified or EntityState.Deleted)
+            || ChangeTracker.Entries<StockCountObservation>().Any(entry => entry.State is EntityState.Modified or EntityState.Deleted))
+        {
+            throw new InvalidOperationException("Stock-count snapshots and observations are append-only and cannot be updated or deleted.");
         }
     }
 
@@ -528,6 +544,62 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
                   .HasColumnType("xid")
                   .ValueGeneratedOnAddOrUpdate()
                   .IsConcurrencyToken();
+        });
+
+        modelBuilder.Entity<StockCount>(entity =>
+        {
+            entity.HasQueryFilter(e => e.TenantId == CurrentTenantId);
+            entity.Property(e => e.TenantId).HasMaxLength(64).IsRequired();
+            entity.HasAlternateKey(e => new { e.Id, e.TenantId });
+            entity.Property(e => e.SnapshotAtUtc).IsRequired();
+            entity.HasIndex(e => new { e.TenantId, e.LocationId, e.SnapshotAtUtc });
+            entity.HasOne(e => e.Location)
+                .WithMany()
+                .HasForeignKey(e => new { e.LocationId, e.TenantId })
+                .HasPrincipalKey(e => new { e.Id, e.TenantId })
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(e => e.Company)
+                .WithMany()
+                .HasForeignKey(e => new { e.CompanyId, e.TenantId })
+                .HasPrincipalKey(e => new { e.Id, e.TenantId })
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<StockCountLine>(entity =>
+        {
+            entity.HasQueryFilter(e => e.TenantId == CurrentTenantId);
+            entity.Property(e => e.TenantId).HasMaxLength(64).IsRequired();
+            entity.Property(e => e.ItemCodeSnapshot).HasMaxLength(50).IsRequired();
+            entity.Property(e => e.ItemDescriptionSnapshot).HasMaxLength(500).IsRequired();
+            entity.Property(e => e.BatchNumber).HasMaxLength(100);
+            entity.HasAlternateKey(e => new { e.Id, e.TenantId });
+            entity.ToTable("StockCountLines", table => table.HasCheckConstraint(
+                "CK_StockCountLines_SnapshotQuantity",
+                "\"SnapshotQuantity\" >= 0"));
+            entity.HasOne(e => e.StockCount)
+                .WithMany(e => e.Lines)
+                .HasForeignKey(e => new { e.StockCountId, e.TenantId })
+                .HasPrincipalKey(e => new { e.Id, e.TenantId })
+                .OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(e => e.Item)
+                .WithMany()
+                .HasForeignKey(e => new { e.ItemId, e.TenantId })
+                .HasPrincipalKey(e => new { e.Id, e.TenantId })
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<StockCountObservation>(entity =>
+        {
+            entity.HasQueryFilter(e => e.TenantId == CurrentTenantId);
+            entity.Property(e => e.TenantId).HasMaxLength(64).IsRequired();
+            entity.ToTable("StockCountObservations", table => table.HasCheckConstraint(
+                "CK_StockCountObservations_CountedQuantity",
+                "\"CountedQuantity\" >= 0"));
+            entity.HasOne(e => e.StockCountLine)
+                .WithOne(e => e.Observation)
+                .HasForeignKey<StockCountObservation>(e => new { e.StockCountLineId, e.TenantId })
+                .HasPrincipalKey<StockCountLine>(e => new { e.Id, e.TenantId })
+                .OnDelete(DeleteBehavior.Cascade);
         });
 
         modelBuilder.Entity<StockReservation>(entity =>
