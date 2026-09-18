@@ -25,6 +25,11 @@ public class MigrationInventoryTests
                 "Merconiq.Infrastructure.Migrations.AddTenantIsolation")
             .Should()
             .NotBeNull();
+        infrastructureAssembly.GetTypes()
+            .Where(type => typeof(Migration).IsAssignableFrom(type))
+            .Select(type => type.Name)
+            .Should()
+            .Contain("AddCompanyScopedCustomers");
 
         typeof(ApplicationUser).Namespace.Should().Be("Merconiq.Core.Entities");
         typeof(ApplicationUser).Assembly.GetName().Name.Should().Be("Merconiq.Core");

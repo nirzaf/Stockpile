@@ -87,6 +87,12 @@ Webhook administration is restricted to `Admin` and `Manager`.
 | POST | `/api/v1/items` | Any API JWT | `201` |
 | PUT | `/api/v1/items/{id}` | Any API JWT | `204` |
 | DELETE | `/api/v1/items/{id}` | Any API JWT | `204` |
+| GET | `/api/v1/companies/{companyId}/customers?page=1&pageSize=50` | Company `View` | `200` or `400` |
+| GET | `/api/v1/companies/{companyId}/customers/{customerId}` | Company `View` | `200` or `404` |
+| POST | `/api/v1/companies/{companyId}/customers` | Company `Edit` | `201`, `400`, `404`, or `409` |
+| PUT | `/api/v1/companies/{companyId}/customers/{customerId}` | Company `Edit` | `204`, `400`, `404`, or `409` |
+| POST | `/api/v1/companies/{companyId}/customers/{customerId}/deactivate` | Company `Edit` | `204` or `404` |
+| POST | `/api/v1/companies/{companyId}/customers/{customerId}/reactivate` | Company `Edit` | `204` or `404` |
 | GET | `/api/v1/tax-rules` | Any API JWT | `200` |
 | GET | `/api/v1/tax-rules/{id}` | Any API JWT | `200` or `404` |
 | POST | `/api/v1/tax-rules` | Edit capability | `201` or `400` |
@@ -117,6 +123,30 @@ Webhook administration is restricted to `Admin` and `Manager`.
 | GET | `/api/v1/organization/units/export` | Tenant `Admin` | `200` or `400` |
 | GET | `/api/v1/organization/items/export` | Tenant `Admin` | `200` or `400` |
 | POST | `/api/v1/organization/items/import` | Company `Edit` plus `CompanyId` | `200` or `422` |
+
+### Company-scoped customer master
+
+Customer records are owned by exactly one tenant company; there is no shared
+customer master or legacy company/customer mapping. The company is selected in
+the route, never in the request body. Each action checks the caller's current
+company capability, and record reads/updates also constrain both customer ID
+and company ID. The tenant query filter and a composite `(CompanyId, TenantId)`
+foreign key enforce the persisted ownership boundary.
+
+The paged list defaults to active records, ordered by normalized customer code.
+`page` must be at least 1 and `pageSize` must be 1–100; `includeInactive=true`
+includes deactivated records for company members with `View`. Its envelope
+contains `page`, `pageSize`, `hasMore`, and `items`. A customer code is trimmed,
+stored uppercase, and unique within its company. A duplicate returns `409`.
+
+The master stores the organization's name and optional operational email,
+phone, billing address, shipping address, and `paymentTermDays`. Customer code
+and name are required; contact values are bounded and email syntax is checked.
+Payment-term days are configuration only (0–3650); the API does not calculate
+invoice due dates, snapshot terms onto documents, or implement receivables or
+credit enforcement. Customer records can be deactivated/reactivated but cannot
+be hard-deleted. No current sales or receivable document references customers,
+so there is not yet a reference-based deactivation guard.
 
 ### Tenant unit source-ID export
 

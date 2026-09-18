@@ -64,6 +64,9 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
     /// <summary>Suppliers of items.</summary>
     public DbSet<Supplier> Suppliers { get; set; } = null!;
 
+    /// <summary>Company-scoped customer master records.</summary>
+    public DbSet<Customer> Customers { get; set; } = null!;
+
     /// <summary>Purchase orders.</summary>
     public DbSet<PurchaseOrder> PurchaseOrders { get; set; } = null!;
 
@@ -508,6 +511,37 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
             entity.HasIndex(e => new { e.TenantId, e.Code }).IsUnique();
             entity.HasIndex(e => new { e.TenantId, e.ExternalId }).IsUnique();
             entity.HasIndex(e => new { e.Id, e.TenantId }).IsUnique();
+        });
+
+        modelBuilder.Entity<Customer>(entity =>
+        {
+            entity.HasQueryFilter(e => e.TenantId == CurrentTenantId);
+            entity.Property(e => e.TenantId).HasMaxLength(64).IsRequired();
+            entity.Property(e => e.CustomerCode).HasMaxLength(64).IsRequired();
+            entity.Property(e => e.Name).HasMaxLength(200).IsRequired();
+            entity.Property(e => e.ContactEmail).HasMaxLength(254);
+            entity.Property(e => e.ContactPhone).HasMaxLength(40);
+            entity.Property(e => e.BillingAddress).HasMaxLength(500);
+            entity.Property(e => e.ShippingAddress).HasMaxLength(500);
+            entity.Property(e => e.IsActive).HasDefaultValue(true);
+            entity.HasAlternateKey(e => new { e.Id, e.TenantId });
+            entity.HasIndex(e => new { e.TenantId, e.CompanyId, e.CustomerCode })
+                .IsUnique()
+                .HasDatabaseName("UX_Customers_TenantId_CompanyId_CustomerCode");
+            entity.ToTable("Customers", table =>
+            {
+                table.HasCheckConstraint(
+                    "CK_Customers_NormalizedCustomerCode",
+                    "\"CustomerCode\" <> '' AND \"CustomerCode\" = btrim(\"CustomerCode\") AND \"CustomerCode\" = upper(\"CustomerCode\")");
+                table.HasCheckConstraint(
+                    "CK_Customers_PaymentTermDays",
+                    "\"PaymentTermDays\" IS NULL OR \"PaymentTermDays\" BETWEEN 0 AND 3650");
+            });
+            entity.HasOne(e => e.Company)
+                .WithMany(company => company.Customers)
+                .HasForeignKey(e => new { e.CompanyId, e.TenantId })
+                .HasPrincipalKey(company => new { company.Id, company.TenantId })
+                .OnDelete(DeleteBehavior.Restrict);
         });
 
         modelBuilder.Entity<Branch>(entity =>
