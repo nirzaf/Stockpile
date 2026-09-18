@@ -100,7 +100,7 @@ jobs:
           images: ${{ env.IMAGE }}
           tags: |
             type=ref,event=branch,enable=${{ github.event_name != 'workflow_dispatch' }}
-            type=sha,format=long,prefix=sha-
+            type=raw,value=sha-${{ steps.candidate.outputs.candidate_sha }},priority=100
             type=semver,pattern={{version}},value=${{ steps.candidate.outputs.candidate_tag }},enable=${{ steps.candidate.outputs.candidate_kind == 'tag' }}
             type=semver,pattern={{major}}.{{minor}},value=${{ steps.candidate.outputs.candidate_tag }},enable=${{ steps.candidate.outputs.candidate_kind == 'tag' }}
             type=semver,pattern={{major}},value=${{ steps.candidate.outputs.candidate_tag }},enable=${{ steps.candidate.outputs.candidate_kind == 'tag' }}

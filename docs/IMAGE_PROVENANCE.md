@@ -1,15 +1,21 @@
 # Image provenance and SBOM verification
 
-The Docker workflow builds `linux/amd64` and `linux/arm64` and enables BuildKit
-provenance and SBOM attestations. The workflow summary records the full source
-commit and the pushed manifest digest. A tag such as `latest` is only a pointer;
-use the recorded digest for an audit or deployment record.
+The Docker workflow is configured to build `linux/amd64` and `linux/arm64` and
+request BuildKit provenance and SBOM attestations. A successful published
+workflow run records the full source commit and manifest digest in its summary.
+A tag such as `latest` is only a pointer; use a verified digest for an audit or
+deployment record.
 
-The configured image name is currently:
+The Docker and Release workflows currently configure this image name:
 
 ```text
-ghcr.io/nirzaf/inventorymanagementsystem
+ghcr.io/nirzaf/merconiq
 ```
+
+The workflow configuration does not establish that a package or pullable
+artifact currently exists. Verify package visibility and the exact candidate
+digest before use. Repository identity and deployment status are tracked in
+[`REPOSITORY_CUTOVER.md`](REPOSITORY_CUTOVER.md).
 
 ## Record a candidate
 
@@ -17,7 +23,7 @@ For an owner-approved published candidate, copy the exact values from the Docker
 workflow summary:
 
 ```bash
-IMAGE=ghcr.io/nirzaf/inventorymanagementsystem
+IMAGE=ghcr.io/nirzaf/merconiq
 SOURCE_SHA=<full-workflow-source-sha>
 MANIFEST_DIGEST=sha256:<full-manifest-digest>
 IMAGE_REF="$IMAGE@$MANIFEST_DIGEST"
@@ -42,8 +48,10 @@ or state that it was not validated.
 
 ## Inspect BuildKit attestations
 
-BuildKit attaches provenance and SBOM attestations to the pushed image index. Use
-registry tooling to retrieve the referrers and inspect their media types and subject:
+For a published candidate, the workflow is configured to request BuildKit
+provenance and SBOM attestations. Verify that records were actually published
+for the candidate using registry tooling, then inspect their media types and
+subject:
 
 ```bash
 oras discover "$IMAGE_REF"

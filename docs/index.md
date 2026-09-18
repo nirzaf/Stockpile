@@ -13,6 +13,8 @@ description: End-user guide and documentation for the Merconiq.
 
 Welcome to the documentation site for **Merconiq** — a modern inventory management web app for tracking items, stock levels, purchase orders, suppliers, and locations.
 
+> The selected Pages URL currently redirects to a destination returning 404. The repository also uploads `docs/` without an explicit Markdown rendering step. Check [repository and artifact cutover status](REPOSITORY_CUTOVER.md); use the source files here until the rendered site and URL are verified.
+
 ---
 
 ## 📖 Available guides
@@ -31,6 +33,7 @@ Welcome to the documentation site for **Merconiq** — a modern inventory manage
 | **[Readiness baseline](READINESS_BASELINE.md)** | Maintainers | Current SHA, SPF/SFR reconciliation, source checks, and milestone dependencies. |
 | **[Organization ownership](ORGANIZATION_OWNERSHIP.md)** | Maintainers | Tenant, company, branch, location and document ownership, including unknown legacy mappings. |
 | **[Architecture boundaries](ARCHITECTURE.md)** | Developers | Modular-monolith ownership, dependency direction, and extension rules. |
+| **[Repository and artifact cutover](REPOSITORY_CUTOVER.md)** | Maintainers & operators | Canonical links, current Pages reachability, GHCR evidence, legacy references, and Compose volume precautions. |
 
 ---
 
@@ -78,21 +81,18 @@ startup does not seed users or sample data.
 
 ---
 
-## 🛠 Enabling this site
+## 🛠 Publishing status
 
-This site is a **GitHub Pages** site served from the `/docs` folder of the repository. To publish it on your fork:
-
-1. Push the `docs/` folder to your repository (already present in this repo).
-2. In your GitHub repository, go to **Settings → Pages**.
-3. Under **Source**, choose **Deploy from a branch**.
-4. Select the branch (`master` or `main`) and the **`/docs`** folder.
-5. Click **Save**. Your site will be live at:
-   ```
-   https://<your-username>.github.io/merconiq/
-   ```
-   within a minute or two.
-
-For a custom domain, see [the GitHub Pages docs](https://docs.github.com/en/pages/configuring-a-custom-domain-for-your-github-pages-site).
+The repository's [Pages workflow](https://github.com/nirzaf/merconiq/blob/master/.github/workflows/pages.yml) uploads the
+`docs/` directory when matching changes reach `master`; a repository owner must
+enable **Settings → Pages → Source: GitHub Actions**. The workflow currently has
+no explicit Markdown/site-generator build step, so verify that the uploaded
+artifact contains rendered HTML and assets before treating it as a usable site.
+The selected URL is `https://nirzaf.github.io/merconiq/`, but it currently
+redirects to a destination returning 404. See the [cutover guide](REPOSITORY_CUTOVER.md)
+for verified facts and owner-pending actions. A fork must configure and verify
+its own Pages build and base path; do not assume this repository's selected URL
+or settings apply to it.
 
 ---
 

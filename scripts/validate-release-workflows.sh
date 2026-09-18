@@ -25,8 +25,10 @@ done
 
 grep -Fq 'mode docker' "$DOCKER_WORKFLOW" || fail 'Docker workflow does not select docker validation mode'
 grep -Fq 'mode release' "$RELEASE_WORKFLOW" || fail 'Release workflow does not select release validation mode'
-grep -Fq 'sha-${{ steps.candidate.outputs.candidate_sha }}' "$DOCKER_WORKFLOW" \
-  || fail 'Docker workflow does not publish the immutable full-SHA image tag'
+grep -Fq 'type=raw,value=sha-${{ steps.candidate.outputs.candidate_sha }},priority=100' "$DOCKER_WORKFLOW" \
+  || fail 'Docker workflow does not tag the selected candidate by its full SHA'
+! grep -Fq 'type=sha' "$DOCKER_WORKFLOW" \
+  || fail 'Docker workflow derives its SHA tag from the workflow context instead of the selected candidate'
 grep -Fq 'sha-${CANDIDATE_SHA}' "$RELEASE_WORKFLOW" \
   || fail 'Release workflow does not verify the immutable full-SHA image tag'
 

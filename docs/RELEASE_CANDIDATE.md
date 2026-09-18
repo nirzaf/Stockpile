@@ -48,9 +48,11 @@ invented metrics, or a green health endpoint.
 
 The Docker and Release workflows validate the selected branch/tag against the
 current remote ref and carry the exact full commit SHA through checkout,
-metadata, and release notes. Docker publishes `sha-<full-commit>` as the
-immutable image reference; Release verifies that image and the matching semver
-image tag before creating a GitHub Release. Their manual `dry_run` inputs are
+metadata, and release notes. Docker constructs `sha-<full-candidate-sha>` from
+the resolved candidate output, including for a manual run where the selected
+candidate differs from the workflow revision. Use the recorded manifest digest
+for an immutable image reference. Release verifies that image and the matching
+semver image tag before creating a GitHub Release. Their manual `dry_run` inputs are
 safe validation paths and do not log in, push, or create a release.
 Both publication workflows also wait for successful CI and Security runs whose
 head SHA is the selected candidate. A missing, failed, cancelled, or still
