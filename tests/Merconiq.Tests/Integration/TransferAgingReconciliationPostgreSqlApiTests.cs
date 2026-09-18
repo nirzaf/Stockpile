@@ -362,7 +362,9 @@ public sealed class TransferAgingReconciliationPostgreSqlApiTests(
         report.SettlementValuationQuantityVariance.Should().Be(0);
 
         await using var verify = fixture.CreateContext("test-tenant");
-        (await verify.TransferTransitSettlements.ToListAsync()).Should().ContainSingle()
+        (await verify.TransferTransitSettlements
+            .Where(settlement => settlement.TransferOrderId == order.Id)
+            .ToListAsync()).Should().ContainSingle()
             .Which.Should().Match<TransferTransitSettlement>(settlement =>
                 settlement.StockTransactionId == null &&
                 settlement.SettlementType == TransferTransitSettlementType.WrittenOff &&
