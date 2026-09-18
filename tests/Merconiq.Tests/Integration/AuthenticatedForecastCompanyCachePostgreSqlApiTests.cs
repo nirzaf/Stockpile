@@ -40,6 +40,13 @@ public sealed class AuthenticatedForecastCompanyCachePostgreSqlApiTests(
         firstScope.ServiceProvider.GetRequiredService<IMemoryCache>()
             .Should().BeSameAs(secondScope.ServiceProvider.GetRequiredService<IMemoryCache>());
 
+        // Cold, simultaneous requests for the same item must use distinct company scopes.
+        var concurrentSharedItemForecasts = await Task.WhenAll(
+            GetItemForecastAsync(companyAClient, seeded.SharedItemId),
+            GetItemForecastAsync(companyBClient, seeded.SharedItemId));
+        AssertForecast(concurrentSharedItemForecasts[0], seeded.SharedItemId, "SHARED-", 3);
+        AssertForecast(concurrentSharedItemForecasts[1], seeded.SharedItemId, "SHARED-", 17);
+
         var companyAForecasts = await GetAllForecastsAsync(companyAClient);
         companyAForecasts.Select(forecast => forecast.ItemId).Should().BeEquivalentTo(
             [seeded.SharedItemId, seeded.CompanyAItemId],
