@@ -22,6 +22,9 @@ public sealed class CustomerMasterApiTests(CustomWebApplicationFactory factory)
         var companies = await SeedCompanyScopeAsync(factory, suffix);
         (await client.GetAsync($"/api/v1/companies/{companies.CompanyAId}/customers"))
             .StatusCode.Should().Be(HttpStatusCode.OK);
+        (await client.GetAsync(
+                $"/api/v1/companies/{companies.CompanyAId}/customers?page={int.MaxValue}&pageSize=100"))
+            .StatusCode.Should().Be(HttpStatusCode.BadRequest);
 
         var invalidRequest = new CustomerWriteRequest
         {

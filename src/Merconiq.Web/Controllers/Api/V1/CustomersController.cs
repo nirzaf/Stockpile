@@ -43,6 +43,9 @@ public sealed class CustomersController(
             return BadRequest(ApiResponse<object>.CreateFailure(
                 $"Page must be at least 1 and pageSize must be between 1 and {MaximumPageSize}."));
         }
+        var offset = (long)(page - 1) * pageSize;
+        if (offset > int.MaxValue)
+            return BadRequest(ApiResponse<object>.CreateFailure("The requested page is too large."));
 
         var query = db.Customers.Where(customer => customer.CompanyId == companyId);
         if (!includeInactive)
@@ -51,7 +54,7 @@ public sealed class CustomersController(
         var rows = await query
             .OrderBy(customer => customer.CustomerCode)
             .ThenBy(customer => customer.Id)
-            .Skip((page - 1) * pageSize)
+            .Skip((int)offset)
             .Take(pageSize + 1)
             .ToListAsync(cancellationToken);
         var hasMore = rows.Count > pageSize;
