@@ -90,13 +90,11 @@ public sealed class CustomersController(
         [FromBody] CustomerWriteRequest request,
         CancellationToken cancellationToken = default)
     {
+        var validationError = ValidateRequest(request);
+        if (validationError is not null)
+            return BadRequest(ApiResponse<object>.CreateFailure(validationError));
         if (!await authorization.CanAccessCompanyAsync(User, companyId, CompanyCapability.Edit))
             return Forbid();
-        if (string.IsNullOrWhiteSpace(request.CustomerCode) || string.IsNullOrWhiteSpace(request.Name))
-        {
-            return BadRequest(ApiResponse<object>.CreateFailure(
-                "CustomerCode and Name must not be blank."));
-        }
 
         if (!await db.Companies.AnyAsync(
                 company => company.Id == companyId && company.IsActive,
@@ -136,13 +134,11 @@ public sealed class CustomersController(
         [FromBody] CustomerWriteRequest request,
         CancellationToken cancellationToken = default)
     {
+        var validationError = ValidateRequest(request);
+        if (validationError is not null)
+            return BadRequest(ApiResponse<object>.CreateFailure(validationError));
         if (!await authorization.CanAccessCompanyAsync(User, companyId, CompanyCapability.Edit))
             return Forbid();
-        if (string.IsNullOrWhiteSpace(request.CustomerCode) || string.IsNullOrWhiteSpace(request.Name))
-        {
-            return BadRequest(ApiResponse<object>.CreateFailure(
-                "CustomerCode and Name must not be blank."));
-        }
 
         var customer = await db.Customers.SingleOrDefaultAsync(
             candidate => candidate.Id == customerId && candidate.CompanyId == companyId,
@@ -237,6 +233,19 @@ public sealed class CustomersController(
 
     private static string NormalizeCode(string value) => value.Trim().ToUpperInvariant();
 
+    private static string? ValidateRequest(CustomerWriteRequest request)
+    {
+        var validationResults = new List<ValidationResult>();
+        var validationContext = new ValidationContext(request);
+        if (!Validator.TryValidateObject(request, validationContext, validationResults, validateAllProperties: true))
+            return validationResults[0].ErrorMessage ?? "Customer fields are invalid.";
+        if (string.IsNullOrWhiteSpace(request.CustomerCode))
+            return "CustomerCode must not be blank.";
+        if (string.IsNullOrWhiteSpace(request.Name))
+            return "Name must not be blank.";
+        return null;
+    }
+
     private static string? NormalizeOptional(string? value)
     {
         var normalized = value?.Trim();
@@ -268,14 +277,29 @@ public sealed class CustomersController(
 }
 
 /// <summary>Company-local customer master fields. Tenant and company ownership come from the route and session.</summary>
-public sealed record CustomerWriteRequest(
-    [property: Required, StringLength(64)] string CustomerCode,
-    [property: Required, StringLength(200)] string Name,
-    [property: EmailAddress, StringLength(254)] string? ContactEmail = null,
-    [property: StringLength(40)] string? ContactPhone = null,
-    [property: StringLength(500)] string? BillingAddress = null,
-    [property: StringLength(500)] string? ShippingAddress = null,
-    [property: Range(0, 3650)] int? PaymentTermDays = null);
+public sealed class CustomerWriteRequest
+{
+    [Required, StringLength(64)]
+    public string CustomerCode { get; init; } = string.Empty;
+
+    [Required, StringLength(200)]
+    public string Name { get; init; } = string.Empty;
+
+    [EmailAddress, StringLength(254)]
+    public string? ContactEmail { get; init; }
+
+    [StringLength(40)]
+    public string? ContactPhone { get; init; }
+
+    [StringLength(500)]
+    public string? BillingAddress { get; init; }
+
+    [StringLength(500)]
+    public string? ShippingAddress { get; init; }
+
+    [Range(0, int.MaxValue)]
+    public int? PaymentTermDays { get; init; }
+}
 
 /// <summary>A bounded page of customers for one company.</summary>
 public sealed record CustomerPageResponse(

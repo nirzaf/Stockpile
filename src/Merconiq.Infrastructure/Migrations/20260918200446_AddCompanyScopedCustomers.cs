@@ -38,7 +38,7 @@ namespace Merconiq.Infrastructure.Migrations
                     table.PrimaryKey("PK_Customers", x => x.Id);
                     table.UniqueConstraint("AK_Customers_Id_TenantId", x => new { x.Id, x.TenantId });
                     table.CheckConstraint("CK_Customers_NormalizedCustomerCode", "\"CustomerCode\" <> '' AND \"CustomerCode\" = btrim(\"CustomerCode\") AND \"CustomerCode\" = upper(\"CustomerCode\")");
-                    table.CheckConstraint("CK_Customers_PaymentTermDays", "\"PaymentTermDays\" IS NULL OR \"PaymentTermDays\" BETWEEN 0 AND 3650");
+                    table.CheckConstraint("CK_Customers_PaymentTermDays", "\"PaymentTermDays\" IS NULL OR \"PaymentTermDays\" >= 0");
                     table.ForeignKey(
                         name: "FK_Customers_Companies_CompanyId_TenantId",
                         columns: x => new { x.CompanyId, x.TenantId },

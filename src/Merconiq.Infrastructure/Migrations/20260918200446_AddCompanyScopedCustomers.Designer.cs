@@ -431,7 +431,7 @@ namespace Merconiq.Infrastructure.Migrations
                         {
                             t.HasCheckConstraint("CK_Customers_NormalizedCustomerCode", "\"CustomerCode\" <> '' AND \"CustomerCode\" = btrim(\"CustomerCode\") AND \"CustomerCode\" = upper(\"CustomerCode\")");
 
-                            t.HasCheckConstraint("CK_Customers_PaymentTermDays", "\"PaymentTermDays\" IS NULL OR \"PaymentTermDays\" BETWEEN 0 AND 3650");
+                            t.HasCheckConstraint("CK_Customers_PaymentTermDays", "\"PaymentTermDays\" IS NULL OR \"PaymentTermDays\" >= 0");
                         });
                 });
 

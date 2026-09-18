@@ -4,6 +4,7 @@ using System.Text.Json;
 using FluentAssertions;
 using Merconiq.Core.Entities;
 using Merconiq.Infrastructure.Data;
+using Merconiq.Web.Controllers.Api.V1;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -19,17 +20,30 @@ public sealed class CustomerMasterApiTests(CustomWebApplicationFactory factory)
         using var client = factory.CreateAuthenticatedClient("Buyer");
         var suffix = Guid.NewGuid().ToString("N")[..8];
         var companies = await SeedCompanyScopeAsync(factory, suffix);
+        (await client.GetAsync($"/api/v1/companies/{companies.CompanyAId}/customers"))
+            .StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var invalidRequest = new CustomerWriteRequest
+        {
+            CustomerCode = "INVALID-TERMS",
+            Name = "Invalid customer",
+            ContactEmail = "not-an-email"
+        };
 
         var invalid = await client.PostAsJsonAsync(
             $"/api/v1/companies/{companies.CompanyAId}/customers",
-            new
+            invalidRequest);
+        invalid.StatusCode.Should().Be(HttpStatusCode.BadRequest, await invalid.Content.ReadAsStringAsync());
+
+        var invalidTerms = await client.PostAsJsonAsync(
+            $"/api/v1/companies/{companies.CompanyAId}/customers",
+            new CustomerWriteRequest
             {
-                customerCode = "invalid-terms",
-                name = "Invalid customer",
-                contactEmail = "not-an-email",
-                paymentTermDays = 3651
+                CustomerCode = "INVALID-TERMS",
+                Name = "Invalid terms",
+                PaymentTermDays = -1
             });
-        invalid.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        invalidTerms.StatusCode.Should().Be(HttpStatusCode.BadRequest);
 
         var created = await client.PostAsJsonAsync(
             $"/api/v1/companies/{companies.CompanyAId}/customers",

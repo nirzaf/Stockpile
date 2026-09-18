@@ -535,7 +535,7 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
                     "\"CustomerCode\" <> '' AND \"CustomerCode\" = btrim(\"CustomerCode\") AND \"CustomerCode\" = upper(\"CustomerCode\")");
                 table.HasCheckConstraint(
                     "CK_Customers_PaymentTermDays",
-                    "\"PaymentTermDays\" IS NULL OR \"PaymentTermDays\" BETWEEN 0 AND 3650");
+                    "\"PaymentTermDays\" IS NULL OR \"PaymentTermDays\" >= 0");
             });
             entity.HasOne(e => e.Company)
                 .WithMany(company => company.Customers)

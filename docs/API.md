@@ -142,7 +142,7 @@ stored uppercase, and unique within its company. A duplicate returns `409`.
 The master stores the organization's name and optional operational email,
 phone, billing address, shipping address, and `paymentTermDays`. Customer code
 and name are required; contact values are bounded and email syntax is checked.
-Payment-term days are configuration only (0–3650); the API does not calculate
+Payment-term days are non-negative configuration only; the API does not calculate
 invoice due dates, snapshot terms onto documents, or implement receivables or
 credit enforcement. Customer records can be deactivated/reactivated but cannot
 be hard-deleted. No current sales or receivable document references customers,
