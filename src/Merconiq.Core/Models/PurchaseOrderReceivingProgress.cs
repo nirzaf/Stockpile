@@ -1,3 +1,4 @@
+using System.ComponentModel.DataAnnotations;
 using Merconiq.Core.Entities;
 
 namespace Merconiq.Core.Models;
@@ -41,6 +42,20 @@ public sealed record PurchaseOrderReceivingProgress(
 
 /// <summary>Incremental line quantities submitted to the line-obligation API.</summary>
 public sealed record PurchaseOrderLineProgressChange(
+    [param: Range(0, int.MaxValue, ErrorMessage = "Receiving quantities must be non-negative.")]
     int ReceivedQuantity,
+    [param: Range(0, int.MaxValue, ErrorMessage = "Receiving quantities must be non-negative.")]
     int AcceptedQuantity,
-    int RejectedQuantity);
+    [param: Range(0, int.MaxValue, ErrorMessage = "Receiving quantities must be non-negative.")]
+    int RejectedQuantity) : IValidatableObject
+{
+    public IEnumerable<ValidationResult> Validate(ValidationContext validationContext)
+    {
+        if (ReceivedQuantity == 0 && AcceptedQuantity == 0 && RejectedQuantity == 0)
+        {
+            yield return new ValidationResult(
+                "At least one non-negative receiving outcome quantity must be positive.",
+                [nameof(ReceivedQuantity), nameof(AcceptedQuantity), nameof(RejectedQuantity)]);
+        }
+    }
+}

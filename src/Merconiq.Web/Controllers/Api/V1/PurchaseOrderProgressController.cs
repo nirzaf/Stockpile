@@ -54,6 +54,7 @@ public sealed class PurchaseOrderProgressController(
     [Authorize(Policy = CapabilityPolicies.Post)]
     [ValidateAntiForgeryToken]
     [IgnoreAntiforgeryToken]
+    [TypeFilter(typeof(PurchaseOrderProgressCompanyScopeFilter))]
     public async Task<IActionResult> RecordLineProgress(
         int companyId,
         int purchaseOrderId,
@@ -61,19 +62,6 @@ public sealed class PurchaseOrderProgressController(
         [FromBody] PurchaseOrderLineProgressChange request,
         CancellationToken cancellationToken)
     {
-        var scopeFailure = await ValidateCompanyScopeAsync(
-            companyId, purchaseOrderId, CompanyCapability.Post, cancellationToken);
-        if (scopeFailure is not null)
-            return scopeFailure;
-
-        if (request is null || request.ReceivedQuantity < 0 ||
-            request.AcceptedQuantity < 0 || request.RejectedQuantity < 0 ||
-            (request.ReceivedQuantity == 0 && request.AcceptedQuantity == 0 && request.RejectedQuantity == 0))
-        {
-            return BadRequest(ApiResponse<object>.CreateFailure(
-                "At least one non-negative receiving outcome quantity must be positive."));
-        }
-
         var lineBelongsToOrder = await db.OrderDetails.AnyAsync(
             line => line.Id == lineId && line.PurchaseOrderId == purchaseOrderId,
             cancellationToken);

@@ -94,6 +94,28 @@ public sealed class PurchaseOrderProgressApiTests(CustomWebApplicationFactory fa
             await response.Content.ReadAsStringAsync());
     }
 
+    [Fact]
+    public async Task Line_progress_api_model_validation_rejects_negative_and_empty_outcomes()
+    {
+        using var client = factory.CreateAuthenticatedClient("Manager");
+        var seeded = await SeedScopeAsync(Guid.NewGuid().ToString("N")[..8]);
+        var path = LineProgressPath(seeded.CompanyAId, seeded.OrderAId, seeded.LineAId);
+
+        using var negative = await PostProgressAsync(
+            client,
+            path,
+            "negative-progress-quantity",
+            new PurchaseOrderLineProgressChange(ReceivedQuantity: -1, AcceptedQuantity: 0, RejectedQuantity: 0));
+        negative.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+
+        using var empty = await PostProgressAsync(
+            client,
+            path,
+            "empty-progress-outcome",
+            new PurchaseOrderLineProgressChange(ReceivedQuantity: 0, AcceptedQuantity: 0, RejectedQuantity: 0));
+        empty.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
     private async Task<TestScope> SeedScopeAsync(string suffix)
     {
         using var scope = factory.Services.CreateScope();
