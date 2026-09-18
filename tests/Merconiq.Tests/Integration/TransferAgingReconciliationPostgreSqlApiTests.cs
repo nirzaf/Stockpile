@@ -187,8 +187,12 @@ public sealed class TransferAgingReconciliationPostgreSqlApiTests(
         partial.ValueConservationVariance.Should().Be(0m);
         partial.DispatchLedgerQuantityVariance.Should().Be(0);
         partial.DispatchLedgerValueVariance.Should().Be(0m);
+        partial.DispatchValuationPostingCountVariance.Should().Be(0);
+        partial.DispatchValuationQuantityVariance.Should().Be(0);
         partial.SettlementLedgerQuantityVariance.Should().Be(0);
         partial.SettlementLedgerValueVariance.Should().Be(0m);
+        partial.SettlementValuationPostingCountVariance.Should().Be(0);
+        partial.SettlementValuationQuantityVariance.Should().Be(0);
         partial.OldestOutstandingDispatchedAt.Should().Be(dispatch.DispatchedAt);
         partial.OldestOutstandingAgeDays.Should().Be(
             Math.Max(0, (int)(page.AsOf - dispatch.DispatchedAt).TotalDays));
@@ -228,10 +232,260 @@ public sealed class TransferAgingReconciliationPostgreSqlApiTests(
             .Should().BeEquivalentTo(page.Lines.Select(line => line.TransferOrderLineId));
     }
 
+    [PostgreSqlFact]
+    public async Task Fragmented_transit_and_settlement_history_is_aggregated_without_dropping_totals()
+    {
+        fixture.EnsureEnabled();
+        var suffix = Guid.NewGuid().ToString("N");
+        var company = await SeedCompanyAsync(_factory, fixture, "test-tenant", $"F{suffix}", 1);
+        var user = await _factory.EnsurePersonaUserAsync("Manager", suffix);
+        await GrantViewAsync(company.CompanyId, user.Id);
+        using var client = _factory.CreateAuthenticatedClient(user, "Manager");
+        var order = await CreateOrderAsync(
+            _factory,
+            company,
+            [new TransferOrderLineRequest(company.ItemIds[0], 64)],
+            $"aging-fragmented-{suffix}",
+            approve: true);
+        var line = order.Lines.Single();
+        var history = Enumerable.Range(0, 64)
+            .Select(index => new SyntheticTransitEvent(
+                DispatchQuantity: 1,
+                DispatchValue: 12.5m,
+                SettlementQuantity: index < 32 ? 1 : 0,
+                SettlementValue: index < 32 ? 12.5m : 0m,
+                DispatchedAt: DateTimeOffset.UtcNow.AddDays(-index - 1)))
+            .ToArray();
+        await SeedSyntheticHistoryAsync(company, order, line, suffix, history);
+
+        using var response = await client.GetAsync(
+            $"/api/v1/transfer-orders/aging?companyId={company.CompanyId}&pageSize=1");
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var envelope = await response.Content.ReadFromJsonAsync<ApiResponse<TransferAgingReconciliationPage>>();
+        var report = envelope!.Data!.Lines.Should().ContainSingle().Subject;
+        report.DispatchedQuantity.Should().Be(64);
+        report.ReceivedQuantity.Should().Be(32);
+        report.OutstandingTransitQuantity.Should().Be(32);
+        report.DispatchedValue.Should().Be(800m);
+        report.ReceivedValue.Should().Be(400m);
+        report.OutstandingTransitValue.Should().Be(400m);
+        report.QuantityConservationVariance.Should().Be(0);
+        report.ValueConservationVariance.Should().Be(0m);
+        report.DispatchLedgerQuantityVariance.Should().Be(0);
+        report.DispatchLedgerValueVariance.Should().Be(0m);
+        report.DispatchValuationPostingCountVariance.Should().Be(0);
+        report.DispatchValuationQuantityVariance.Should().Be(0);
+        report.SettlementLedgerQuantityVariance.Should().Be(0);
+        report.SettlementLedgerValueVariance.Should().Be(0m);
+        report.SettlementValuationPostingCountVariance.Should().Be(0);
+        report.SettlementValuationQuantityVariance.Should().Be(0);
+    }
+
+    [PostgreSqlFact]
+    public async Task Zero_value_missing_and_misquantified_valuation_postings_are_visible()
+    {
+        fixture.EnsureEnabled();
+        var suffix = Guid.NewGuid().ToString("N");
+        var company = await SeedCompanyAsync(_factory, fixture, "test-tenant", $"Z{suffix}", 1);
+        var user = await _factory.EnsurePersonaUserAsync("Manager", suffix);
+        await GrantViewAsync(company.CompanyId, user.Id);
+        using var client = _factory.CreateAuthenticatedClient(user, "Manager");
+        var order = await CreateOrderAsync(
+            _factory,
+            company,
+            [new TransferOrderLineRequest(company.ItemIds[0], 3)],
+            $"aging-zero-valuation-{suffix}",
+            approve: true);
+        var line = order.Lines.Single();
+        await SeedSyntheticHistoryAsync(
+            company,
+            order,
+            line,
+            suffix,
+            [
+                new SyntheticTransitEvent(
+                    DispatchQuantity: 1,
+                    DispatchValue: 0m,
+                    IncludeDispatchValuation: false,
+                    SettlementQuantity: 1,
+                    SettlementValue: 0m,
+                    IncludeSettlementValuation: false),
+                new SyntheticTransitEvent(
+                    DispatchQuantity: 2,
+                    DispatchValue: 0m,
+                    DispatchValuationQuantity: 1)
+            ]);
+
+        using var response = await client.GetAsync(
+            $"/api/v1/transfer-orders/aging?companyId={company.CompanyId}&pageSize=1");
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var envelope = await response.Content.ReadFromJsonAsync<ApiResponse<TransferAgingReconciliationPage>>();
+        var report = envelope!.Data!.Lines.Should().ContainSingle().Subject;
+        report.DispatchedValue.Should().Be(0m);
+        report.ReceivedValue.Should().Be(0m);
+        report.DispatchLedgerValueVariance.Should().Be(0m);
+        report.SettlementLedgerValueVariance.Should().Be(0m);
+        report.DispatchLedgerQuantityVariance.Should().Be(0);
+        report.SettlementLedgerQuantityVariance.Should().Be(0);
+        report.DispatchValuationPostingCountVariance.Should().Be(1);
+        report.DispatchValuationQuantityVariance.Should().Be(2);
+        report.SettlementValuationPostingCountVariance.Should().Be(1);
+        report.SettlementValuationQuantityVariance.Should().Be(1);
+    }
+
     public void Dispose()
     {
         _factory.Dispose();
         _otherTenantFactory.Dispose();
+    }
+
+    private async Task GrantViewAsync(int companyId, string userId)
+    {
+        await using var context = fixture.CreateContext("test-tenant");
+        context.CompanyMemberships.Add(new CompanyMembership
+        {
+            CompanyId = companyId,
+            UserId = userId,
+            Capabilities = CompanyCapability.View,
+            IsActive = true
+        });
+        await context.SaveChangesAsync();
+    }
+
+    private async Task SeedSyntheticHistoryAsync(
+        CompanyScenario company,
+        TransferOrderView order,
+        TransferOrderLineView line,
+        string suffix,
+        IReadOnlyList<SyntheticTransitEvent> history)
+    {
+        await using var context = fixture.CreateContext("test-tenant");
+        var itemId = company.ItemIds.Single();
+        var dispatchDetails = history.Select((record, index) =>
+        {
+            var dispatchedAt = record.DispatchedAt ?? DateTimeOffset.UtcNow.AddDays(-index - 1);
+            var transaction = new StockTransaction
+            {
+                ItemId = itemId,
+                FromLocationId = company.SourceLocationId,
+                ToLocationId = company.DestinationLocationId,
+                Quantity = record.DispatchQuantity,
+                TransactionType = TransactionType.TransferDispatch,
+                TransactionDate = dispatchedAt.UtcDateTime,
+                SourceLineReference = $"transfer-aging:{suffix}:{index}:dispatch",
+                TenantId = "test-tenant"
+            };
+            context.StockTransactions.Add(transaction);
+            if (record.IncludeDispatchValuation)
+            {
+                var valuationQuantity = record.DispatchValuationQuantity ?? record.DispatchQuantity;
+                context.StockValuationEntries.Add(new StockValuationEntry
+                {
+                    StockTransaction = transaction,
+                    ItemId = itemId,
+                    LocationId = company.SourceLocationId,
+                    EntryType = StockValuationEntryType.TransferOut,
+                    Quantity = valuationQuantity,
+                    UnitCost = valuationQuantity == 0 ? 0m : record.DispatchValue / valuationQuantity,
+                    TotalValue = record.DispatchValue,
+                    TenantId = "test-tenant"
+                });
+            }
+            return new SyntheticDispatch(record, transaction, dispatchedAt);
+        }).ToArray();
+
+        await context.SaveChangesAsync();
+
+        var transitEntries = dispatchDetails.Select(detail => new TransferTransitEntry
+        {
+            TransferOrderId = order.Id,
+            TransferOrderLineId = line.Id,
+            SourceDocumentLineId = new DocumentLineIdentityId(line.DocumentLineId),
+            CompanyId = company.CompanyId,
+            ItemId = itemId,
+            FromLocationId = company.SourceLocationId,
+            ToLocationId = company.DestinationLocationId,
+            StockTransactionId = detail.Transaction.Id,
+            Quantity = detail.Record.DispatchQuantity,
+            UnitCost = detail.Record.DispatchQuantity == 0
+                ? 0m
+                : detail.Record.DispatchValue / detail.Record.DispatchQuantity,
+            TotalValue = detail.Record.DispatchValue,
+            IdempotencyKey = $"transfer-aging:{suffix}:{detail.Transaction.SourceLineReference}:entry",
+            RequestHash = new string('a', 64),
+            DispatchedBy = "synthetic-dispatcher",
+            DispatchedAt = detail.DispatchedAt,
+            TenantId = "test-tenant"
+        }).ToArray();
+        context.TransferTransitEntries.AddRange(transitEntries);
+        await context.SaveChangesAsync();
+
+        var settlementDetails = dispatchDetails
+            .Select((detail, index) => new { Detail = detail, Transit = transitEntries[index] })
+            .Where(pair => pair.Detail.Record.SettlementQuantity > 0)
+            .Select(pair =>
+            {
+                var settledAt = pair.Detail.DispatchedAt.AddMinutes(1);
+                var transaction = new StockTransaction
+                {
+                    ItemId = itemId,
+                    FromLocationId = company.SourceLocationId,
+                    ToLocationId = company.DestinationLocationId,
+                    Quantity = pair.Detail.Record.SettlementQuantity,
+                    TransactionType = TransactionType.TransferReceipt,
+                    TransactionDate = settledAt.UtcDateTime,
+                    SourceLineReference = $"transfer-aging:{suffix}:{pair.Detail.Transaction.SourceLineReference}:receipt",
+                    TenantId = "test-tenant"
+                };
+                context.StockTransactions.Add(transaction);
+                if (pair.Detail.Record.IncludeSettlementValuation)
+                {
+                    var valuationQuantity = pair.Detail.Record.SettlementValuationQuantity ??
+                                            pair.Detail.Record.SettlementQuantity;
+                    context.StockValuationEntries.Add(new StockValuationEntry
+                    {
+                        StockTransaction = transaction,
+                        ItemId = itemId,
+                        LocationId = company.DestinationLocationId,
+                        EntryType = StockValuationEntryType.TransferIn,
+                        Quantity = valuationQuantity,
+                        UnitCost = valuationQuantity == 0
+                            ? 0m
+                            : pair.Detail.Record.SettlementValue / valuationQuantity,
+                        TotalValue = pair.Detail.Record.SettlementValue,
+                        TenantId = "test-tenant"
+                    });
+                }
+                return new SyntheticSettlement(pair.Detail.Record, pair.Transit, transaction, settledAt);
+            }).ToArray();
+
+        await context.SaveChangesAsync();
+        context.TransferTransitSettlements.AddRange(settlementDetails.Select(detail => new TransferTransitSettlement
+        {
+            TransferTransitEntryId = detail.Transit.Id,
+            TransferOrderId = order.Id,
+            TransferOrderLineId = line.Id,
+            SourceDocumentLineId = new DocumentLineIdentityId(line.DocumentLineId),
+            CompanyId = company.CompanyId,
+            ItemId = itemId,
+            FromLocationId = company.SourceLocationId,
+            ToLocationId = company.DestinationLocationId,
+            StockTransactionId = detail.Transaction.Id,
+            Quantity = detail.Record.SettlementQuantity,
+            SettlementType = TransferTransitSettlementType.Received,
+            UnitCost = detail.Record.SettlementQuantity == 0
+                ? 0m
+                : detail.Record.SettlementValue / detail.Record.SettlementQuantity,
+            TotalValue = detail.Record.SettlementValue,
+            IdempotencyKey = $"transfer-aging:{suffix}:{detail.Transaction.SourceLineReference}:settlement",
+            RequestHash = new string('b', 64),
+            SettledBy = "synthetic-receiver",
+            SettledAt = detail.SettledAt,
+            TenantId = "test-tenant"
+        }));
+        var persistedLine = await context.TransferOrderLines.SingleAsync(candidate => candidate.Id == line.Id);
+        persistedLine.DispatchedQuantity = history.Sum(record => record.DispatchQuantity);
+        await context.SaveChangesAsync();
     }
 
     private static async Task<CompanyScenario> SeedCompanyAsync(
@@ -339,4 +593,26 @@ public sealed class TransferAgingReconciliationPostgreSqlApiTests(
         int SourceLocationId,
         int DestinationLocationId,
         int[] ItemIds);
+
+    private sealed record SyntheticTransitEvent(
+        int DispatchQuantity,
+        decimal DispatchValue,
+        bool IncludeDispatchValuation = true,
+        int? DispatchValuationQuantity = null,
+        int SettlementQuantity = 0,
+        decimal SettlementValue = 0m,
+        bool IncludeSettlementValuation = true,
+        int? SettlementValuationQuantity = null,
+        DateTimeOffset? DispatchedAt = null);
+
+    private sealed record SyntheticDispatch(
+        SyntheticTransitEvent Record,
+        StockTransaction Transaction,
+        DateTimeOffset DispatchedAt);
+
+    private sealed record SyntheticSettlement(
+        SyntheticTransitEvent Record,
+        TransferTransitEntry Transit,
+        StockTransaction Transaction,
+        DateTimeOffset SettledAt);
 }

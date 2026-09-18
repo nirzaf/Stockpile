@@ -479,9 +479,21 @@ and outstanding transit quantity/value. Outstanding value is each dispatch's
 captured transit total less its persisted settlements. Quantity and value
 conservation variance are dispatch totals less received, quarantined, returned
 and outstanding amounts. Separate dispatch/settlement ledger variances compare
-the transit documents with linked stock transactions and stock valuation
-entries. Zero means those persisted quantities/values agree; a nonzero value is
-evidence to investigate, not an automatic repair.
+each transit event with its linked stock transaction and valuation posting.
+`dispatchLedgerQuantityVariance` and `settlementLedgerQuantityVariance` sum the
+absolute per-event difference between transit quantity and the linked stock
+transaction. `dispatchLedgerValueVariance` and
+`settlementLedgerValueVariance` sum the absolute per-event difference between
+transit value and matching valuation value. The corresponding
+`dispatchValuationPostingCountVariance` / `settlementValuationPostingCountVariance`
+sum missing or extra matching valuation postings per event, while
+`dispatchValuationQuantityVariance` / `settlementValuationQuantityVariance`
+sum per-event valuation-quantity differences, including zero-value events. A
+missing event cannot be hidden by an opposite discrepancy elsewhere. Zero
+across these fields means the persisted event/posting pairs agree; a nonzero
+value is evidence to investigate, not an automatic repair. Transit and
+settlement history is aggregated in PostgreSQL; responses contain only the
+bounded line page and per-line summaries, not event history rows.
 
 `originalAverageUnitCost` and `outstandingAverageUnitCost` are six-decimal,
 quantity-weighted summaries of the captured source costs. The corresponding

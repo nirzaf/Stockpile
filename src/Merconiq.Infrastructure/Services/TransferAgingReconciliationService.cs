@@ -7,7 +7,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Merconiq.Infrastructure.Services;
 
-/// <summary>Builds bounded transfer reconciliation rows from tenant-filtered persisted records.</summary>
+/// <summary>Builds bounded transfer reconciliation pages from tenant-filtered database aggregates.</summary>
 public sealed class TransferAgingReconciliationService(InventoryDbContext db)
     : ITransferAgingReconciliationService
 {
@@ -55,71 +55,326 @@ public sealed class TransferAgingReconciliationService(InventoryDbContext db)
         }
 
         var lineIds = selected.Select(row => row.Line.Id).ToArray();
-        var lineReferences = selected.Select(row => row.Line.ReservationSourceLineReference).Distinct().ToArray();
         var orderIds = selected.Select(row => row.Order.Id).Distinct().ToArray();
+        var dispatchEntries = db.TransferTransitEntries.AsNoTracking()
+            .Where(entry => entry.TenantId == tenantId &&
+                            orderIds.Contains(entry.TransferOrderId) &&
+                            lineIds.Contains(entry.TransferOrderLineId));
+        var settlementEntries = db.TransferTransitSettlements.AsNoTracking()
+            .Where(settlement => settlement.TenantId == tenantId &&
+                                 orderIds.Contains(settlement.TransferOrderId) &&
+                                 lineIds.Contains(settlement.TransferOrderLineId));
 
+        var lineReferences = selected.Select(row => row.Line.ReservationSourceLineReference).Distinct().ToArray();
         var reservations = await db.StockReservations.AsNoTracking()
-            .Where(reservation => lineReferences.Contains(reservation.SourceLineReference) &&
+            .Where(reservation => reservation.TenantId == tenantId &&
+                                  lineReferences.Contains(reservation.SourceLineReference) &&
                                   reservation.Status == StockReservationStatus.Active &&
                                   reservation.ExpiresAt > asOf)
-            .Select(reservation => new ReservationSlice(
+            .GroupBy(reservation => new
+            {
                 reservation.SourceLineReference,
                 reservation.ItemId,
-                reservation.LocationId,
-                reservation.Quantity - reservation.ConsumedQuantity))
+                reservation.LocationId
+            })
+            .Select(group => new ReservationTotal(
+                group.Key.SourceLineReference,
+                group.Key.ItemId,
+                group.Key.LocationId,
+                group.Sum(reservation => reservation.Quantity - reservation.ConsumedQuantity)))
             .ToListAsync(cancellationToken);
 
-        var transitEntries = await db.TransferTransitEntries.AsNoTracking()
-            .Where(entry => orderIds.Contains(entry.TransferOrderId) && lineIds.Contains(entry.TransferOrderLineId))
-            .OrderBy(entry => entry.DispatchedAt)
-            .ThenBy(entry => entry.Id)
-            .ToListAsync(cancellationToken);
-
-        var settlements = await db.TransferTransitSettlements.AsNoTracking()
-            .Where(settlement => orderIds.Contains(settlement.TransferOrderId) &&
-                                 lineIds.Contains(settlement.TransferOrderLineId))
-            .OrderBy(settlement => settlement.SettledAt)
-            .ThenBy(settlement => settlement.Id)
-            .ToListAsync(cancellationToken);
-
-        var stockTransactionIds = transitEntries.Select(entry => entry.StockTransactionId)
-            .Concat(settlements.Select(settlement => settlement.StockTransactionId))
-            .Distinct()
-            .ToArray();
-        List<StockTransaction> stockTransactions = stockTransactionIds.Length == 0
-            ? []
-            : await db.StockTransactions.AsNoTracking()
-                .Where(transaction => stockTransactionIds.Contains(transaction.Id))
-                .ToListAsync(cancellationToken);
-        List<StockValuationEntry> valuationEntries = stockTransactionIds.Length == 0
-            ? []
-            : await db.StockValuationEntries.AsNoTracking()
-                .Where(entry => stockTransactionIds.Contains(entry.StockTransactionId))
-                .ToListAsync(cancellationToken);
-
-        var reservationsByReference = reservations
-            .GroupBy(reservation => reservation.SourceLineReference)
-            .ToDictionary(group => group.Key, group => (IReadOnlyCollection<ReservationSlice>)group.ToArray());
-        var transitEntriesByLine = transitEntries
+        var dispatchTotals = await dispatchEntries
             .GroupBy(entry => entry.TransferOrderLineId)
-            .ToDictionary(group => group.Key, group => (IReadOnlyCollection<TransferTransitEntry>)group.ToArray());
-        var settlementsByLine = settlements
+            .Select(group => new DispatchTotal(
+                group.Key,
+                group.Count(),
+                group.Sum(entry => entry.Quantity),
+                group.Sum(entry => entry.TotalValue)))
+            .ToListAsync(cancellationToken);
+
+        var settlementTotals = await settlementEntries
             .GroupBy(settlement => settlement.TransferOrderLineId)
-            .ToDictionary(group => group.Key, group => (IReadOnlyCollection<TransferTransitSettlement>)group.ToArray());
-        var transactionsById = stockTransactions.ToDictionary(transaction => transaction.Id);
-        var valuationByTransactionId = valuationEntries
-            .GroupBy(entry => entry.StockTransactionId)
-            .ToDictionary(group => group.Key, group => group.ToArray());
-        var rows = selected.Select(row => BuildLine(
-                row.Line,
-                row.Order,
-                reservationsByReference.GetValueOrDefault(row.Line.ReservationSourceLineReference) ?? [],
-                transitEntriesByLine.GetValueOrDefault(row.Line.Id) ?? [],
-                settlementsByLine.GetValueOrDefault(row.Line.Id) ?? [],
-                transactionsById,
-                valuationByTransactionId,
-                asOf))
-            .ToArray();
+            .Select(group => new SettlementTotal(
+                group.Key,
+                group.Count(),
+                group.Sum(settlement => settlement.SettlementType == TransferTransitSettlementType.Received
+                    ? settlement.Quantity
+                    : 0),
+                group.Sum(settlement => settlement.SettlementType == TransferTransitSettlementType.Quarantined
+                    ? settlement.Quantity
+                    : 0),
+                group.Sum(settlement => settlement.SettlementType == TransferTransitSettlementType.Returned
+                    ? settlement.Quantity
+                    : 0),
+                group.Sum(settlement => settlement.Quantity),
+                group.Sum(settlement => settlement.SettlementType == TransferTransitSettlementType.Received
+                    ? settlement.TotalValue
+                    : 0m),
+                group.Sum(settlement => settlement.SettlementType == TransferTransitSettlementType.Quarantined
+                    ? settlement.TotalValue
+                    : 0m),
+                group.Sum(settlement => settlement.SettlementType == TransferTransitSettlementType.Returned
+                    ? settlement.TotalValue
+                    : 0m),
+                group.Sum(settlement => settlement.TotalValue)))
+            .ToListAsync(cancellationToken);
+
+        var dispatchTransactionVariances = await (
+                from entry in dispatchEntries
+                join stock in db.StockTransactions.AsNoTracking()
+                    on new { entry.StockTransactionId, entry.TenantId }
+                    equals new { StockTransactionId = stock.Id, stock.TenantId }
+                group new { Entry = entry, Stock = stock } by entry.TransferOrderLineId into g
+                select new QuantityVariance(
+                    g.Key,
+                    g.Sum(row => Math.Abs(row.Entry.Quantity -
+                        (row.Stock.TransactionType == TransactionType.TransferDispatch &&
+                         row.Stock.ItemId == row.Entry.ItemId &&
+                         row.Stock.FromLocationId == row.Entry.FromLocationId &&
+                         row.Stock.ToLocationId == row.Entry.ToLocationId
+                            ? row.Stock.Quantity
+                            : 0)))))
+            .ToListAsync(cancellationToken);
+
+        var settlementTransactionVariances = await (
+                from settlement in settlementEntries
+                join stock in db.StockTransactions.AsNoTracking()
+                    on new { settlement.StockTransactionId, settlement.TenantId }
+                    equals new { StockTransactionId = stock.Id, stock.TenantId }
+                group new { Settlement = settlement, Stock = stock } by settlement.TransferOrderLineId into g
+                select new QuantityVariance(
+                    g.Key,
+                    g.Sum(row => Math.Abs(row.Settlement.Quantity -
+                        (row.Stock.TransactionType == (row.Settlement.SettlementType ==
+                                                       TransferTransitSettlementType.Returned
+                                ? TransactionType.TransferReturn
+                                : TransactionType.TransferReceipt) &&
+                         row.Stock.ItemId == row.Settlement.ItemId &&
+                         row.Stock.FromLocationId == (row.Settlement.SettlementType ==
+                                                       TransferTransitSettlementType.Returned
+                                ? row.Settlement.ToLocationId
+                                : row.Settlement.FromLocationId) &&
+                         row.Stock.ToLocationId == (row.Settlement.SettlementType ==
+                                                     TransferTransitSettlementType.Returned
+                                ? row.Settlement.FromLocationId
+                                : row.Settlement.ToLocationId)
+                            ? row.Stock.Quantity
+                            : 0)))))
+            .ToListAsync(cancellationToken);
+
+        var eventTransactionIds = dispatchEntries.Select(entry => entry.StockTransactionId)
+            .Concat(settlementEntries.Select(settlement => settlement.StockTransactionId));
+        var valuationPostings = db.StockValuationEntries.AsNoTracking()
+            .Where(posting => posting.TenantId == tenantId &&
+                              eventTransactionIds.Contains(posting.StockTransactionId))
+            .GroupBy(posting => new
+            {
+                posting.StockTransactionId,
+                posting.EntryType,
+                posting.ItemId,
+                posting.LocationId
+            })
+            .Select(group => new ValuationPosting(
+                group.Key.StockTransactionId,
+                group.Key.EntryType,
+                group.Key.ItemId,
+                group.Key.LocationId,
+                group.Count(),
+                group.Sum(posting => posting.Quantity),
+                group.Sum(posting => posting.TotalValue)));
+
+        var dispatchValuationVariances = await (
+                from entry in dispatchEntries
+                join posting in valuationPostings
+                    on new
+                    {
+                        entry.StockTransactionId,
+                        EntryType = StockValuationEntryType.TransferOut,
+                        entry.ItemId,
+                        LocationId = entry.FromLocationId
+                    }
+                    equals new
+                    {
+                        posting.StockTransactionId,
+                        posting.EntryType,
+                        posting.ItemId,
+                        posting.LocationId
+                    }
+                    into matchingPostings
+                from posting in matchingPostings.DefaultIfEmpty()
+                group new
+                {
+                    entry.TransferOrderLineId,
+                    ExpectedQuantity = entry.Quantity,
+                    ExpectedValue = entry.TotalValue,
+                    PostingCount = posting == null ? 0 : posting.Count,
+                    PostingQuantity = posting == null ? 0 : posting.Quantity,
+                    PostingValue = posting == null ? 0m : posting.TotalValue
+                } by entry.TransferOrderLineId into g
+                select new ValuationVariance(
+                    g.Key,
+                    g.Sum(row => Math.Abs(1 - row.PostingCount)),
+                    g.Sum(row => Math.Abs(row.ExpectedQuantity - row.PostingQuantity)),
+                    g.Sum(row => Math.Abs(row.ExpectedValue - row.PostingValue))))
+            .ToListAsync(cancellationToken);
+
+        var settlementValuationVariances = await (
+                from settlement in settlementEntries
+                join posting in valuationPostings
+                    on new
+                    {
+                        settlement.StockTransactionId,
+                        EntryType = settlement.SettlementType == TransferTransitSettlementType.Returned
+                            ? StockValuationEntryType.TransferReturn
+                            : StockValuationEntryType.TransferIn,
+                        settlement.ItemId,
+                        LocationId = settlement.SettlementType == TransferTransitSettlementType.Returned
+                            ? settlement.FromLocationId
+                            : settlement.ToLocationId
+                    }
+                    equals new
+                    {
+                        posting.StockTransactionId,
+                        posting.EntryType,
+                        posting.ItemId,
+                        posting.LocationId
+                    }
+                    into matchingPostings
+                from posting in matchingPostings.DefaultIfEmpty()
+                group new
+                {
+                    settlement.TransferOrderLineId,
+                    ExpectedQuantity = settlement.Quantity,
+                    ExpectedValue = settlement.TotalValue,
+                    PostingCount = posting == null ? 0 : posting.Count,
+                    PostingQuantity = posting == null ? 0 : posting.Quantity,
+                    PostingValue = posting == null ? 0m : posting.TotalValue
+                } by settlement.TransferOrderLineId into g
+                select new ValuationVariance(
+                    g.Key,
+                    g.Sum(row => Math.Abs(1 - row.PostingCount)),
+                    g.Sum(row => Math.Abs(row.ExpectedQuantity - row.PostingQuantity)),
+                    g.Sum(row => Math.Abs(row.ExpectedValue - row.PostingValue))))
+            .ToListAsync(cancellationToken);
+
+        var settlementByTransitEntry = settlementEntries
+            .GroupBy(settlement => settlement.TransferTransitEntryId)
+            .Select(group => new TransitSettlementTotal(
+                group.Key,
+                group.Sum(settlement => settlement.Quantity)));
+        var oldestOutstanding = await (
+                from entry in dispatchEntries
+                join settlement in settlementByTransitEntry
+                    on entry.Id equals settlement.TransferTransitEntryId into matchingSettlements
+                from settlement in matchingSettlements.DefaultIfEmpty()
+                where entry.Quantity > (settlement == null ? 0 : settlement.Quantity)
+                group new { entry.Id, entry.DispatchedAt } by entry.TransferOrderLineId into g
+                select g.OrderBy(entry => entry.DispatchedAt)
+                    .ThenBy(entry => entry.Id)
+                    .Select(entry => new OutstandingDispatch(g.Key, entry.Id, entry.DispatchedAt))
+                    .First())
+            .ToListAsync(cancellationToken);
+
+        var dispatchActions = dispatchEntries.Select(entry => new TransitAction(
+            entry.TransferOrderLineId,
+            entry.DispatchedAt,
+            0,
+            entry.Id,
+            "Dispatched",
+            entry.DispatchedBy));
+        var settlementActions = settlementEntries.Select(settlement => new TransitAction(
+            settlement.TransferOrderLineId,
+            settlement.SettledAt,
+            1,
+            settlement.Id,
+            settlement.SettlementType == TransferTransitSettlementType.Received
+                ? "Received"
+                : settlement.SettlementType == TransferTransitSettlementType.Quarantined
+                    ? "Quarantined"
+                    : "Returned",
+            settlement.SettledBy));
+        var latestActions = await dispatchActions.Concat(settlementActions)
+            .GroupBy(action => action.TransferOrderLineId)
+            .Select(group => group.OrderByDescending(action => action.At)
+                .ThenByDescending(action => action.Priority)
+                .ThenByDescending(action => action.Id)
+                .First())
+            .ToListAsync(cancellationToken);
+
+        var reservationByKey = reservations.ToDictionary(
+            reservation => (reservation.SourceLineReference, reservation.ItemId, reservation.LocationId),
+            reservation => reservation.Quantity);
+        var dispatchByLine = dispatchTotals.ToDictionary(total => total.TransferOrderLineId);
+        var settlementByLine = settlementTotals.ToDictionary(total => total.TransferOrderLineId);
+        var dispatchTransactionByLine = dispatchTransactionVariances.ToDictionary(total => total.TransferOrderLineId);
+        var settlementTransactionByLine = settlementTransactionVariances.ToDictionary(total => total.TransferOrderLineId);
+        var dispatchValuationByLine = dispatchValuationVariances.ToDictionary(total => total.TransferOrderLineId);
+        var settlementValuationByLine = settlementValuationVariances.ToDictionary(total => total.TransferOrderLineId);
+        var oldestOutstandingByLine = oldestOutstanding.ToDictionary(entry => entry.TransferOrderLineId);
+        var latestActionByLine = latestActions.ToDictionary(action => action.TransferOrderLineId);
+
+        var rows = selected.Select(row =>
+        {
+            var line = row.Line;
+            var order = row.Order;
+            var lineId = line.Id;
+            var dispatched = dispatchByLine.GetValueOrDefault(lineId) ?? DispatchTotal.Empty(lineId);
+            var settled = settlementByLine.GetValueOrDefault(lineId) ?? SettlementTotal.Empty(lineId);
+            var dispatchTransaction = dispatchTransactionByLine.GetValueOrDefault(lineId);
+            var settlementTransaction = settlementTransactionByLine.GetValueOrDefault(lineId);
+            var dispatchValuation = dispatchValuationByLine.GetValueOrDefault(lineId);
+            var settlementValuation = settlementValuationByLine.GetValueOrDefault(lineId);
+            var oldest = oldestOutstandingByLine.GetValueOrDefault(lineId);
+            var latest = latestActionByLine.GetValueOrDefault(lineId);
+            var outstandingQuantity = dispatched.Quantity - settled.Quantity;
+            var outstandingValue = dispatched.Value - settled.Value;
+            var reservedQuantity = reservationByKey.GetValueOrDefault(
+                (line.ReservationSourceLineReference, line.ItemId, order.FromLocationId));
+
+            return new TransferAgingReconciliationLine(
+                order.Id,
+                order.DocumentId.Value,
+                order.Status,
+                order.CompanyId,
+                order.FromLocationId,
+                order.ToLocationId,
+                line.Id,
+                line.DocumentLineId.Value,
+                line.ItemId,
+                line.Quantity,
+                reservedQuantity,
+                dispatched.Quantity,
+                line.DispatchedQuantity - dispatched.Quantity,
+                settled.ReceivedQuantity,
+                settled.QuarantinedQuantity,
+                settled.ReturnedQuantity,
+                outstandingQuantity,
+                dispatched.Quantity - settled.ReceivedQuantity - settled.QuarantinedQuantity -
+                settled.ReturnedQuantity - outstandingQuantity,
+                dispatched.Quantity == 0 ? null : RoundCost(dispatched.Value / dispatched.Quantity),
+                outstandingQuantity <= 0 ? null : RoundCost(outstandingValue / outstandingQuantity),
+                dispatched.Value,
+                settled.ReceivedValue,
+                settled.QuarantinedValue,
+                settled.ReturnedValue,
+                outstandingValue,
+                dispatched.Value - settled.ReceivedValue - settled.QuarantinedValue -
+                settled.ReturnedValue - outstandingValue,
+                dispatchTransaction?.Difference ?? 0,
+                dispatchValuation?.ValueVariance ?? 0m,
+                dispatchValuation?.PostingCountVariance ?? 0,
+                dispatchValuation?.QuantityVariance ?? 0,
+                settlementTransaction?.Difference ?? 0,
+                settlementValuation?.ValueVariance ?? 0m,
+                settlementValuation?.PostingCountVariance ?? 0,
+                settlementValuation?.QuantityVariance ?? 0,
+                oldest?.DispatchedAt,
+                oldest is null ? null : Math.Max(0, (int)(asOf - oldest.DispatchedAt).TotalDays),
+                latest?.Name,
+                latest?.Actor,
+                latest?.At);
+        }).ToArray();
 
         await transaction.CommitAsync(cancellationToken);
         return new TransferAgingReconciliationPage(
@@ -128,174 +383,68 @@ public sealed class TransferAgingReconciliationService(InventoryDbContext db)
             hasMore ? selected[^1].Line.Id : null);
     }
 
-    private static TransferAgingReconciliationLine BuildLine(
-        TransferOrderLine line,
-        TransferOrder order,
-        IReadOnlyCollection<ReservationSlice> reservations,
-        IReadOnlyCollection<TransferTransitEntry> transitEntries,
-        IReadOnlyCollection<TransferTransitSettlement> settlements,
-        IReadOnlyDictionary<int, StockTransaction> transactionsById,
-        IReadOnlyDictionary<int, StockValuationEntry[]> valuationByTransactionId,
-        DateTimeOffset asOf)
+    private sealed record ReservationTotal(
+        string SourceLineReference,
+        int ItemId,
+        int LocationId,
+        int Quantity);
+
+    private sealed record DispatchTotal(
+        int TransferOrderLineId,
+        int EventCount,
+        int Quantity,
+        decimal Value)
     {
-        var lineReservations = reservations.Where(reservation =>
-                reservation.SourceLineReference == line.ReservationSourceLineReference &&
-                reservation.ItemId == line.ItemId &&
-                reservation.LocationId == order.FromLocationId)
-            .Sum(reservation => Math.Max(0, reservation.Remaining));
-
-        var settlementsByEntry = settlements
-            .GroupBy(settlement => settlement.TransferTransitEntryId)
-            .ToDictionary(group => group.Key, group => group.ToArray());
-        var outstandingByEntry = transitEntries.Select(entry =>
-        {
-            var entrySettlements = settlementsByEntry.TryGetValue(entry.Id, out var recorded)
-                ? recorded
-                : [];
-            return new
-            {
-                Entry = entry,
-                Quantity = entry.Quantity - entrySettlements.Sum(settlement => settlement.Quantity),
-                Value = entry.TotalValue - entrySettlements.Sum(settlement => settlement.TotalValue)
-            };
-        }).ToArray();
-
-        var dispatchedQuantity = transitEntries.Sum(entry => entry.Quantity);
-        var receivedQuantity = settlements
-            .Where(settlement => settlement.SettlementType == TransferTransitSettlementType.Received)
-            .Sum(settlement => settlement.Quantity);
-        var quarantinedQuantity = settlements
-            .Where(settlement => settlement.SettlementType == TransferTransitSettlementType.Quarantined)
-            .Sum(settlement => settlement.Quantity);
-        var returnedQuantity = settlements
-            .Where(settlement => settlement.SettlementType == TransferTransitSettlementType.Returned)
-            .Sum(settlement => settlement.Quantity);
-        var outstandingQuantity = outstandingByEntry.Sum(entry => entry.Quantity);
-
-        var dispatchedValue = transitEntries.Sum(entry => entry.TotalValue);
-        var receivedValue = settlements
-            .Where(settlement => settlement.SettlementType == TransferTransitSettlementType.Received)
-            .Sum(settlement => settlement.TotalValue);
-        var quarantinedValue = settlements
-            .Where(settlement => settlement.SettlementType == TransferTransitSettlementType.Quarantined)
-            .Sum(settlement => settlement.TotalValue);
-        var returnedValue = settlements
-            .Where(settlement => settlement.SettlementType == TransferTransitSettlementType.Returned)
-            .Sum(settlement => settlement.TotalValue);
-        var outstandingValue = outstandingByEntry.Sum(entry => entry.Value);
-        var settlementQuantity = settlements.Sum(settlement => settlement.Quantity);
-        var settlementValue = settlements.Sum(settlement => settlement.TotalValue);
-
-        var dispatchLedgerQuantity = transitEntries.Sum(entry =>
-            transactionsById.TryGetValue(entry.StockTransactionId, out var transaction) &&
-            transaction.TransactionType == TransactionType.TransferDispatch &&
-            transaction.ItemId == entry.ItemId &&
-            transaction.FromLocationId == entry.FromLocationId &&
-            transaction.ToLocationId == entry.ToLocationId
-                ? transaction.Quantity
-                : 0);
-        var settlementLedgerQuantity = settlements.Sum(settlement =>
-        {
-            var isReturn = settlement.SettlementType == TransferTransitSettlementType.Returned;
-            return transactionsById.TryGetValue(settlement.StockTransactionId, out var transaction) &&
-                   transaction.TransactionType == (isReturn ? TransactionType.TransferReturn : TransactionType.TransferReceipt) &&
-                   transaction.ItemId == settlement.ItemId &&
-                   transaction.FromLocationId == (isReturn ? settlement.ToLocationId : settlement.FromLocationId) &&
-                   transaction.ToLocationId == (isReturn ? settlement.FromLocationId : settlement.ToLocationId)
-                ? transaction.Quantity
-                : 0;
-        });
-        var dispatchLedgerValue = transitEntries.Sum(entry =>
-            valuationByTransactionId.TryGetValue(entry.StockTransactionId, out var postings)
-                ? postings.Where(posting => posting.EntryType == StockValuationEntryType.TransferOut &&
-                                           posting.ItemId == entry.ItemId &&
-                                           posting.LocationId == entry.FromLocationId)
-                    .Sum(posting => posting.TotalValue)
-                : 0m);
-        var settlementLedgerValue = settlements.Sum(settlement =>
-        {
-            var isReturn = settlement.SettlementType == TransferTransitSettlementType.Returned;
-            return valuationByTransactionId.TryGetValue(settlement.StockTransactionId, out var postings)
-                ? postings.Where(posting =>
-                        posting.EntryType == (isReturn
-                            ? StockValuationEntryType.TransferReturn
-                            : StockValuationEntryType.TransferIn) &&
-                        posting.ItemId == settlement.ItemId &&
-                        posting.LocationId == (isReturn ? settlement.FromLocationId : settlement.ToLocationId))
-                    .Sum(posting => posting.TotalValue)
-                : 0m;
-        });
-
-        var oldestOutstanding = outstandingByEntry
-            .Where(entry => entry.Quantity > 0)
-            .OrderBy(entry => entry.Entry.DispatchedAt)
-            .ThenBy(entry => entry.Entry.Id)
-            .FirstOrDefault();
-        var latestAction = transitEntries
-            .Select(entry => new TransitAction(entry.DispatchedAt, 0, entry.Id, "Dispatched", entry.DispatchedBy))
-            .Concat(settlements.Select(settlement => new TransitAction(
-                settlement.SettledAt,
-                1,
-                settlement.Id,
-                settlement.SettlementType.ToString(),
-                settlement.SettledBy)))
-            .OrderByDescending(action => action.At)
-            .ThenByDescending(action => action.Priority)
-            .ThenByDescending(action => action.Id)
-            .FirstOrDefault();
-
-        return new TransferAgingReconciliationLine(
-            order.Id,
-            order.DocumentId.Value,
-            order.Status,
-            order.CompanyId,
-            order.FromLocationId,
-            order.ToLocationId,
-            line.Id,
-            line.DocumentLineId.Value,
-            line.ItemId,
-            line.Quantity,
-            lineReservations,
-            dispatchedQuantity,
-            line.DispatchedQuantity - dispatchedQuantity,
-            receivedQuantity,
-            quarantinedQuantity,
-            returnedQuantity,
-            outstandingQuantity,
-            dispatchedQuantity - receivedQuantity - quarantinedQuantity - returnedQuantity - outstandingQuantity,
-            dispatchedQuantity == 0 ? null : RoundCost(dispatchedValue / dispatchedQuantity),
-            outstandingQuantity <= 0 ? null : RoundCost(outstandingValue / outstandingQuantity),
-            dispatchedValue,
-            receivedValue,
-            quarantinedValue,
-            returnedValue,
-            outstandingValue,
-            dispatchedValue - receivedValue - quarantinedValue - returnedValue - outstandingValue,
-            dispatchedQuantity - dispatchLedgerQuantity,
-            dispatchedValue - dispatchLedgerValue,
-            settlementQuantity - settlementLedgerQuantity,
-            settlementValue - settlementLedgerValue,
-            oldestOutstanding?.Entry.DispatchedAt,
-            oldestOutstanding is null
-                ? null
-                : Math.Max(0, (int)(asOf - oldestOutstanding.Entry.DispatchedAt).TotalDays),
-            latestAction?.Name,
-            latestAction?.Actor,
-            latestAction?.At);
+        public static DispatchTotal Empty(int transferOrderLineId) => new(transferOrderLineId, 0, 0, 0m);
     }
 
+    private sealed record SettlementTotal(
+        int TransferOrderLineId,
+        int EventCount,
+        int ReceivedQuantity,
+        int QuarantinedQuantity,
+        int ReturnedQuantity,
+        int Quantity,
+        decimal ReceivedValue,
+        decimal QuarantinedValue,
+        decimal ReturnedValue,
+        decimal Value)
+    {
+        public static SettlementTotal Empty(int transferOrderLineId) =>
+            new(transferOrderLineId, 0, 0, 0, 0, 0, 0m, 0m, 0m, 0m);
+    }
+
+    private sealed record QuantityVariance(int TransferOrderLineId, int Difference);
+
+    private sealed record ValuationPosting(
+        int StockTransactionId,
+        StockValuationEntryType EntryType,
+        int ItemId,
+        int LocationId,
+        int Count,
+        int Quantity,
+        decimal TotalValue);
+
+    private sealed record ValuationVariance(
+        int TransferOrderLineId,
+        int PostingCountVariance,
+        int QuantityVariance,
+        decimal ValueVariance);
+
+    private sealed record TransitSettlementTotal(int TransferTransitEntryId, int Quantity);
+
+    private sealed record OutstandingDispatch(
+        int TransferOrderLineId,
+        int TransferTransitEntryId,
+        DateTimeOffset DispatchedAt);
+
     private sealed record TransitAction(
+        int TransferOrderLineId,
         DateTimeOffset At,
         int Priority,
         int Id,
         string Name,
         string Actor);
-
-    private sealed record ReservationSlice(
-        string SourceLineReference,
-        int ItemId,
-        int LocationId,
-        int Remaining);
 
     private static decimal RoundCost(decimal value) =>
         decimal.Round(value, 6, MidpointRounding.AwayFromZero);
