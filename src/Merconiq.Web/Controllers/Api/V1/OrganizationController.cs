@@ -23,6 +23,7 @@ public sealed class OrganizationController(
     ICurrentUserAuthorization authorization) : ControllerBase
 {
     private const int MaximumUnitExportPageSize = 100;
+    private const int MaximumItemExportPageSize = 100;
 
     [HttpGet("companies")]
     [Authorize(Policy = CapabilityPolicies.View)]
@@ -332,6 +333,89 @@ public sealed class OrganizationController(
             hasMore ? rows[^1].ExternalId : null,
             rows);
         return Ok(ApiResponse<UnitOfMeasureExportResponse>.CreateSuccess(response));
+    }
+
+    /// <summary>Export a bounded page of tenant item masters with known source IDs.</summary>
+    /// <remarks>
+    /// Requires the tenant Admin role. Items are tenant-scoped and have no company ownership field, so
+    /// this endpoint returns the authenticated tenant's catalog without inventing a company assignment.
+    /// Unit source IDs that are synthetic legacy placeholders are returned as null.
+    /// </remarks>
+    /// <param name="items">Tenant-filtered item repository.</param>
+    /// <param name="tenantContext">Tenant resolved for the authenticated request.</param>
+    /// <param name="cancellationToken">Cancels the export query.</param>
+    /// <param name="afterExternalId">Optional continuation cursor, at most 128 characters.</param>
+    /// <param name="pageSize">Maximum number of records, from 1 through 100; defaults to 50.</param>
+    /// <returns>Known source IDs and stable item quantity conventions for the requested page.</returns>
+    [HttpGet("items/export")]
+    [Authorize(Policy = CapabilityPolicies.TenantAdministrator)]
+    [ProducesResponseType(typeof(ApiResponse<ItemMasterExportResponse>), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> ExportItems(
+        [FromServices] IRepository<Item> items,
+        [FromServices] ITenantContext tenantContext,
+        CancellationToken cancellationToken,
+        [FromQuery] string? afterExternalId = null,
+        [FromQuery] int pageSize = 50)
+    {
+        if (pageSize is < 1 or > MaximumItemExportPageSize)
+        {
+            return BadRequest(ApiResponse<object>.CreateFailure(
+                $"pageSize must be between 1 and {MaximumItemExportPageSize}."));
+        }
+
+        if (afterExternalId?.Length > 128)
+        {
+            return BadRequest(ApiResponse<object>.CreateFailure(
+                "afterExternalId must be at most 128 characters."));
+        }
+
+        var legacyUnitPrefix = MasterDataImportConventions.LegacyUnmappedUnitExternalIdPrefix;
+        var query = items.Query()
+            .Where(item => item.TenantId == tenantContext.TenantId &&
+                           !item.IsDeleted &&
+                           item.ExternalId != null &&
+                           item.ExternalId.Trim() != string.Empty);
+        if (afterExternalId is not null)
+        {
+            query = query.Where(item => item.ExternalId!.CompareTo(afterExternalId) > 0);
+        }
+
+        var rows = await query
+            .OrderBy(item => item.ExternalId)
+            .Take(pageSize + 1)
+            .Select(item => new ItemMasterExportRecord(
+                item.ExternalId!,
+                item.ItemCode,
+                item.Description,
+                item.BaseUnit != null && !item.BaseUnit.ExternalId.StartsWith(legacyUnitPrefix)
+                    ? item.BaseUnit.ExternalId
+                    : null,
+                item.PurchaseUnit != null && !item.PurchaseUnit.ExternalId.StartsWith(legacyUnitPrefix)
+                    ? item.PurchaseUnit.ExternalId
+                    : null,
+                item.SalesUnit != null && !item.SalesUnit.ExternalId.StartsWith(legacyUnitPrefix)
+                    ? item.SalesUnit.ExternalId
+                    : null,
+                item.PurchaseToBaseFactor,
+                item.SalesToBaseFactor,
+                item.QuantityPrecision,
+                item.WholeUnitOnly,
+                item.IsActive))
+            .ToListAsync(cancellationToken);
+
+        var hasMore = rows.Count > pageSize;
+        if (hasMore)
+        {
+            rows.RemoveAt(rows.Count - 1);
+        }
+
+        var response = new ItemMasterExportResponse(
+            pageSize,
+            hasMore,
+            hasMore ? rows[^1].ExternalId : null,
+            rows);
+        return Ok(ApiResponse<ItemMasterExportResponse>.CreateSuccess(response));
     }
 
     [HttpPost("items/import")]

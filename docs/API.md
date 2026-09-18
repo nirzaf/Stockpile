@@ -114,6 +114,7 @@ Webhook administration is restricted to `Admin` and `Manager`.
 | POST | `/api/v1/organization/suppliers/import` | Company `Edit` | `200` or `422` |
 | POST | `/api/v1/organization/units/import` | Tenant `Admin` plus `CompanyId` | `200` or `422` |
 | GET | `/api/v1/organization/units/export` | Tenant `Admin` | `200` or `400` |
+| GET | `/api/v1/organization/items/export` | Tenant `Admin` | `200` or `400` |
 | POST | `/api/v1/organization/items/import` | Company `Edit` plus `CompanyId` | `200` or `422` |
 
 ### Tenant unit source-ID export
@@ -148,6 +149,61 @@ ID because their original source ID is unknown—are omitted.
         "name": "Each",
         "decimalPlaces": 0,
         "isWholeUnitOnly": true
+      }
+    ]
+  },
+  "errorMessage": null,
+  "errors": null
+}
+```
+
+### Tenant item-master source-ID export
+
+`GET /api/v1/organization/items/export` requires an API JWT and the tenant
+`Admin` role. Items are currently tenant-scoped and have no company ownership
+field. The endpoint therefore returns the authenticated tenant's catalog only
+to its tenant administrator; it does not infer company ownership or accept a
+company filter. Company capability membership alone does not authorize this
+tenant-wide export.
+
+| Query parameter | Default | Bounds / meaning |
+| --- | --- | --- |
+| `pageSize` | `50` | `1`–`100` records per response; values outside this range return `400`. |
+| `afterExternalId` | omitted | Optional keyset cursor, at most 128 characters. Pass the previous response's `nextCursor` unchanged to continue after that source ID; longer values return `400`. |
+
+The response uses the standard API envelope. `items` are ordered by `externalId`
+and contain only `externalId`, `itemCode`, `description`, the base/purchase/sales
+unit source IDs when known, `purchaseToBaseFactor`, `salesToBaseFactor`,
+`quantityPrecision`, `wholeUnitOnly`, and `isActive`. Items with missing or
+blank source IDs are omitted. Synthetic legacy unit source IDs are returned as
+`null`, not as if they were identifiers from an upstream system. The export
+does not include internal entity, tenant or company IDs, prices/costs, supplier
+details, barcodes, stock, or reorder levels. It is not a complete import
+round-trip format.
+
+`hasMore` indicates whether another page exists. `nextCursor` is the last
+returned item's `externalId` when more rows remain, otherwise `null`.
+
+```json
+{
+  "success": true,
+  "data": {
+    "pageSize": 1,
+    "hasMore": true,
+    "nextCursor": "item-001",
+    "items": [
+      {
+        "externalId": "item-001",
+        "itemCode": "SKU-001",
+        "description": "Widget",
+        "baseUnitExternalId": "unit-each",
+        "purchaseUnitExternalId": null,
+        "salesUnitExternalId": "unit-each",
+        "purchaseToBaseFactor": 1.0,
+        "salesToBaseFactor": 1.0,
+        "quantityPrecision": 0,
+        "wholeUnitOnly": true,
+        "isActive": true
       }
     ]
   },
