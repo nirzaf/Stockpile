@@ -39,7 +39,7 @@
 
 @if (_po is null)
 {
-    <MudProgressCircular Color="Color.Primary" Indeterminate="true" aria-label="Loading purchase order" />
+    <MudProgressCircular Color="Color.Primary" Indeterminate="true" aria-label="@L["Loading purchase order"]" />
 }
 else
 {
@@ -220,17 +220,12 @@ else
                 return;
             }
 
-            try
-            {
-                await POService.UpdateStatusAsync(_po.Id, newStatus.ToString());
-            }
-            catch (Exception exception)
-            {
-                SetStatusUpdateFailure(exception);
-                return;
-            }
-
+            await POService.UpdateStatusAsync(_po.Id, newStatus.ToString());
             SetStatusFeedback(L["Purchase-order status updated."], Severity.Success);
+        }
+        catch (Exception exception)
+        {
+            SetStatusUpdateFailure(exception);
         }
         finally
         {

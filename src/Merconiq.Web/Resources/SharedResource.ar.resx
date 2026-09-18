@@ -24,6 +24,7 @@
   <data name="Arabic" xml:space="preserve"><value>العربية</value></data>
   <data name="An unhandled error has occurred." xml:space="preserve"><value>حدث خطأ غير متوقع.</value></data>
   <data name="Reload" xml:space="preserve"><value>إعادة تحميل</value></data>
+  <data name="Loading purchase order" xml:space="preserve"><value>جارٍ تحميل أمر الشراء</value></data>
   <data name="Dismiss" xml:space="preserve"><value>إغلاق</value></data>
   <data name="Updating purchase-order status…" xml:space="preserve"><value>جارٍ تحديث حالة أمر الشراء…</value></data>
   <data name="Purchase-order status updated." xml:space="preserve"><value>تم تحديث حالة أمر الشراء.</value></data>

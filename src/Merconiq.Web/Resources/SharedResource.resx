@@ -24,6 +24,7 @@
   <data name="Arabic" xml:space="preserve"><value>Arabic</value></data>
   <data name="An unhandled error has occurred." xml:space="preserve"><value>An unhandled error has occurred.</value></data>
   <data name="Reload" xml:space="preserve"><value>Reload</value></data>
+  <data name="Loading purchase order" xml:space="preserve"><value>Loading purchase order</value></data>
   <data name="Dismiss" xml:space="preserve"><value>Dismiss</value></data>
   <data name="Updating purchase-order status…" xml:space="preserve"><value>Updating purchase-order status…</value></data>
   <data name="Purchase-order status updated." xml:space="preserve"><value>Purchase-order status updated.</value></data>
