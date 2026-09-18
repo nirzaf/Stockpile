@@ -155,8 +155,9 @@ public sealed class CookieAuthenticationWebApplicationFactory : CustomWebApplica
         {
             services.AddAuthentication(options =>
             {
-                options.DefaultAuthenticateScheme = IdentityConstants.ApplicationScheme;
-                options.DefaultChallengeScheme = IdentityConstants.ApplicationScheme;
+                options.DefaultAuthenticateScheme = ApiAwareAuthenticationSchemeSelector.SchemeName;
+                options.DefaultChallengeScheme = ApiAwareAuthenticationSchemeSelector.SchemeName;
+                options.DefaultForbidScheme = ApiAwareAuthenticationSchemeSelector.SchemeName;
             });
             services.Configure<SecurityStampValidatorOptions>(options =>
                 options.ValidationInterval = TimeSpan.Zero);

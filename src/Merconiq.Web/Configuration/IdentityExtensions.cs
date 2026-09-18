@@ -107,6 +107,13 @@ public static class IdentityExtensions
         services.AddAuthentication(options =>
         {
             options.DefaultScheme = IdentityConstants.ApplicationScheme;
+            options.DefaultAuthenticateScheme = ApiAwareAuthenticationSchemeSelector.SchemeName;
+            options.DefaultChallengeScheme = ApiAwareAuthenticationSchemeSelector.SchemeName;
+            options.DefaultForbidScheme = ApiAwareAuthenticationSchemeSelector.SchemeName;
+        })
+        .AddPolicyScheme(ApiAwareAuthenticationSchemeSelector.SchemeName, "Application or API bearer", options =>
+        {
+            options.ForwardDefaultSelector = ApiAwareAuthenticationSchemeSelector.Select;
         })
         .AddJwtBearer(options =>
         {
