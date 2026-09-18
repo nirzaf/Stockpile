@@ -676,10 +676,10 @@ public sealed class CompanyCapabilityPostgreSqlApiTests(PostgreSqlIntegrationFix
 
 internal sealed class PostgreSqlCompanyApiFactory(
     PostgreSqlIntegrationFixture fixture,
-    string applicationName = "merconiq-company-api")
+    string applicationName = "merconiq-company-api",
+    string testTenantId = "test-tenant")
     : WebApplicationFactory<Merconiq.Web.Program>
 {
-    private const string TestTenantId = "test-tenant";
     private const string TestJwtSecret = "testing-only-jwt-secret-with-at-least-32-bytes";
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
@@ -697,7 +697,7 @@ internal sealed class PostgreSqlCompanyApiFactory(
             services.AddScoped<TenantContext>(_ =>
             {
                 var context = new TenantContext();
-                context.SetTenant(TestTenantId);
+                context.SetTenant(testTenantId);
                 return context;
             });
         });
@@ -715,10 +715,10 @@ internal sealed class PostgreSqlCompanyApiFactory(
             user = new ApplicationUser
             {
                 Id = userId,
-                UserName = $"postgres-company-capability-{role.ToLowerInvariant()}-{suffix}@test-tenant.test",
-                Email = $"postgres-company-capability-{role.ToLowerInvariant()}-{suffix}@test-tenant.test",
+                UserName = $"postgres-company-capability-{role.ToLowerInvariant()}-{suffix}@{testTenantId}.test",
+                Email = $"postgres-company-capability-{role.ToLowerInvariant()}-{suffix}@{testTenantId}.test",
                 EmailConfirmed = true,
-                TenantId = TestTenantId
+                TenantId = testTenantId
             };
             var create = await userManager.CreateAsync(user);
             if (!create.Succeeded)
@@ -754,7 +754,7 @@ internal sealed class PostgreSqlCompanyApiFactory(
         var tokenHandler = new JwtSecurityTokenHandler();
         var token = tokenHandler.CreateToken(new SecurityTokenDescriptor
         {
-            Subject = new ClaimsIdentity(JwtClaimsFactory.Create(user, TestTenantId, [role])),
+            Subject = new ClaimsIdentity(JwtClaimsFactory.Create(user, testTenantId, [role])),
             Expires = DateTime.UtcNow.AddMinutes(5),
             Issuer = "Merconiq",
             Audience = "Merconiq",

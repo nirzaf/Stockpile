@@ -94,6 +94,7 @@ Webhook administration is restricted to `Admin` and `Manager`.
 | GET | `/api/v1/stock/in-hand/{itemId}/{locationId}` | Any API JWT | `200` or `404` |
 | GET | `/api/v1/stock/transactions` | Any API JWT | `200` |
 | GET | `/api/v1/stock/valuation` | Any API JWT | `200` |
+| GET | `/api/v1/transfer-orders/aging?pageSize=50` | Company `View` capability | `200` or `400` |
 | POST | `/api/v1/stock/receive` | `Admin`, `Manager`, or `Staff` | `204` with an idempotency key; otherwise `400` |
 | POST | `/api/v1/stock/transfer` | `Admin`, `Manager`, or `Staff` | `204` |
 | POST | `/api/v1/stock/sell` | `Admin`, `Manager`, or `Staff` | `204` |
@@ -461,3 +462,52 @@ the unsettled dispatched quantity, and idempotent. The order reports
 all ordered quantity has been dispatched and every dispatched unit has been
 received, quarantined, or returned. Lot/expiry inputs must match the dispatched
 entry.
+
+## Transfer aging and conservation
+
+`GET /api/v1/transfer-orders/aging` returns at most 100 transfer-order lines
+per page, ordered by line ID. `pageSize` defaults to 50; `afterLineId` is an
+exclusive keyset cursor returned as `nextAfterLineId`. An optional `companyId`
+narrows the report and is rejected unless the caller currently has that
+company's `View` capability. The query uses the authenticated tenant's data
+filter and the caller's fresh company grants; completed and cancelled orders
+are included when their lines fall in the requested page.
+
+Each row reports ordered quantity, currently active/non-expired reservation
+quantity, immutable dispatch quantity/value, received, quarantined, returned,
+and outstanding transit quantity/value. Outstanding value is each dispatch's
+captured transit total less its persisted settlements. Quantity and value
+conservation variance are dispatch totals less received, quarantined, returned
+and outstanding amounts. Separate dispatch/settlement ledger variances compare
+each transit event with its linked stock transaction and valuation posting.
+`dispatchLedgerQuantityVariance` and `settlementLedgerQuantityVariance` sum the
+absolute per-event difference between transit quantity and the linked stock
+transaction. `dispatchLedgerValueVariance` and
+`settlementLedgerValueVariance` sum the absolute per-event difference between
+transit value and matching valuation value. The corresponding
+`dispatchValuationPostingCountVariance` / `settlementValuationPostingCountVariance`
+sum missing or extra matching valuation postings per event, while
+`dispatchValuationQuantityVariance` / `settlementValuationQuantityVariance`
+sum per-event valuation-quantity differences, including zero-value events. A
+missing event cannot be hidden by an opposite discrepancy elsewhere. Zero
+across these fields means the persisted event/posting pairs agree; a nonzero
+value is evidence to investigate, not an automatic repair. Transit and
+settlement history is aggregated in PostgreSQL; responses contain only the
+bounded line page and per-line summaries, not event history rows.
+
+`originalAverageUnitCost` and `outstandingAverageUnitCost` are six-decimal,
+quantity-weighted summaries of the captured source costs. The corresponding
+total-value fields remain authoritative if individual dispatches had different
+moving-average costs.
+
+Transit age is whole elapsed UTC days since the oldest dispatch that still has
+positive outstanding quantity; the page's `asOf` timestamp anchors this value.
+The latest transit action means the newest persisted dispatch or settlement,
+with its recorded actor and timestamp; it does not claim to be a complete order
+approval/cancellation audit history. Source and destination location IDs are
+shown as persisted on the transfer. Branch responsibility is intentionally
+omitted because transfer/transit/settlement rows retain location IDs, not a
+historical branch snapshot; owner-approved legacy location mappings remain
+pending in #268. The current settlement model has received, quarantined and
+returned actions, but no write-off record; quarantine is not treated as a
+write-off. Lot-specific valuation is also outside this report's claims.
