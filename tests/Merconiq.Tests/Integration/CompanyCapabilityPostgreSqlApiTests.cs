@@ -106,6 +106,39 @@ public sealed class CompanyCapabilityPostgreSqlApiTests(PostgreSqlIntegrationFix
     }
 
     [PostgreSqlFact]
+    public async Task Real_jwt_item_reads_recheck_active_company_membership_after_revocation()
+    {
+        fixture.EnsureEnabled();
+        var suffix = Guid.NewGuid().ToString("N");
+        var tenant = await SeedCompanyStockAsync(fixture, suffix);
+        var auditor = await CreatePersonaAsync(
+            "RestrictedAuditor", CompanyCapability.View, suffix, tenant.CompanyAId);
+        var signedJwt = auditor.Client.DefaultRequestHeaders.Authorization!.Parameter;
+
+        (await auditor.Client.GetAsync("/api/v1/items")).StatusCode.Should().Be(HttpStatusCode.OK);
+        (await auditor.Client.GetAsync($"/api/v1/items/{tenant.ItemId}"))
+            .StatusCode.Should().Be(HttpStatusCode.OK);
+
+        await using (var revoke = fixture.CreateContext(tenant.TenantId))
+        {
+            var membership = await revoke.CompanyMemberships.SingleAsync(candidate =>
+                candidate.CompanyId == tenant.CompanyAId && candidate.UserId == auditor.User.Id);
+            membership.IsActive.Should().BeTrue();
+            membership.IsActive = false;
+            await revoke.SaveChangesAsync();
+        }
+
+        auditor.Client.DefaultRequestHeaders.Authorization!.Parameter.Should().Be(signedJwt,
+            "the authorization check must use the same still-valid JWT after database membership revocation");
+        (await auditor.Client.GetAsync("/api/v1/items"))
+            .StatusCode.Should().Be(HttpStatusCode.Forbidden,
+                "the item-list query must recheck the current company membership");
+        (await auditor.Client.GetAsync($"/api/v1/items/{tenant.ItemId}"))
+            .StatusCode.Should().Be(HttpStatusCode.Forbidden,
+                "the item-detail query must recheck the current company membership");
+    }
+
+    [PostgreSqlFact]
     public async Task Existing_jwt_loses_stock_post_permission_when_company_membership_post_capability_is_removed()
     {
         fixture.EnsureEnabled();
