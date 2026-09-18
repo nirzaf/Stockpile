@@ -29,9 +29,9 @@ The current form asks for a primary/core-maintainer role, public GitHub profile 
 
 These answers are unsubmitted and use only dated public repository facts. Character counts include spaces and punctuation, exclude the surrounding Markdown, and remain below the form's displayed 500-character limits.
 
-### Why does this repository qualify? — 461/500 characters
+### Why does this repository qualify? — 486/500 characters
 
-> Merconiq is an MIT-licensed, pre-production .NET 10/EF Core/PostgreSQL ERP for businesses seeking self-hosted, auditable inventory and procurement. It is progressing toward native ERPNext business capabilities. The public repo documents company-scoped access, stock and procurement workflows, PostgreSQL tests, and active issue-driven maintenance. On 2026-09-18 it had 49 stars and 11 forks (visibility only); production adoption and downloads are not verified.
+> Merconiq is an MIT-licensed, pre-production .NET 10/EF Core/PostgreSQL ERP for businesses seeking self-hosted, auditable inventory and procurement. The README describes an inventory/procurement foundation evolving toward a modular ERP. The public repo documents company-scoped access, stock and procurement workflows, PostgreSQL tests, and active issue-driven maintenance. On 2026-09-18 it had 49 stars and 11 forks (visibility only); production adoption and downloads are not verified.
 
 ### How will you use API credits for your project? — 469/500 characters
 
