@@ -347,6 +347,200 @@ public class StockService : IStockService
     }
 
     /// <inheritdoc />
+    public async Task<StockCountMovementResult> PostStockCountAdjustmentAsync(
+        StockCountMovementRequest request,
+        StockMutationScope mutationScope,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(request.ItemId);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(request.LocationId);
+        ArgumentOutOfRangeException.ThrowIfNegative(request.ExpectedCurrentQuantity);
+        ArgumentOutOfRangeException.ThrowIfNegative(request.CountedQuantity);
+        if (string.IsNullOrWhiteSpace(request.Reason) || request.Reason.Trim().Length > 500)
+            throw new ArgumentException("A count-adjustment reason of 1 to 500 characters is required.", nameof(request));
+        if (request.ApprovedUnitCost is < 0)
+            throw new ArgumentException("Approved unit cost must be non-negative.", nameof(request));
+        decimal? approvedUnitCost = request.ApprovedUnitCost is decimal suppliedUnitCost
+            ? Round(suppliedUnitCost)
+            : null;
+        if (approvedUnitCost is < 0)
+            throw new ArgumentException("Approved unit cost must be non-negative.", nameof(request));
+
+        var batchNumber = string.IsNullOrWhiteSpace(request.BatchNumber) ? null : request.BatchNumber.Trim();
+        var expiryDate = StockLotExpiryDate.Normalize(request.ExpiryDate);
+        var delta = checked(request.CountedQuantity - request.ExpectedCurrentQuantity);
+        if (delta == 0)
+            throw new ArgumentException("A zero-quantity variance does not create a stock movement.", nameof(request));
+
+        var isUnbatched = batchNumber is null && expiryDate is null;
+        if (isUnbatched && delta > 0 && approvedUnitCost is null)
+            throw new StockAvailabilityConflictException(
+                "A positive unbatched count variance requires an explicitly approved unit cost.");
+        if ((!isUnbatched || delta < 0) && approvedUnitCost.HasValue)
+            throw new StockAvailabilityConflictException(
+                "An approved unit cost is accepted only for positive unbatched count variances.");
+
+        var sourceLineReference = request.SourceLineReference?.Trim();
+        if (string.IsNullOrWhiteSpace(sourceLineReference))
+            throw new ArgumentException("A count-line source reference is required.", nameof(request));
+        EnsureSourceLineReference(sourceLineReference);
+
+        var quantity = Math.Abs(delta);
+        var reason = request.Reason.Trim();
+        StockTransaction? transaction = null;
+        StockValuationPosting? valuationPosting = null;
+        await ExecuteWithRetryAsync(request.ItemId, async () =>
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            await _unitOfWork.AcquireLocationLocksAsync([request.LocationId], cancellationToken);
+            var location = await EnsureLocationUsableAsync(request.LocationId, cancellationToken);
+            await EnsureAuthorizedCompanyScopeAsync(location, mutationScope, cancellationToken);
+
+            var alreadyPosted = (await _txRepo.FindAsync(
+                candidate => candidate.SourceLineReference == sourceLineReference,
+                cancellationToken)).FirstOrDefault();
+            if (alreadyPosted is not null)
+                throw new StockAvailabilityConflictException(
+                    "A stock movement already exists for this count line; verify its immutable variance record.");
+
+            var stock = await GetByItemAndLocationAsync(
+                request.ItemId,
+                request.LocationId,
+                batchNumber,
+                expiryDate,
+                cancellationToken);
+            var currentQuantity = stock?.Quantity ?? 0;
+            if (currentQuantity != request.ExpectedCurrentQuantity)
+                throw new StockAvailabilityConflictException(
+                    "Stock changed after the physical count; take a new count before posting this variance.");
+
+            if (delta > 0 && isUnbatched)
+            {
+                var valuationRows = (await _valuationBucketRepo.FindAsync(bucket =>
+                    bucket.ItemId == request.ItemId && bucket.LocationId == request.LocationId,
+                    cancellationToken)).Take(2).ToArray();
+                var valuationQuantity = valuationRows.Length == 1 ? valuationRows[0].Quantity : 0;
+                if (valuationRows.Length > 1 || valuationQuantity != currentQuantity)
+                    throw new StockAvailabilityConflictException(
+                        "Unbatched stock must have a complete moving-average valuation before a positive count variance can be posted.");
+            }
+
+            if (delta < 0)
+            {
+                if (stock is null)
+                    throw new StockAvailabilityConflictException("The counted stock position no longer exists.");
+                EnsureAvailable(stock, quantity, "stock-count adjustment");
+
+                if (isUnbatched)
+                {
+                    var valuationRows = (await _valuationBucketRepo.FindAsync(bucket =>
+                        bucket.ItemId == request.ItemId && bucket.LocationId == request.LocationId,
+                        cancellationToken)).Take(2).ToArray();
+                    if (valuationRows.Length != 1 || valuationRows[0].Quantity != stock.Quantity)
+                        throw new StockAvailabilityConflictException(
+                            "Unbatched stock must have a complete moving-average valuation before a negative count variance can be posted.");
+                }
+
+                stock.Quantity -= quantity;
+                await _stockRepo.UpdateAsync(stock);
+            }
+            else if (stock is null)
+            {
+                stock = new StockInHand
+                {
+                    ItemId = request.ItemId,
+                    LocationId = request.LocationId,
+                    Quantity = quantity,
+                    BatchNumber = batchNumber,
+                    ExpiryDate = expiryDate
+                };
+                await _stockRepo.AddAsync(stock);
+            }
+            else
+            {
+                stock.Quantity = checked(stock.Quantity + quantity);
+                await _stockRepo.UpdateAsync(stock);
+            }
+
+            transaction = new StockTransaction
+            {
+                ItemId = request.ItemId,
+                FromLocationId = request.LocationId,
+                ToLocationId = delta > 0 ? request.LocationId : null,
+                Quantity = quantity,
+                TransactionType = TransactionType.CountAdjustment,
+                SourceLineReference = sourceLineReference,
+                TransactionDate = DateTime.UtcNow,
+                BatchNumber = batchNumber,
+                ExpiryDate = expiryDate,
+                Notes = reason,
+                UnitCost = delta > 0 ? approvedUnitCost : null
+            };
+            await _txRepo.AddAsync(transaction);
+
+            if (isUnbatched)
+            {
+                if (delta > 0)
+                {
+                    await ApplyReceiptValuationAsync(
+                        request.ItemId,
+                        request.LocationId,
+                        quantity,
+                        approvedUnitCost!.Value,
+                        transaction,
+                        StockValuationEntryType.CountAdjustment,
+                        cancellationToken: cancellationToken);
+                }
+                else
+                {
+                    valuationPosting = await ApplySaleValuationAsync(
+                        request.ItemId,
+                        request.LocationId,
+                        quantity,
+                        transaction,
+                        StockValuationEntryType.CountAdjustment,
+                        requireValuation: true,
+                        cancellationToken: cancellationToken);
+                }
+            }
+
+            cancellationToken.ThrowIfCancellationRequested();
+            await _webhookDispatcher.EnqueueAsync(WebhookEventFactory.Create(
+                _tenantContext,
+                "Stock.CountAdjusted",
+                new
+                {
+                    request.ItemId,
+                    request.LocationId,
+                    ExpectedQuantity = request.ExpectedCurrentQuantity,
+                    request.CountedQuantity,
+                    DeltaQuantity = delta,
+                    BatchNumber = batchNumber,
+                    ExpiryDate = expiryDate,
+                    Reason = reason,
+                    SourceLineReference = sourceLineReference
+                }), cancellationToken);
+            await _unitOfWork.SaveChangesAsync(cancellationToken);
+        },
+            () => VerifyTransactionCommitAsync(transaction),
+            cancellationToken: cancellationToken);
+
+        if (transaction is null)
+            throw new InvalidOperationException("The stock-count adjustment did not create a stock movement.");
+
+        decimal? signedValueAdjustment = valuationPosting is null
+            ? isUnbatched && delta > 0
+                ? decimal.Round(quantity * approvedUnitCost!.Value, 6, MidpointRounding.AwayFromZero)
+                : null
+            : -valuationPosting.TotalValue;
+        return new StockCountMovementResult(
+            transaction.Id,
+            valuationPosting?.UnitCost ?? approvedUnitCost,
+            signedValueAdjustment);
+    }
+
+    /// <inheritdoc />
     public async Task TransferStockAsync(
         int itemId,
         int fromLocationId,
@@ -2004,12 +2198,14 @@ public class StockService : IStockService
         int quantity,
         StockTransaction source,
         StockValuationEntryType entryType = StockValuationEntryType.Sale,
-        bool requireValuation = false)
+        bool requireValuation = false,
+        CancellationToken cancellationToken = default)
     {
         // A sale with no bucket remains explicitly unvalued. The required repositories
         // ensure an existing bucket is always consulted instead of silently bypassed.
         var existing = (await _valuationBucketRepo.FindAsync(bucket =>
-            bucket.ItemId == itemId && bucket.LocationId == locationId)).FirstOrDefault();
+            bucket.ItemId == itemId && bucket.LocationId == locationId,
+            cancellationToken)).FirstOrDefault();
         if (existing is null || existing.Quantity == 0)
         {
             if (requireValuation)
@@ -2023,7 +2219,7 @@ public class StockService : IStockService
             throw new InvalidOperationException("Valued stock is insufficient for sale.");
         }
 
-        var bucket = await _valuationBucketRepo.GetByIdAsync(existing.Id)
+        var bucket = await _valuationBucketRepo.GetByIdAsync(existing.Id, cancellationToken)
             ?? throw new InvalidOperationException("Valuation bucket disappeared during posting.");
         var totalValue = bucket.Quantity == quantity
             ? bucket.Value

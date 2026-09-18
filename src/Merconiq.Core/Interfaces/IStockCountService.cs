@@ -19,10 +19,23 @@ public interface IStockCountService
         int countId,
         CancellationToken cancellationToken = default);
 
+    Task<StockCountReconciliationView?> GetReconciliationAsync(
+        StockCountReconciliationRequest request,
+        IReadOnlyCollection<int>? companyIds = null,
+        CancellationToken cancellationToken = default);
+
     Task<StockCountLineView?> RecordObservationAsync(
         int countId,
         int lineId,
         int countedQuantity,
+        StockMutationScope mutationScope,
+        CancellationToken cancellationToken = default);
+
+    Task<StockCountLineView?> PostVarianceAsync(
+        int countId,
+        int lineId,
+        string reason,
+        decimal? approvedUnitCost,
         StockMutationScope mutationScope,
         CancellationToken cancellationToken = default);
 }

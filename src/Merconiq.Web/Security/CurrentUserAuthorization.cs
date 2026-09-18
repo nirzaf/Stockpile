@@ -64,8 +64,9 @@ public sealed class CurrentUserAuthorization(
 
     public Task<IReadOnlySet<int>> GetAccessibleCompanyIdsAsync(
         ClaimsPrincipal principal,
-        CompanyCapability capability) =>
-        WithCurrentUserAsync(principal, (IReadOnlySet<int>)new HashSet<int>(), async (db, user, roles) =>
+        CompanyCapability capability,
+        CancellationToken cancellationToken = default) =>
+        WithCurrentUserAsync(principal, (IReadOnlySet<int>)new HashSet<int>(), async (db, user, roles, token) =>
         {
             if (!IsCapabilityValid(capability) || !RoleCanPerform(roles, capability))
             {
@@ -76,15 +77,16 @@ public sealed class CurrentUserAuthorization(
                 capability != CompanyCapability.OverrideQuarantinedStock)
             {
                 return (IReadOnlySet<int>)new HashSet<int>(
-                    await db.Companies.Select(company => company.Id).ToListAsync());
+                    await db.Companies.Select(company => company.Id).ToListAsync(token));
             }
 
             var membership = db.CompanyMemberships
                 .Where(grant => grant.UserId == user.Id && grant.IsActive &&
                     (grant.Capabilities & capability) == capability)
                 .Select(grant => grant.CompanyId);
-            return (IReadOnlySet<int>)new HashSet<int>(await membership.ToListAsync());
-        });
+            return (IReadOnlySet<int>)new HashSet<int>(
+                await membership.ToListAsync(token));
+        }, cancellationToken);
 
     public Task<bool> CanAccessBranchAsync(
         ClaimsPrincipal principal,

@@ -40,6 +40,7 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
     public DbSet<StockCount> StockCounts { get; set; } = null!;
     public DbSet<StockCountLine> StockCountLines { get; set; } = null!;
     public DbSet<StockCountObservation> StockCountObservations { get; set; } = null!;
+    public DbSet<StockCountVariance> StockCountVariances { get; set; } = null!;
 
     /// <summary>Tenant-scoped stock reservations.</summary>
     public DbSet<StockReservation> StockReservations { get; set; } = null!;
@@ -110,6 +111,7 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
         EnsureDocumentLineLinksAreAppendOnly();
         EnsureStockTransactionsAreAppendOnly();
         EnsureStockCountRecordsAreAppendOnly();
+        EnsureStockCountVariancesAreAppendOnly();
         EnsureTransferTransitEntriesAreAppendOnly();
         EnsureTransferTransitSettlementsAreAppendOnly();
         NormalizeStockLotExpiryDates();
@@ -124,6 +126,7 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
         EnsureDocumentLineLinksAreAppendOnly();
         EnsureStockTransactionsAreAppendOnly();
         EnsureStockCountRecordsAreAppendOnly();
+        EnsureStockCountVariancesAreAppendOnly();
         EnsureTransferTransitEntriesAreAppendOnly();
         EnsureTransferTransitSettlementsAreAppendOnly();
         NormalizeStockLotExpiryDates();
@@ -150,6 +153,7 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
         EnsureDocumentLineLinksAreAppendOnly();
         EnsureStockTransactionsAreAppendOnly();
         EnsureStockCountRecordsAreAppendOnly();
+        EnsureStockCountVariancesAreAppendOnly();
         EnsureTransferTransitEntriesAreAppendOnly();
         EnsureTransferTransitSettlementsAreAppendOnly();
         NormalizeStockLotExpiryDates();
@@ -232,6 +236,15 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
             || ChangeTracker.Entries<StockCountObservation>().Any(entry => entry.State is EntityState.Modified or EntityState.Deleted))
         {
             throw new InvalidOperationException("Stock-count snapshots and observations are append-only and cannot be updated or deleted.");
+        }
+    }
+
+    private void EnsureStockCountVariancesAreAppendOnly()
+    {
+        if (ChangeTracker.Entries<StockCountVariance>()
+            .Any(entry => entry.State is EntityState.Modified or EntityState.Deleted))
+        {
+            throw new InvalidOperationException("Stock-count variances are append-only and cannot be updated or deleted.");
         }
     }
 
@@ -600,6 +613,41 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
                 .HasForeignKey<StockCountObservation>(e => new { e.StockCountLineId, e.TenantId })
                 .HasPrincipalKey<StockCountLine>(e => new { e.Id, e.TenantId })
                 .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<StockCountVariance>(entity =>
+        {
+            entity.HasQueryFilter(e => e.TenantId == CurrentTenantId);
+            entity.Property(e => e.TenantId).HasMaxLength(64).IsRequired();
+            entity.Property(e => e.Reason).HasMaxLength(500).IsRequired();
+            entity.Property(e => e.ApprovedUnitCost).HasColumnType("decimal(18,6)");
+            entity.Property(e => e.ValueAdjustment).HasColumnType("decimal(18,6)");
+            entity.HasIndex(e => new { e.StockCountLineId, e.TenantId }).IsUnique();
+            entity.HasIndex(e => new { e.StockTransactionId, e.TenantId })
+                .IsUnique()
+                .HasFilter("\"StockTransactionId\" IS NOT NULL");
+            entity.ToTable("StockCountVariances", table =>
+            {
+                table.HasCheckConstraint(
+                    "CK_StockCountVariances_Quantities",
+                    "\"ExpectedCurrentQuantity\" >= 0 AND \"CountedQuantity\" >= 0 AND \"DeltaQuantity\" = \"CountedQuantity\" - \"ExpectedCurrentQuantity\"");
+                table.HasCheckConstraint(
+                    "CK_StockCountVariances_Reason",
+                    "length(trim(\"Reason\")) > 0");
+                table.HasCheckConstraint(
+                    "CK_StockCountVariances_ApprovedUnitCost",
+                    "\"ApprovedUnitCost\" IS NULL OR \"ApprovedUnitCost\" >= 0");
+            });
+            entity.HasOne(e => e.StockCountLine)
+                .WithOne(line => line.Variance)
+                .HasForeignKey<StockCountVariance>(e => new { e.StockCountLineId, e.TenantId })
+                .HasPrincipalKey<StockCountLine>(e => new { e.Id, e.TenantId })
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(e => e.StockTransaction)
+                .WithMany()
+                .HasForeignKey(e => new { e.StockTransactionId, e.TenantId })
+                .HasPrincipalKey(e => new { e.Id, e.TenantId })
+                .OnDelete(DeleteBehavior.Restrict);
         });
 
         modelBuilder.Entity<StockReservation>(entity =>

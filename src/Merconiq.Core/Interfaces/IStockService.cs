@@ -124,6 +124,12 @@ public interface IStockService
     /// <summary>Posts an atomic, source-linked return against an original sale.</summary>
     Task ReturnStockAsync(CreateStockReturnRequest request, StockMutationScope? mutationScope = null);
 
+    /// <summary>Posts one count variance through the normal atomic, source-linked stock ledger.</summary>
+    Task<StockCountMovementResult> PostStockCountAdjustmentAsync(
+        StockCountMovementRequest request,
+        StockMutationScope mutationScope,
+        CancellationToken cancellationToken = default);
+
     /// <summary>Moves available stock into quarantine without changing on-hand quantity or valuation.</summary>
     Task QuarantineStockAsync(
         ChangeStockQuarantineRequest request,
