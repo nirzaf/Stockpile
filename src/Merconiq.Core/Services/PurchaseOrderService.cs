@@ -93,11 +93,11 @@ public class PurchaseOrderService : IPurchaseOrderService
     }
 
     /// <inheritdoc />
-    public async Task<PurchaseOrderReceivingProgress?> GetReceivingProgressAsync(
+    public async Task<PurchaseOrderLineObligations?> GetLineObligationsAsync(
         int id,
         CancellationToken cancellationToken = default)
     {
-        PurchaseOrderReceivingProgress? progress = null;
+        PurchaseOrderLineObligations? obligations = null;
         await _unitOfWork.ExecuteInReadSnapshotAsync(async () =>
         {
             var order = await _poRepo.GetByIdAsync(id, cancellationToken);
@@ -106,6 +106,7 @@ public class PurchaseOrderService : IPurchaseOrderService
 
             var lines = (await RequireRepository(_orderDetailRepository)
                     .FindAsync(line => line.PurchaseOrderId == id, cancellationToken))
+                .Where(line => line.Direction == DocumentLineDirection.Charge && line.Quantity > 0)
                 .OrderBy(line => line.Id)
                 .ToArray();
             var itemIds = lines.Select(line => line.ItemId).Distinct().ToArray();
@@ -115,67 +116,26 @@ public class PurchaseOrderService : IPurchaseOrderService
                         .FindAsync(item => itemIds.Contains(item.Id), cancellationToken))
                     .ToDictionary(item => item.Id);
 
-            var lineProgress = lines.Select(line =>
+            var lineObligations = lines.Select(line =>
             {
                 items.TryGetValue(line.ItemId, out var item);
-                var ordered = line.Direction == DocumentLineDirection.Charge
-                    ? Math.Max(0, line.Quantity)
-                    : 0;
-                var outstanding = line.Direction == DocumentLineDirection.Charge
-                    ? line.OutstandingQuantity
-                    : 0;
-                var awaitingInspection = line.AwaitingInspectionQuantity;
-                if (line.ReceivedQuantity < 0 || line.AcceptedQuantity < 0 || line.RejectedQuantity < 0 ||
-                    line.ReceivedQuantity > ordered || awaitingInspection < 0)
-                {
-                    throw new InvalidOperationException(
-                        $"Purchase-order line {line.Id} has inconsistent receiving quantities.");
-                }
-
-                return new PurchaseOrderLineProgress(
+                var ordered = line.Quantity;
+                return new PurchaseOrderLineObligation(
                     line.Id,
                     line.ItemId,
                     item?.ItemCode,
                     item?.Description,
-                    ordered,
-                    line.ReceivedQuantity,
-                    line.AcceptedQuantity,
-                    line.RejectedQuantity,
-                    outstanding,
-                    awaitingInspection);
+                    ordered);
             }).ToArray();
 
-            var orderedQuantity = lineProgress.Sum(line => (long)line.OrderedQuantity);
-            var receivedQuantity = lineProgress.Sum(line => (long)line.ReceivedQuantity);
-            var acceptedQuantity = lineProgress.Sum(line => (long)line.AcceptedQuantity);
-            var rejectedQuantity = lineProgress.Sum(line => (long)line.RejectedQuantity);
-            var outstandingQuantity = lineProgress.Sum(line => (long)line.OutstandingQuantity);
-            var awaitingInspectionQuantity = lineProgress.Sum(line => (long)line.AwaitingInspectionQuantity);
-            var progressState = order.Status == PurchaseOrderStatus.Received && receivedQuantity == 0
-                ? PurchaseOrderProgressState.LegacyReceivedWithoutLineProgress
-                : receivedQuantity == 0
-                    ? PurchaseOrderProgressState.NotStarted
-                    : outstandingQuantity == 0 && awaitingInspectionQuantity == 0
-                        ? PurchaseOrderProgressState.AllReceivedAndClassified
-                        : outstandingQuantity == 0
-                            ? PurchaseOrderProgressState.InspectionPending
-                            : PurchaseOrderProgressState.PartiallyReceived;
-
-            progress = new PurchaseOrderReceivingProgress(
+            var orderedQuantity = lineObligations.Sum(line => (long)line.OrderedQuantity);
+            obligations = new PurchaseOrderLineObligations(
                 order.Id,
-                order.Status,
-                order.ReceivingRevision,
-                progressState,
                 orderedQuantity,
-                receivedQuantity,
-                acceptedQuantity,
-                rejectedQuantity,
-                outstandingQuantity,
-                awaitingInspectionQuantity,
-                lineProgress);
+                lineObligations);
         }, cancellationToken);
 
-        return progress;
+        return obligations;
     }
 
     /// <inheritdoc />
@@ -388,45 +348,6 @@ public class PurchaseOrderService : IPurchaseOrderService
     }
 
     /// <inheritdoc />
-    public async Task RecordLineProgressAsync(
-        int purchaseOrderId,
-        int lineId,
-        PurchaseOrderLineProgressChange change,
-        PurchaseOrderStatusActor actor,
-        CancellationToken cancellationToken = default)
-    {
-        ArgumentNullException.ThrowIfNull(change);
-        ArgumentNullException.ThrowIfNull(actor);
-
-        var order = await _poRepo.GetByIdAsync(purchaseOrderId, cancellationToken)
-            ?? throw new InvalidOperationException("Purchase order not found.");
-        if (order.Status != PurchaseOrderStatus.Approved)
-        {
-            throw new InvalidOperationException("Line progress can only be recorded against an approved purchase order.");
-        }
-
-        if (order.ApprovedCommercialVersion != order.CommercialVersion ||
-            string.IsNullOrWhiteSpace(order.ApprovedCommercialSnapshotJson))
-        {
-            throw new InvalidOperationException("The purchase order does not have a current approval snapshot.");
-        }
-
-        var line = await RequireRepository(_orderDetailRepository).GetByIdAsync(lineId, cancellationToken)
-            ?? throw new InvalidOperationException("Purchase-order line not found.");
-        if (line.PurchaseOrderId != purchaseOrderId)
-        {
-            throw new InvalidOperationException("The purchase-order line does not belong to this order.");
-        }
-
-        line.RecordReceivingOutcome(
-            change.ReceivedQuantity,
-            change.AcceptedQuantity,
-            change.RejectedQuantity);
-        order.AdvanceReceivingRevision();
-        await _unitOfWork.SaveChangesAsAsync(actor.AuditUsername, cancellationToken);
-    }
-
-    /// <inheritdoc />
     public async Task<IReadOnlyList<PurchaseOrderStatusHistoryEntry>> GetStatusHistoryAsync(int id)
     {
         var keyValues = JsonSerializer.Serialize(new Dictionary<string, object>
@@ -561,12 +482,6 @@ public class PurchaseOrderService : IPurchaseOrderService
                 pair.First.Direction != pair.Second.Direction);
         if (!materialChange)
             return;
-
-        if (existingLines.Any(line => line.ReceivedQuantity > 0))
-        {
-            throw new InvalidOperationException(
-                "An approved purchase order with recorded receiving progress cannot be commercially amended.");
-        }
 
         po.SupplierId = supplier.Id;
         po.DeliveryTerms = NormalizeDeliveryTerms(amendment.DeliveryTerms);

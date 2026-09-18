@@ -58,9 +58,6 @@ public class PurchaseOrder : AuditableEntity
     /// <summary>PostgreSQL row version used to reject concurrent PO status/amendment writes.</summary>
     public uint Version { get; private set; }
 
-    /// <summary>Monotonic revision advanced with every line-obligation progress change.</summary>
-    public int ReceivingRevision { get; private set; }
-
     /// <summary>Current lifecycle status of the purchase order.</summary>
     public PurchaseOrderStatus Status { get; set; }
 
@@ -68,7 +65,4 @@ public class PurchaseOrder : AuditableEntity
     public string? Notes { get; set; }
 
     public ICollection<OrderDetail> OrderDetails { get; set; } = new List<OrderDetail>();
-
-    /// <summary>Advances the parent row whenever line progress changes, serializing progress with PO lifecycle writes.</summary>
-    public void AdvanceReceivingRevision() => ReceivingRevision = checked(ReceivingRevision + 1);
 }

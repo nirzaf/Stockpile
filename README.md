@@ -156,8 +156,7 @@ All endpoints are prefixed with `/api/v1`.
 | `GET` | `/forecast/{itemId}` | Demand forecast for an item |
 | `GET` | `/forecast` | Forecast all items |
 | `GET` | `/anomalies` | Detect stock anomalies |
-| `GET` | `/companies/{companyId}/purchase-orders/{purchaseOrderId}/progress` | Read company-authorized PO lifecycle and server-derived line receiving progress (View capability) |
-| `POST` | `/companies/{companyId}/purchase-orders/{purchaseOrderId}/lines/{lineId}/progress` | Record ordered-line received/accepted/rejected quantity deltas (Post capability; requires `Idempotency-Key`) |
+| `GET` | `/companies/{companyId}/purchase-orders/{purchaseOrderId}/obligations` | Read company-authorized ordered charge-line quantities (View capability) |
 | `POST` | `/organization/companies/import` | Dry-run or apply tenant company master import (tenant Admin required) |
 | `POST` | `/organization/branches/import` | Dry-run or apply company-scoped branch import (Edit capability required) |
 | `POST` | `/organization/locations/import` | Dry-run or apply company-scoped location import (Administer capability required) |
@@ -172,10 +171,10 @@ scope, not an ownership column for shared items, suppliers, or units. Every impo
 no rows when any row is rejected. A valid apply can be replayed safely. CSV headers and synthetic
 examples are documented in [`MASTER_DATA_ONBOARDING.md`](docs/MASTER_DATA_ONBOARDING.md).
 
-Purchase-order line progress is metadata only: these endpoints do not create goods receipts,
-post stock/GRNI, or mark a PO received. Reuse the same `Idempotency-Key` when retrying an
-identical quantity-delta request; use a new key for a corrected request. Receipt acceptance and
-finance posting remain separate follow-up work.
+The purchase-order obligations view is read-only and reports ordered charge-line quantities only.
+It does not expose or infer receipt, acceptance, rejection, or outstanding quantities. Posted
+GoodsReceipt source-line progress, stock/GRNI posting, supplier returns, AP, and finance handoff
+are separate work.
 
 ## Project Structure
 

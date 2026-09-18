@@ -93,47 +93,31 @@ else
 
     <MudText Typo="Typo.h6" HtmlTag="h2" Class="mb-3">Line Items</MudText>
 
-    @if (_progress is not null)
+    @if (_obligations is not null)
     {
-        <MudPaper Elevation="1" Class="pa-4 my-4" aria-label="Purchase-order line progress">
-            <MudText Typo="Typo.h6" HtmlTag="h2">Line fulfillment progress</MudText>
+        <MudPaper Elevation="1" Class="pa-4 my-4" aria-label="Purchase-order line obligations">
+            <MudText Typo="Typo.h6" HtmlTag="h2">Ordered-line obligations</MudText>
             <MudText Typo="Typo.body2" Class="mt-2">
-                Lifecycle: @_progress.LifecycleStatus. Progress: @PurchaseOrderProgressPresentation.GetStateLabel(_progress.ProgressState).
-                Received @_progress.ReceivedQuantity of @_progress.OrderedQuantity ordered units; @_progress.OutstandingQuantity outstanding;
-                @_progress.AcceptedQuantity accepted, @_progress.RejectedQuantity rejected, and @_progress.AwaitingInspectionQuantity awaiting inspection.
+                @PurchaseOrderObligationsPresentation.GetOrderedSummary(_obligations)
             </MudText>
-            <MudProgressLinear Value="@PurchaseOrderProgressPresentation.GetReceivedPercent(_progress)"
-                               Color="Color.Primary"
-                               Class="my-3"
-                               aria-label="Received quantity progress" />
             <MudAlert Severity="Severity.Info" Variant="Variant.Outlined" Class="mb-3">
-                Line quantities are progress metadata only. This view does not create goods receipts or post stock or GRNI.
+                @PurchaseOrderObligationsPresentation.ReceiptScopeNotice
             </MudAlert>
-            @if (_progress.Lines.Count == 0)
+            @if (_obligations.Lines.Count == 0)
             {
-                <MudText Color="Color.Secondary">No purchase-order lines are available for progress.</MudText>
+                <MudText Color="Color.Secondary">No charge lines have ordered quantities.</MudText>
             }
             else
             {
-                <MudTable Items="@_progress.Lines" Dense="true" Hover="true" Striped="true"
+                <MudTable Items="@_obligations.Lines" Dense="true" Hover="true" Striped="true"
                           Breakpoint="Breakpoint.Xs" Elevation="0" aria-label="Purchase-order line obligations">
                     <HeaderContent>
                         <MudTh>Item</MudTh>
                         <MudTh Style="text-align:right">Ordered</MudTh>
-                        <MudTh Style="text-align:right">Received</MudTh>
-                        <MudTh Style="text-align:right">Accepted</MudTh>
-                        <MudTh Style="text-align:right">Rejected</MudTh>
-                        <MudTh Style="text-align:right">Awaiting inspection</MudTh>
-                        <MudTh Style="text-align:right">Outstanding</MudTh>
                     </HeaderContent>
                     <RowTemplate>
                         <MudTd DataLabel="Item">@context.ItemCode - @context.ItemDescription</MudTd>
                         <MudTd DataLabel="Ordered" Style="text-align:right">@context.OrderedQuantity</MudTd>
-                        <MudTd DataLabel="Received" Style="text-align:right">@context.ReceivedQuantity</MudTd>
-                        <MudTd DataLabel="Accepted" Style="text-align:right">@context.AcceptedQuantity</MudTd>
-                        <MudTd DataLabel="Rejected" Style="text-align:right">@context.RejectedQuantity</MudTd>
-                        <MudTd DataLabel="Awaiting inspection" Style="text-align:right">@context.AwaitingInspectionQuantity</MudTd>
-                        <MudTd DataLabel="Outstanding" Style="text-align:right">@context.OutstandingQuantity</MudTd>
                     </RowTemplate>
                 </MudTable>
             }
@@ -229,7 +213,7 @@ else
     public int Id { get; set; }
 
     private PurchaseOrder? _po;
-    private PurchaseOrderReceivingProgress? _progress;
+    private PurchaseOrderLineObligations? _obligations;
     private IReadOnlyList<PurchaseOrderStatusHistoryEntry> _statusHistory = Array.Empty<PurchaseOrderStatusHistoryEntry>();
     private bool _isUpdatingStatus;
     private bool _showStatusReload;
@@ -261,7 +245,7 @@ else
         _po = await POService.GetByIdAsync(Id);
         if (_po is not null)
         {
-            _progress = await POService.GetReceivingProgressAsync(_po.Id);
+            _obligations = await POService.GetLineObligationsAsync(_po.Id);
             _statusHistory = await POService.GetStatusHistoryAsync(_po.Id);
         }
     }
@@ -314,9 +298,9 @@ else
                 newStatus.ToString(),
                 new PurchaseOrderStatusActor(actorId, principal.Identity?.Name));
             _po = await POService.GetByIdAsync(purchaseOrderId);
-            _progress = _po is null
+            _obligations = _po is null
                 ? null
-                : await POService.GetReceivingProgressAsync(purchaseOrderId);
+                : await POService.GetLineObligationsAsync(purchaseOrderId);
             _statusHistory = _po is null
                 ? Array.Empty<PurchaseOrderStatusHistoryEntry>()
                 : await POService.GetStatusHistoryAsync(purchaseOrderId);

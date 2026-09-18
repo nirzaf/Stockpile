@@ -1058,15 +1058,9 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
 
         modelBuilder.Entity<PurchaseOrder>(entity =>
         {
-            entity.ToTable("PurchaseOrders", table =>
-            {
-                table.HasCheckConstraint(
-                    "CK_PurchaseOrders_ApprovedCommercialVersion",
-                    "\"Status\" <> 'Approved' OR (\"ApprovedCommercialVersion\" IS NOT NULL AND \"ApprovedCommercialVersion\" = \"CommercialVersion\" AND \"ApprovedCommercialSnapshotJson\" IS NOT NULL)");
-                table.HasCheckConstraint(
-                    "CK_PurchaseOrders_ReceivingRevision",
-                    "\"ReceivingRevision\" >= 0");
-            });
+            entity.ToTable("PurchaseOrders", table => table.HasCheckConstraint(
+                "CK_PurchaseOrders_ApprovedCommercialVersion",
+                "\"Status\" <> 'Approved' OR (\"ApprovedCommercialVersion\" IS NOT NULL AND \"ApprovedCommercialVersion\" = \"CommercialVersion\" AND \"ApprovedCommercialSnapshotJson\" IS NOT NULL)"));
             entity.HasQueryFilter(e => e.TenantId == CurrentTenantId);
             entity.Property(e => e.TenantId).HasMaxLength(64).IsRequired();
             entity.HasIndex(e => e.TenantId);
@@ -1081,7 +1075,6 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
             entity.Property(e => e.CommercialVersion).HasDefaultValue(1).IsRequired();
             entity.Property(e => e.ApprovedCommercialSnapshotJson).HasColumnType("jsonb");
             entity.Property(e => e.DeliveryTerms).HasMaxLength(1000);
-            entity.Property(e => e.ReceivingRevision).HasDefaultValue(0).IsRequired();
             entity.Property(e => e.Version)
                 .HasColumnName("xmin")
                 .HasColumnType("xid")
@@ -1111,16 +1104,10 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
 
         modelBuilder.Entity<OrderDetail>(entity =>
         {
-            entity.ToTable("OrderDetails", table => table.HasCheckConstraint(
-                "CK_OrderDetails_ReceivingQuantities",
-                "\"ReceivedQuantity\" >= 0 AND \"AcceptedQuantity\" >= 0 AND \"RejectedQuantity\" >= 0 AND \"ReceivedQuantity\" <= CASE WHEN \"Direction\" = 'Charge' AND \"Quantity\" > 0 THEN \"Quantity\" ELSE 0 END AND (\"AcceptedQuantity\"::bigint + \"RejectedQuantity\"::bigint) <= \"ReceivedQuantity\""));
             entity.HasQueryFilter(e => e.TenantId == CurrentTenantId);
             entity.Property(e => e.TenantId).HasMaxLength(64).IsRequired();
             entity.HasIndex(e => e.TenantId);
             entity.Property(e => e.UnitPrice).HasColumnType("decimal(20,4)");
-            entity.Property(e => e.ReceivedQuantity).HasDefaultValue(0).IsRequired();
-            entity.Property(e => e.AcceptedQuantity).HasDefaultValue(0).IsRequired();
-            entity.Property(e => e.RejectedQuantity).HasDefaultValue(0).IsRequired();
             entity.Property(e => e.DocumentLineId)
                 .HasConversion(id => id.Value, value => new DocumentLineIdentityId(value))
                 .ValueGeneratedNever();

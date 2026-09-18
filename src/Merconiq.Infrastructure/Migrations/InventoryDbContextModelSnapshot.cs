@@ -1128,11 +1128,6 @@ namespace Merconiq.Infrastructure.Migrations
 
                     NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
 
-                    b.Property<int>("AcceptedQuantity")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer")
-                        .HasDefaultValue(0);
-
                     b.Property<int>("CalculationVersion")
                         .HasColumnType("integer");
 
@@ -1173,16 +1168,6 @@ namespace Merconiq.Infrastructure.Migrations
 
                     b.Property<int>("Quantity")
                         .HasColumnType("integer");
-
-                    b.Property<int>("ReceivedQuantity")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer")
-                        .HasDefaultValue(0);
-
-                    b.Property<int>("RejectedQuantity")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer")
-                        .HasDefaultValue(0);
 
                     b.Property<decimal>("TaxAmount")
                         .HasColumnType("decimal(18,6)");
@@ -1236,10 +1221,7 @@ namespace Merconiq.Infrastructure.Migrations
                     b.HasIndex("DocumentLineId", "TenantId")
                         .IsUnique();
 
-                    b.ToTable("OrderDetails", null, t =>
-                        {
-                            t.HasCheckConstraint("CK_OrderDetails_ReceivingQuantities", "\"ReceivedQuantity\" >= 0 AND \"AcceptedQuantity\" >= 0 AND \"RejectedQuantity\" >= 0 AND \"ReceivedQuantity\" <= CASE WHEN \"Direction\" = 'Charge' AND \"Quantity\" > 0 THEN \"Quantity\" ELSE 0 END AND (\"AcceptedQuantity\"::bigint + \"RejectedQuantity\"::bigint) <= \"ReceivedQuantity\"");
-                        });
+                    b.ToTable("OrderDetails");
                 });
 
             modelBuilder.Entity("Merconiq.Core.Entities.PurchaseOrder", b =>
@@ -1297,11 +1279,6 @@ namespace Merconiq.Infrastructure.Migrations
                         .HasMaxLength(50)
                         .HasColumnType("character varying(50)");
 
-                    b.Property<int>("ReceivingRevision")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer")
-                        .HasDefaultValue(0);
-
                     b.Property<string>("Status")
                         .IsRequired()
                         .HasMaxLength(50)
@@ -1352,8 +1329,6 @@ namespace Merconiq.Infrastructure.Migrations
                     b.ToTable("PurchaseOrders", null, t =>
                         {
                             t.HasCheckConstraint("CK_PurchaseOrders_ApprovedCommercialVersion", "\"Status\" <> 'Approved' OR (\"ApprovedCommercialVersion\" IS NOT NULL AND \"ApprovedCommercialVersion\" = \"CommercialVersion\" AND \"ApprovedCommercialSnapshotJson\" IS NOT NULL)");
-
-                            t.HasCheckConstraint("CK_PurchaseOrders_ReceivingRevision", "\"ReceivingRevision\" >= 0");
                         });
                 });
 

@@ -630,7 +630,7 @@ public class PurchaseOrderServiceTests
     }
 
     [Fact]
-    public async Task AmendApprovedAsync_WhenReceivingProgressExists_RejectsWithoutChangingCommercialOrLineState()
+    public async Task AmendApprovedAsync_WhenOrderIsReceived_RejectsWithoutChangingCommercialOrLineIdentity()
     {
         var originalSnapshot = "{\"schemaVersion\":1,\"approved\":true}";
         var po = new PurchaseOrder
@@ -638,7 +638,7 @@ public class PurchaseOrderServiceTests
             Id = 57,
             PONumber = "PO-57",
             SupplierId = 7,
-            Status = PurchaseOrderStatus.Approved,
+            Status = PurchaseOrderStatus.Received,
             CommercialVersion = 3,
             ApprovedCommercialVersion = 3,
             ApprovedCommercialSnapshotJson = originalSnapshot,
@@ -654,9 +654,8 @@ public class PurchaseOrderServiceTests
             UnitPrice = 4m,
             CurrencyScale = 2
         };
-        line.RecordReceivingOutcome(receivedQuantity: 2, acceptedQuantity: 1, rejectedQuantity: 1);
-        po.AdvanceReceivingRevision();
         var stableLineId = line.DocumentLineId;
+        var originalVersion = po.Version;
         _poRepoMock.Setup(repository => repository.GetByIdAsync(po.Id)).ReturnsAsync(po);
         SetupSnapshotData(po, line);
 
@@ -671,11 +670,11 @@ public class PurchaseOrderServiceTests
                 line.TaxRuleId, line.TaxRatePercent, line.TaxCategory, line.TaxMode, line.Direction)]));
 
         await act.Should().ThrowAsync<InvalidOperationException>()
-            .WithMessage("An approved purchase order with recorded receiving progress cannot be commercially amended.");
+            .WithMessage("Only an approved purchase order can be amended.");
 
-        po.Status.Should().Be(PurchaseOrderStatus.Approved);
+        po.Status.Should().Be(PurchaseOrderStatus.Received);
+        po.Version.Should().Be(originalVersion);
         po.CommercialVersion.Should().Be(3);
-        po.ReceivingRevision.Should().Be(1);
         po.ApprovedCommercialVersion.Should().Be(3);
         po.ApprovedCommercialSnapshotJson.Should().Be(originalSnapshot);
         po.SupplierId.Should().Be(7);
@@ -686,10 +685,6 @@ public class PurchaseOrderServiceTests
         line.ItemId.Should().Be(21);
         line.Quantity.Should().Be(4);
         line.UnitPrice.Should().Be(4m);
-        line.ReceivedQuantity.Should().Be(2);
-        line.AcceptedQuantity.Should().Be(1);
-        line.RejectedQuantity.Should().Be(1);
-        line.AwaitingInspectionQuantity.Should().Be(0);
         _uowMock.Verify(unitOfWork => unitOfWork.SaveChangesAsync(default), Times.Never);
     }
 
