@@ -102,26 +102,32 @@ owner to make an example appear extensible.
 
 ## Versioning and breaking changes
 
-- This is a pre-release project. Internal .NET APIs and database schemas may
-  change incompatibly unless a specific contract is explicitly marked stable
-  in its contract documentation. Earlier pre-release APIs and schemas have no
-  general backward-compatibility guarantee.
-- A versioned route (for example, `/api/v1`) or a public-looking C# interface
-  is not by itself a stability declaration. Each stable contract must identify
-  its version, compatibility rules and owner. No support or deprecation period
-  is promised unless the owner publishes one for that contract.
-- Once a contract is declared stable, compatible additions stay within its
-  version. A breaking change requires a new contract version and a documented
-  consumer transition; do not silently change a declared stable payload or
-  behavior. Webhook and import/export guarantees remain subject to the open
-  integration-contract work in issue #355.
+- `CHANGELOG.md` records a `1.0.0` release and states that the project follows
+  Semantic Versioning. `docs/API.md` explicitly identifies `/api/v1` as the
+  public HTTP API contract. Accordingly, treat the documented `/api/v1`
+  request, response, authentication and behavior contract as stable: compatible
+  additions may remain in v1, but a breaking HTTP contract change requires a
+  new API version and a documented consumer transition. Do not silently change
+  documented v1 behavior.
+- The public HTTP API declaration does not by itself make every C# type, DI
+  registration, or EF table a public extension contract. The service
+  registrations described above remain host-owned implementation seams. A
+  .NET or database contract becomes stable only when its scope and compatibility
+  rules are explicitly documented.
+- Once another contract is declared stable, compatible additions stay within
+  its declared version. A breaking change requires a new contract version and
+  a documented consumer transition. No support or deprecation period is
+  promised unless the owner publishes one for that contract. Webhook and
+  import/export guarantees remain subject to the open integration-contract
+  work in issue #355.
 - EF Core changes use the existing forward migration history. Do not rewrite
   applied migrations, reset migration history, or silently discard approved
-  data. Pre-release schema compatibility is not guaranteed, but every schema
-  change still needs a reviewed migration and a tested upgrade path. Until a
-  supported release baseline is declared, each upgrade test must identify its
-  exact source migration state and target revision. There is currently one
-  migration owner: `Merconiq.Infrastructure` / `InventoryDbContext`.
+  data. The repository does not declare the EF schema as a public contract or
+  promise downgrade compatibility; every schema change still needs a reviewed
+  migration and a tested, data-preserving forward upgrade. Each upgrade test
+  must identify its exact source migration state and target revision. There is
+  currently one migration owner: `Merconiq.Infrastructure` /
+  `InventoryDbContext`.
 - Before describing an extension or contract as supported, add a compiled
   example and automated coverage for its behavior, authorization/audit
   boundary, and database upgrade from an explicitly identified starting
