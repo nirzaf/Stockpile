@@ -19,7 +19,8 @@ public sealed class TransferTransitSettlement : AuditableEntity
     public int ItemId { get; set; }
     public int FromLocationId { get; set; }
     public int ToLocationId { get; set; }
-    public int StockTransactionId { get; set; }
+    /// <summary>Physical on-hand posting; null only for a write-off that resolves transit without stock movement.</summary>
+    public int? StockTransactionId { get; set; }
     public int Quantity { get; set; }
     public TransferTransitSettlementType SettlementType { get; set; }
     public string? BatchNumber { get; set; }

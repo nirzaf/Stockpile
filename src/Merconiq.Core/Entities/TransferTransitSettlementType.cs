@@ -5,5 +5,7 @@ public enum TransferTransitSettlementType
 {
     Received,
     Quarantined,
-    Returned
+    Returned,
+    /// <summary>Approved transit-only disposition with no stock movement or GL posting.</summary>
+    WrittenOff
 }

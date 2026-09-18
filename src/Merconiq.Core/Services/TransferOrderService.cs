@@ -83,7 +83,8 @@ public sealed class TransferOrderService(
             .ToDictionary(group => group.Key, group => group.OrderBy(line => line.Id).ToArray());
         var identitiesById = identities.ToDictionary(identity => identity.Id);
         var settledByLine = settlements
-            .Where(settlement => settlement.SettlementType != TransferTransitSettlementType.Returned)
+            .Where(settlement => settlement.SettlementType is
+                TransferTransitSettlementType.Received or TransferTransitSettlementType.Quarantined)
             .GroupBy(settlement => settlement.TransferOrderLineId)
             .ToDictionary(group => group.Key, group => group.Sum(settlement => settlement.Quantity));
         var transitEntriesByLine = ToTransitEntriesByLine(transitEntries, settlements);
@@ -593,9 +594,17 @@ public sealed class TransferOrderService(
         if (request.SettlementType == TransferTransitSettlementType.Quarantined &&
             string.IsNullOrWhiteSpace(request.Reason))
             throw new ArgumentException("A reason is required for quarantined transit stock.", nameof(request));
+        if (request.SettlementType == TransferTransitSettlementType.WrittenOff &&
+            string.IsNullOrWhiteSpace(request.Reason))
+            throw new ArgumentException("A reason is required for a transit write-off.", nameof(request));
         if (request.SettlementType == TransferTransitSettlementType.Returned &&
             (request.BatchNumber is not null || request.ExpiryDate.HasValue || request.Reason is not null))
             throw new ArgumentException("Returns cannot provide destination lot details or a quarantine reason.", nameof(request));
+        if (request.SettlementType == TransferTransitSettlementType.WrittenOff &&
+            (request.BatchNumber is not null || request.ExpiryDate.HasValue || !string.IsNullOrWhiteSpace(request.Notes)))
+            throw new ArgumentException(
+                "Write-offs cannot include destination lot details or notes; record the disposition in the required reason.",
+                nameof(request));
 
         var normalizedRequest = request with
         {
@@ -627,7 +636,7 @@ public sealed class TransferOrderService(
                     throw new InvalidOperationException("The transit idempotency key was already used with a different request.");
                 if (mutationScope.CompanyId != previous.CompanyId ||
                     mutationScope.Reauthorize is not null && !await mutationScope.Reauthorize(cancellationToken))
-                    throw new UnauthorizedAccessException("Company posting access is required to replay this settlement.");
+                    throw new UnauthorizedAccessException("The required company capability is needed to replay this settlement.");
                 result = await ToSettlementViewAsync(previous, cancellationToken);
                 return;
             }
@@ -673,6 +682,7 @@ public sealed class TransferOrderService(
             }
 
             var isReturn = normalizedRequest.SettlementType == TransferTransitSettlementType.Returned;
+            var isWriteOff = normalizedRequest.SettlementType == TransferTransitSettlementType.WrittenOff;
             var remainingValue = entry.TotalValue - existingSettlements.Sum(settlement => settlement.TotalValue);
             var settlementValue = normalizedRequest.Quantity == remaining
                 ? remainingValue
@@ -707,24 +717,26 @@ public sealed class TransferOrderService(
                 DocumentLineRelationshipType.Successor,
                 cancellationToken);
 
-            var movement = await stockService.PostTransferTransitMovementAsync(
-                new TransferTransitStockMovementRequest(
-                    entry.ItemId,
-                    isReturn ? entry.ToLocationId : entry.FromLocationId,
-                    isReturn ? entry.FromLocationId : entry.ToLocationId,
-                    normalizedRequest.Quantity,
-                    entry.BatchNumber,
-                    entry.ExpiryDate,
-                    settlementUnitCost,
-                    settlementValue,
-                    CreateTransitMovementReference(entry.Id, idempotencyKey, normalizedRequest.SettlementType),
-                    normalizedRequest.Notes ?? (isReturn ? "Transfer transit returned." : "Transfer transit received."),
-                    isReturn ? TransactionType.TransferReturn : TransactionType.TransferReceipt,
-                    normalizedRequest.SettlementType == TransferTransitSettlementType.Quarantined
-                        ? normalizedRequest.Reason
-                        : null,
-                    mutationScope),
-                cancellationToken);
+            var movement = isWriteOff
+                ? null
+                : await stockService.PostTransferTransitMovementAsync(
+                    new TransferTransitStockMovementRequest(
+                        entry.ItemId,
+                        isReturn ? entry.ToLocationId : entry.FromLocationId,
+                        isReturn ? entry.FromLocationId : entry.ToLocationId,
+                        normalizedRequest.Quantity,
+                        entry.BatchNumber,
+                        entry.ExpiryDate,
+                        settlementUnitCost,
+                        settlementValue,
+                        CreateTransitMovementReference(entry.Id, idempotencyKey, normalizedRequest.SettlementType),
+                        normalizedRequest.Notes ?? (isReturn ? "Transfer transit returned." : "Transfer transit received."),
+                        isReturn ? TransactionType.TransferReturn : TransactionType.TransferReceipt,
+                        normalizedRequest.SettlementType == TransferTransitSettlementType.Quarantined
+                            ? normalizedRequest.Reason
+                            : null,
+                        mutationScope),
+                    cancellationToken);
 
             var settlement = new TransferTransitSettlement
             {
@@ -740,13 +752,13 @@ public sealed class TransferOrderService(
                 ItemId = entry.ItemId,
                 FromLocationId = entry.FromLocationId,
                 ToLocationId = entry.ToLocationId,
-                StockTransactionId = movement.StockTransactionId,
-                Quantity = movement.Quantity,
+                StockTransactionId = movement?.StockTransactionId,
+                Quantity = movement?.Quantity ?? normalizedRequest.Quantity,
                 SettlementType = normalizedRequest.SettlementType,
-                BatchNumber = movement.BatchNumber,
-                ExpiryDate = movement.ExpiryDate,
-                UnitCost = movement.UnitCost,
-                TotalValue = movement.TotalValue,
+                BatchNumber = movement?.BatchNumber ?? entry.BatchNumber,
+                ExpiryDate = movement?.ExpiryDate ?? StockLotExpiryDate.Normalize(entry.ExpiryDate),
+                UnitCost = movement?.UnitCost ?? settlementUnitCost,
+                TotalValue = movement?.TotalValue ?? settlementValue,
                 IdempotencyKey = idempotencyKey,
                 RequestHash = requestHash,
                 SettledBy = settledBy.Trim(),
@@ -760,9 +772,11 @@ public sealed class TransferOrderService(
                 candidate => candidate.TransferOrderId == id, cancellationToken);
             var allSettled = allSettlements.Sum(candidate => candidate.Quantity) + settlement.Quantity;
             var physicallyReceived = allSettlements
-                .Where(candidate => candidate.SettlementType != TransferTransitSettlementType.Returned)
+                .Where(candidate => candidate.SettlementType is
+                    TransferTransitSettlementType.Received or TransferTransitSettlementType.Quarantined)
                 .Sum(candidate => candidate.Quantity) +
-                (settlement.SettlementType == TransferTransitSettlementType.Returned ? 0 : settlement.Quantity);
+                (settlement.SettlementType is TransferTransitSettlementType.Received or
+                    TransferTransitSettlementType.Quarantined ? settlement.Quantity : 0);
             var totalDispatched = allTransit.Sum(candidate => candidate.Quantity);
             var totalOrdered = (await lineRepository.FindAsync(candidate => candidate.TransferOrderId == id, cancellationToken))
                 .Sum(candidate => candidate.Quantity);
@@ -829,7 +843,8 @@ public sealed class TransferOrderService(
             : (await _settlementRepository.FindAsync(
                 settlement => settlement.TransferOrderId == order.Id, cancellationToken)).ToArray();
         var settledByLine = settlements
-            .Where(settlement => settlement.SettlementType != TransferTransitSettlementType.Returned)
+            .Where(settlement => settlement.SettlementType is
+                TransferTransitSettlementType.Received or TransferTransitSettlementType.Quarantined)
             .GroupBy(settlement => settlement.TransferOrderLineId)
             .ToDictionary(group => group.Key, group => group.Sum(settlement => settlement.Quantity));
         var transitEntriesByLine = ToTransitEntriesByLine(transitEntries, settlements);
@@ -864,6 +879,12 @@ public sealed class TransferOrderService(
                     var returned = entrySettlements
                         .Where(settlement => settlement.SettlementType == TransferTransitSettlementType.Returned)
                         .Sum(settlement => settlement.Quantity);
+                    var writtenOff = entrySettlements
+                        .Where(settlement => settlement.SettlementType == TransferTransitSettlementType.WrittenOff)
+                        .Sum(settlement => settlement.Quantity);
+                    var writtenOffValue = entrySettlements
+                        .Where(settlement => settlement.SettlementType == TransferTransitSettlementType.WrittenOff)
+                        .Sum(settlement => settlement.TotalValue);
 
                     return new TransferTransitEntryView(
                         entry.Id,
@@ -872,11 +893,13 @@ public sealed class TransferOrderService(
                         received,
                         quarantined,
                         returned,
-                        entry.Quantity - received - quarantined - returned,
+                        writtenOff,
+                        entry.Quantity - received - quarantined - returned - writtenOff,
                         entry.BatchNumber,
                         entry.ExpiryDate,
                         entry.UnitCost,
                         entry.TotalValue,
+                        writtenOffValue,
                         entry.TotalValue - entrySettlements.Sum(settlement => settlement.TotalValue),
                         entry.DispatchedBy,
                         entry.DispatchedAt);
