@@ -215,6 +215,82 @@ public sealed class MasterDataImportPostgreSqlIntegrationTests(PostgreSqlIntegra
     }
 
     [PostgreSqlFact]
+    public async Task Sequential_unit_import_replay_preserves_one_row_and_audits_created_unchanged_and_conflict()
+    {
+        fixture.EnsureEnabled();
+        var tenantId = $"unit-import-replay-{Guid.NewGuid():N}";
+        const string csv = "external_id,code,name,decimal_places,whole_unit_only\nunit-1,EA,Each,0,false";
+        const string conflictingCsv = "external_id,code,name,decimal_places,whole_unit_only\nunit-1,EA,Each (revised),0,false";
+
+        ImportUnitsResult created;
+        await using (var firstContext = fixture.CreateContext(tenantId))
+            created = await CreateService(firstContext).ImportUnitsAsync(new ImportUnitsRequest(csv, false));
+
+        ImportUnitsResult replayed;
+        await using (var replayContext = fixture.CreateContext(tenantId))
+            replayed = await CreateService(replayContext).ImportUnitsAsync(new ImportUnitsRequest(csv, false));
+
+        ImportUnitsResult conflict;
+        await using (var conflictContext = fixture.CreateContext(tenantId))
+            conflict = await CreateService(conflictContext).ImportUnitsAsync(new ImportUnitsRequest(conflictingCsv, false));
+
+        created.Created.Should().Be(1);
+        created.Unchanged.Should().Be(0);
+        created.Rejected.Should().Be(0);
+        created.Rows.Single().Status.Should().Be("created");
+
+        replayed.Created.Should().Be(0);
+        replayed.Unchanged.Should().Be(1);
+        replayed.Rejected.Should().Be(0);
+        replayed.Rows.Single().Status.Should().Be("unchanged");
+
+        conflict.Created.Should().Be(0);
+        conflict.Unchanged.Should().Be(0);
+        conflict.Rejected.Should().Be(1);
+        conflict.Rows.Single().Status.Should().Be("rejected");
+        conflict.Rows.Single().Error.Should().Contain("different unit data");
+
+        await using var verification = fixture.CreateContext(tenantId);
+        var units = await verification.UnitsOfMeasure.AsNoTracking().ToListAsync();
+        units.Should().ContainSingle();
+        units[0].ExternalId.Should().Be("unit-1");
+        units[0].Code.Should().Be("EA");
+        units[0].Name.Should().Be("Each");
+        units[0].DecimalPlaces.Should().Be(0);
+        units[0].IsWholeUnitOnly.Should().BeFalse();
+
+        var audits = await verification.AuditLogs.AsNoTracking()
+            .Where(log => log.TenantId == tenantId && log.EntityName == "MasterDataImportBatch")
+            .OrderBy(log => log.Id)
+            .ToListAsync();
+        audits.Should().HaveCount(3);
+        var batchIds = new List<Guid>();
+        var outcomes = new List<(string Outcome, int RowsCreated, int RowsUnchanged, int RowsRejected, bool ChangesApplied)>();
+        foreach (var audit in audits)
+        {
+            audit.Action.Should().Be("ImportBatchCompleted");
+            using var keyValues = JsonDocument.Parse(audit.KeyValues!);
+            keyValues.RootElement.GetProperty("ImportType").GetString().Should().Be(nameof(UnitOfMeasure));
+            batchIds.Add(keyValues.RootElement.GetProperty("BatchId").GetGuid());
+            using var summary = JsonDocument.Parse(audit.NewValues!);
+            outcomes.Add((
+                summary.RootElement.GetProperty("Outcome").GetString()!,
+                summary.RootElement.GetProperty("RowsCreated").GetInt32(),
+                summary.RootElement.GetProperty("RowsUnchanged").GetInt32(),
+                summary.RootElement.GetProperty("RowsRejected").GetInt32(),
+                summary.RootElement.GetProperty("ChangesApplied").GetBoolean()));
+            audit.KeyValues.Should().NotContain("unit-1");
+            audit.NewValues.Should().NotContain("unit-1").And.NotContain("Each");
+        }
+
+        batchIds.Should().OnlyHaveUniqueItems();
+        outcomes.Should().Equal(
+            ("Created", 1, 0, 0, true),
+            ("Unchanged", 0, 1, 0, false),
+            ("Rejected", 0, 0, 1, false));
+    }
+
+    [PostgreSqlFact]
     public async Task Concurrent_replays_of_the_same_unit_import_create_one_unit_and_audit_each_batch()
     {
         fixture.EnsureEnabled();
