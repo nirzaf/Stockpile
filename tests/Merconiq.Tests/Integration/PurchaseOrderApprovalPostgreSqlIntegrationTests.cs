@@ -479,6 +479,7 @@ public sealed class PurchaseOrderApprovalPostgreSqlIntegrationTests(PostgreSqlIn
     {
         fixture.EnsureEnabled();
         const string precisionMigrationId = "20260918015000_ExpandPurchaseOrderUnitPricePrecision";
+        const string lineObligationsMigrationId = "20260918213252_AddPurchaseOrderLineObligations";
         var tenantId = $"po-approval-price-down-{Guid.NewGuid():N}";
         var schema = $"po_price_down_{Guid.NewGuid():N}";
         var connectionString = new NpgsqlConnectionStringBuilder(fixture.ConnectionString) { SearchPath = schema };
@@ -530,9 +531,20 @@ public sealed class PurchaseOrderApprovalPostgreSqlIntegrationTests(PostgreSqlIn
             failure.Which.MessageText.Should().Contain(
                 "Cannot downgrade UnitPrice precision while stored values require decimal(20,4).");
 
+            var failedDowngradeState = await context.Database.GetAppliedMigrationsAsync();
+            failedDowngradeState.Should().Contain(precisionMigrationId);
+            failedDowngradeState.Should().NotContain(lineObligationsMigrationId,
+                "the preceding migration down committed before the precision guard refused its downgrade");
+
+            // Restore the latest schema before querying with the current EF model. The failed
+            // downgrade intentionally leaves the schema at the precision migration, before the current model.
+            await context.Database.MigrateAsync();
+            context.ChangeTracker.Clear();
             var storedLine = await context.OrderDetails.SingleAsync(line => line.PurchaseOrderId == order.Id);
             storedLine.UnitPrice.Should().Be(1.2345m);
-            (await context.Database.GetAppliedMigrationsAsync()).Should().Contain(precisionMigrationId);
+            var restoredMigrationState = await context.Database.GetAppliedMigrationsAsync();
+            restoredMigrationState.Should().Contain(precisionMigrationId);
+            restoredMigrationState.Should().Contain(lineObligationsMigrationId);
         }
         finally
         {
