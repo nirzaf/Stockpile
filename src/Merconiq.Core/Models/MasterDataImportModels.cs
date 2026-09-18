@@ -1,5 +1,12 @@
 namespace Merconiq.Core.Models;
 
+/// <summary>Reserved identities used by controlled master-data migrations.</summary>
+public static class MasterDataImportConventions
+{
+    /// <summary>Prefix for legacy units whose original source-system ID is unknown.</summary>
+    public const string LegacyUnmappedUnitExternalIdPrefix = "__merconiq_legacy_unmapped_unit__:";
+}
+
 public sealed record ImportUnitsRequest(string Csv, bool DryRun = true, int? CompanyId = null);
 
 public sealed record ImportRowResult(int RowNumber, string ExternalId, string Status, string? Error = null);
