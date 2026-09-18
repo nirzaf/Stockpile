@@ -18,4 +18,5 @@ public sealed class Company : AuditableEntity
     public bool IsActive { get; set; } = true;
     public ICollection<Branch> Branches { get; set; } = new List<Branch>();
     public ICollection<CompanyMembership> Memberships { get; set; } = new List<CompanyMembership>();
+    public ICollection<Customer> Customers { get; set; } = new List<Customer>();
 }
