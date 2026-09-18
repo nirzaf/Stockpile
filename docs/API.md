@@ -90,6 +90,8 @@ Webhook administration is restricted to `Admin` and `Manager`.
 | GET | `/api/v1/companies/{companyId}/customers?page=1&pageSize=50` | Company `View` | `200` or `400` |
 | GET | `/api/v1/companies/{companyId}/customers/{customerId}` | Company `View` | `200` or `404` |
 | POST | `/api/v1/companies/{companyId}/customers` | Company `Edit` | `201`, `400`, `404`, or `409` |
+| GET | `/api/v1/companies/{companyId}/chart-of-accounts?page=1&pageSize=50` | Company `View` | `200` or `400` |
+| POST | `/api/v1/companies/{companyId}/chart-of-accounts` | Company `Edit` | `201`, `400`, `404`, or `409` |
 | PUT | `/api/v1/companies/{companyId}/customers/{customerId}` | Company `Edit` | `204`, `400`, `404`, or `409` |
 | POST | `/api/v1/companies/{companyId}/customers/{customerId}/deactivate` | Company `Edit` | `204` or `404` |
 | POST | `/api/v1/companies/{companyId}/customers/{customerId}/reactivate` | Company `Edit` | `204` or `404` |
@@ -148,6 +150,34 @@ invoice due dates, snapshot terms onto documents, or implement receivables or
 credit enforcement. Customer records can be deactivated/reactivated but cannot
 be hard-deleted. No current sales or receivable document references customers,
 so there is not yet a reference-based deactivation guard.
+
+### Company-scoped chart-of-account configuration (partial foundation)
+
+The chart-of-accounts API stores account definitions owned by one active
+company. `GET` returns a bounded page (1–100 rows, default 50) ordered by the
+company-supplied account code; it defaults to active rows and accepts
+`includeInactive=true`. `POST` requires the caller's current company `Edit`
+capability, while list access requires `View`. Restricted auditors can read
+with a `View` grant but cannot create. The route determines company ownership;
+tenant identity comes from the authenticated request. Database keys constrain
+both the company and any parent account to the same tenant/company, and account
+codes are unique within that company.
+
+The company supplies the code, name, and free-form `accountType` label. No code
+sequence, account taxonomy, sample chart, or default account is seeded. A
+parent must be active and marked as a group account. `isGroupAccount` and
+`isActive` are configuration flags only; this API does not create a journal,
+post transactions, or make any account classification operational. Writes
+flow through the shared append-only audit pipeline. This partial increment is
+API-only and does not yet provide a chart UI.
+
+Finance-owner and qualified-accounting-reviewer decisions are still required
+before defining approved account-type values, control-account roles or
+inventory/GRNI/COGS/AR/AP/cash/tax/rounding/adjustment mappings, fiscal periods
+and reopen authority, base-currency posting rules, opening balances, journal
+validation, reversals, or financial statements. No tax rule, fiscal date,
+account-number convention, posting policy, or approved chart is implied by
+these fields.
 
 ### Tenant unit source-ID export
 

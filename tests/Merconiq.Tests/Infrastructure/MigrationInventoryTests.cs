@@ -30,6 +30,11 @@ public class MigrationInventoryTests
             .Select(type => type.Name)
             .Should()
             .Contain("AddCompanyScopedCustomers");
+        infrastructureAssembly.GetTypes()
+            .Where(type => typeof(Migration).IsAssignableFrom(type))
+            .Select(type => type.Name)
+            .Should()
+            .Contain("AddCompanyChartOfAccounts");
 
         typeof(ApplicationUser).Namespace.Should().Be("Merconiq.Core.Entities");
         typeof(ApplicationUser).Assembly.GetName().Name.Should().Be("Merconiq.Core");

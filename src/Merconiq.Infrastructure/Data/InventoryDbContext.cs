@@ -67,6 +67,9 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
     /// <summary>Company-scoped customer master records.</summary>
     public DbSet<Customer> Customers { get; set; } = null!;
 
+    /// <summary>Company-owned chart-of-account configuration records.</summary>
+    public DbSet<ChartOfAccount> ChartOfAccounts { get; set; } = null!;
+
     /// <summary>Purchase orders.</summary>
     public DbSet<PurchaseOrder> PurchaseOrders { get; set; } = null!;
 
@@ -541,6 +544,46 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
                 .WithMany(company => company.Customers)
                 .HasForeignKey(e => new { e.CompanyId, e.TenantId })
                 .HasPrincipalKey(company => new { company.Id, company.TenantId })
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<ChartOfAccount>(entity =>
+        {
+            entity.HasQueryFilter(account => account.TenantId == CurrentTenantId);
+            entity.Property(account => account.TenantId).HasMaxLength(64).IsRequired();
+            entity.Property(account => account.AccountCode).HasMaxLength(64).IsRequired();
+            entity.Property(account => account.Name).HasMaxLength(200).IsRequired();
+            entity.Property(account => account.AccountType).HasMaxLength(64).IsRequired();
+            entity.Property(account => account.IsActive).HasDefaultValue(true);
+            entity.HasAlternateKey(account => new { account.Id, account.CompanyId, account.TenantId });
+            entity.HasIndex(account => new { account.CompanyId, account.TenantId });
+            entity.HasIndex(account => new { account.TenantId, account.CompanyId, account.AccountCode })
+                .IsUnique()
+                .HasDatabaseName("UX_ChartAccounts_Tenant_Company_Code");
+            entity.ToTable("ChartOfAccounts", table =>
+            {
+                table.HasCheckConstraint(
+                    "CK_ChartAccounts_AccountCode",
+                    "\"AccountCode\" <> '' AND \"AccountCode\" = btrim(\"AccountCode\")");
+                table.HasCheckConstraint(
+                    "CK_ChartAccounts_Name",
+                    "\"Name\" <> '' AND \"Name\" = btrim(\"Name\")");
+                table.HasCheckConstraint(
+                    "CK_ChartAccounts_AccountType",
+                    "\"AccountType\" <> '' AND \"AccountType\" = btrim(\"AccountType\")");
+                table.HasCheckConstraint(
+                    "CK_ChartAccounts_NoSelfParent",
+                    "\"ParentAccountId\" IS NULL OR \"ParentAccountId\" <> \"Id\"");
+            });
+            entity.HasOne<Company>()
+                .WithMany()
+                .HasForeignKey(account => new { account.CompanyId, account.TenantId })
+                .HasPrincipalKey(company => new { company.Id, company.TenantId })
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(account => account.ParentAccount)
+                .WithMany(account => account.ChildAccounts)
+                .HasForeignKey(account => new { account.ParentAccountId, account.CompanyId, account.TenantId })
+                .HasPrincipalKey(account => new { account.Id, account.CompanyId, account.TenantId })
                 .OnDelete(DeleteBehavior.Restrict);
         });
 
