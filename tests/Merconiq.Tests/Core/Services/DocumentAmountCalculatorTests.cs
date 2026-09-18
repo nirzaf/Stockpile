@@ -5,6 +5,35 @@ namespace Merconiq.Tests.Core.Services;
 
 public sealed class DocumentAmountCalculatorTests
 {
+    public static TheoryData<DocumentLineAmount, decimal, decimal, decimal, decimal, decimal> SyntheticGoldenExamples => new()
+    {
+        // Independently calculated examples: round base, discount, taxable base, tax, then gross.
+        {
+            new DocumentLineAmount(3m, 19.995m, 12.5m, 7.5m),
+            52.49m, 7.50m, 52.49m, 3.94m, 56.43m
+        },
+        {
+            new DocumentLineAmount(2m, 57.50m, 10m, 15m, TaxCalculationMode.Inclusive),
+            90.00m, 11.50m, 90.00m, 13.50m, 103.50m
+        },
+        {
+            new DocumentLineAmount(1m, 10.49m, 10m, 10m, CurrencyScale: 0),
+            9m, 1m, 9m, 1m, 10m
+        },
+        {
+            new DocumentLineAmount(1m, 1.23456m, 12.5m, 7.5m, CurrencyScale: 4),
+            1.0803m, 0.1543m, 1.0803m, 0.0810m, 1.1613m
+        },
+        {
+            new DocumentLineAmount(2m, 1.005m, CurrencyScale: 2, TaxCategory: TaxCategory.ZeroRated),
+            2.01m, 0m, 2.01m, 0m, 2.01m
+        },
+        {
+            new DocumentLineAmount(3m, 0.3333m, 10m, CurrencyScale: 4, TaxCategory: TaxCategory.Exempt),
+            0.8999m, 0.1000m, 0.8999m, 0m, 0.8999m
+        }
+    };
+
     [Fact]
     public void ExclusiveTax_DiscountIsAppliedBeforeTax()
     {
@@ -69,6 +98,29 @@ public sealed class DocumentAmountCalculatorTests
 
         result.NetAmount.Should().Be(10.02m);
         result.GrossAmount.Should().Be(10.02m);
+        result.CalculationVersion.Should().Be(DocumentAmountCalculator.CalculationVersion);
+    }
+
+    [Theory]
+    [MemberData(nameof(SyntheticGoldenExamples))]
+    public void SyntheticGoldenExamples_MatchRoundedLineSnapshots(
+        DocumentLineAmount input,
+        decimal expectedNet,
+        decimal expectedDiscount,
+        decimal expectedTaxable,
+        decimal expectedTax,
+        decimal expectedGross)
+    {
+        var result = DocumentAmountCalculator.Calculate(input);
+
+        result.NetAmount.Should().Be(expectedNet);
+        result.DiscountAmount.Should().Be(expectedDiscount);
+        result.TaxableAmount.Should().Be(expectedTaxable);
+        result.TaxAmount.Should().Be(expectedTax);
+        result.GrossAmount.Should().Be(expectedGross);
+        result.CurrencyScale.Should().Be(input.CurrencyScale);
+        result.TaxMode.Should().Be(input.TaxMode);
+        result.TaxCategory.Should().Be(input.TaxCategory);
         result.CalculationVersion.Should().Be(DocumentAmountCalculator.CalculationVersion);
     }
 
