@@ -37,5 +37,7 @@ public class SwaggerTests : IClassFixture<CustomWebApplicationFactory>
 
         idempotencyKey.In.Should().Be(ParameterLocation.Header);
         idempotencyKey.Required.Should().BeTrue();
+        idempotencyKey.Schema.Should().NotBeNull();
+        idempotencyKey.Schema!.MaxLength.Should().Be(200);
     }
 }

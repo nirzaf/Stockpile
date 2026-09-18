@@ -22,7 +22,7 @@ internal sealed class StockReceiveIdempotencyKeyOperationFilter : IOperationFilt
             Name = "Idempotency-Key",
             In = ParameterLocation.Header,
             Required = true,
-            Schema = new OpenApiSchema { Type = JsonSchemaType.String }
+            Schema = new OpenApiSchema { Type = JsonSchemaType.String, MaxLength = 200 }
         });
     }
 }
