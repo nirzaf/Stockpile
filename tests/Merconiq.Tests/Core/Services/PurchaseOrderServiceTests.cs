@@ -630,6 +630,70 @@ public class PurchaseOrderServiceTests
     }
 
     [Fact]
+    public async Task AmendApprovedAsync_WhenReceivingProgressExists_RejectsWithoutChangingCommercialOrLineState()
+    {
+        var originalSnapshot = "{\"schemaVersion\":1,\"approved\":true}";
+        var po = new PurchaseOrder
+        {
+            Id = 57,
+            PONumber = "PO-57",
+            SupplierId = 7,
+            Status = PurchaseOrderStatus.Approved,
+            CommercialVersion = 3,
+            ApprovedCommercialVersion = 3,
+            ApprovedCommercialSnapshotJson = originalSnapshot,
+            CurrencyScale = 2,
+            DeliveryTerms = "Deliver to Dock 1"
+        };
+        var line = new OrderDetail
+        {
+            Id = 12,
+            PurchaseOrderId = po.Id,
+            ItemId = 21,
+            Quantity = 4,
+            UnitPrice = 4m,
+            CurrencyScale = 2
+        };
+        line.RecordReceivingOutcome(receivedQuantity: 2, acceptedQuantity: 1, rejectedQuantity: 1);
+        po.AdvanceReceivingRevision();
+        var stableLineId = line.DocumentLineId;
+        _poRepoMock.Setup(repository => repository.GetByIdAsync(po.Id)).ReturnsAsync(po);
+        SetupSnapshotData(po, line);
+
+        var act = () => _sut.AmendApprovedAsync(po.Id, new PurchaseOrderAmendment(
+            ExpectedCommercialVersion: 3,
+            SupplierId: po.SupplierId,
+            DeliveryTerms: "Deliver to Dock 2",
+            Notes: null,
+            CurrencyScale: 2,
+            Lines: [new PurchaseOrderAmendmentLine(
+                line.Id, line.ItemId, 5, 6m, line.DiscountPercent,
+                line.TaxRuleId, line.TaxRatePercent, line.TaxCategory, line.TaxMode, line.Direction)]));
+
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("An approved purchase order with recorded receiving progress cannot be commercially amended.");
+
+        po.Status.Should().Be(PurchaseOrderStatus.Approved);
+        po.CommercialVersion.Should().Be(3);
+        po.ReceivingRevision.Should().Be(1);
+        po.ApprovedCommercialVersion.Should().Be(3);
+        po.ApprovedCommercialSnapshotJson.Should().Be(originalSnapshot);
+        po.SupplierId.Should().Be(7);
+        po.DeliveryTerms.Should().Be("Deliver to Dock 1");
+        line.Id.Should().Be(12);
+        line.DocumentLineId.Should().Be(stableLineId);
+        line.PurchaseOrderId.Should().Be(po.Id);
+        line.ItemId.Should().Be(21);
+        line.Quantity.Should().Be(4);
+        line.UnitPrice.Should().Be(4m);
+        line.ReceivedQuantity.Should().Be(2);
+        line.AcceptedQuantity.Should().Be(1);
+        line.RejectedQuantity.Should().Be(1);
+        line.AwaitingInspectionQuantity.Should().Be(0);
+        _uowMock.Verify(unitOfWork => unitOfWork.SaveChangesAsync(default), Times.Never);
+    }
+
+    [Fact]
     public async Task AmendApprovedAsync_PreservesHistoricalTaxSnapshotWhenSelectedRuleIsNoLongerActive()
     {
         var effectiveFrom = new DateTime(2024, 1, 1, 0, 0, 0, DateTimeKind.Utc);
