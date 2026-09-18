@@ -67,8 +67,27 @@ public sealed class StockNestedUnitOfWorkPostgreSqlIntegrationTests(PostgreSqlIn
 
                 // The child stock operation saves its entities, but must not commit the
                 // transaction owned by this higher-level posting coordinator.
+                unitOfWork.HasActiveTransaction.Should().BeTrue();
                 (await operation.StockInHand.SingleAsync(stock =>
                     stock.ItemId == itemId && stock.LocationId == locationId)).Quantity.Should().Be(4);
+                (await operation.StockTransactions.SingleAsync(transaction => transaction.Notes == notes))
+                    .Quantity.Should().Be(4);
+                (await operation.StockValuationBuckets.SingleAsync(bucket =>
+                    bucket.ItemId == itemId && bucket.LocationId == locationId))
+                    .Should().Match<StockValuationBucket>(bucket => bucket.Quantity == 4 && bucket.Value == 40m);
+                (await operation.StockValuationEntries.CountAsync(entry =>
+                    entry.ItemId == itemId && entry.EntryType == StockValuationEntryType.Receipt)).Should().Be(1);
+                (await operation.WebhookDeliveries.CountAsync(delivery =>
+                    delivery.SubscriptionId == subscriptionId && delivery.EventType == "Stock.Received")).Should().Be(1);
+                (await operation.AuditLogs.CountAsync(audit => audit.EntityName == nameof(StockTransaction)))
+                    .Should().Be(1);
+
+                // A separate session cannot observe any of the staged effects before
+                // the outer transaction commits.
+                await using var concurrentRead = fixture.CreateContext(tenantId);
+                (await concurrentRead.StockInHand.CountAsync()).Should().Be(0);
+                (await concurrentRead.StockTransactions.CountAsync(transaction => transaction.Notes == notes))
+                    .Should().Be(0);
                 throw new InvalidOperationException("Injected failure after nested stock posting.");
             });
 
