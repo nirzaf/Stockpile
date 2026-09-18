@@ -530,9 +530,17 @@ public sealed class PurchaseOrderApprovalPostgreSqlIntegrationTests(PostgreSqlIn
             failure.Which.MessageText.Should().Contain(
                 "Cannot downgrade UnitPrice precision while stored values require decimal(20,4).");
 
+            var failedDowngradeState = await context.Database.GetAppliedMigrationsAsync();
+            failedDowngradeState.Should().Contain(precisionMigrationId);
+
+            // Restore the latest schema before querying with the current EF model. The failed
+            // downgrade intentionally leaves the schema at the precision migration, before the current model.
+            await context.Database.MigrateAsync();
+            context.ChangeTracker.Clear();
             var storedLine = await context.OrderDetails.SingleAsync(line => line.PurchaseOrderId == order.Id);
             storedLine.UnitPrice.Should().Be(1.2345m);
-            (await context.Database.GetAppliedMigrationsAsync()).Should().Contain(precisionMigrationId);
+            var restoredMigrationState = await context.Database.GetAppliedMigrationsAsync();
+            restoredMigrationState.Should().Contain(precisionMigrationId);
         }
         finally
         {
