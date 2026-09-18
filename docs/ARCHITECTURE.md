@@ -13,7 +13,7 @@ promise that every listed interface is a supported third-party API.
 | Platform, tenancy, authorization and audit | Contracts and entities in `src/Merconiq.Core`; HTTP authentication, authorization, tenant request context and host composition in `src/Merconiq.Web`; persistence and company membership implementation in `src/Merconiq.Infrastructure` | The Web host authenticates and authorizes requests. Tenant-scoped application services and persistence enforce data scope. Audit records are produced by the shared persistence pipeline. A service interface alone is not an authorization boundary. |
 | Inventory | Domain entities, service contracts and stock operations in `src/Merconiq.Core`; PostgreSQL mapping and stock-count persistence in `src/Merconiq.Infrastructure`; HTTP/UI entry points in `src/Merconiq.Web` | Covers item/location stock, movement history, reservations, quarantine, valuation, stock counts and transfer-in-transit records. Inventory posting remains behind existing application services and their transaction/unit-of-work behavior. |
 | Procurement | Supplier and purchase-order contracts, entities and services in `src/Merconiq.Core`; EF mapping/repositories in `src/Merconiq.Infrastructure`; endpoint/UI and DI composition in `src/Merconiq.Web` | An approved purchase order is a procurement document; it is not itself a stock receipt or a posted financial journal. Do not infer a goods-receipt-to-ledger contract that the current source does not implement. |
-| Integrations and decision support | Contracts and forecasting services in `src/Merconiq.Core`; webhook delivery, configuration, host services and persistence registrations in `src/Merconiq.Infrastructure` and `src/Merconiq.Web` | Webhooks and forecast/anomaly services are current capabilities. Their presence does not make arbitrary implementations, payloads, or delivery behavior stable external contracts. See the open integration work in [issue #355](https://github.com/nirzaf/merconiq/issues/355). |
+| Integrations and decision support | Contracts and forecasting services in `src/Merconiq.Core`; webhook delivery, configuration, host services and persistence registrations in `src/Merconiq.Infrastructure` and `src/Merconiq.Web` | The HTTP and webhook behavior documented in `docs/API.md` is part of the declared public v1 contract. Issue #355 tracks additional implementation and evidence; future, undocumented integration behavior is not thereby promised as a stable contract. |
 | General ledger / finance | No implemented general-ledger module is present in the current persistence model | Stock valuation records are not journal entries and must not be presented as a general ledger, accounts payable, or financial-statement source of truth. Finance remains future work. |
 
 These are capability ownership notes, not a claim that code is already split
@@ -57,9 +57,9 @@ For existing inventory postings, the persisted records have distinct roles:
 
 | Record | Meaning and rule |
 | --- | --- |
-| `StockTransactions` | Historical physical movement evidence (including source/destination where applicable). The DbContext enforces append-only behavior. Do not edit or delete a posted movement to correct it; use the relevant authorized correction or return workflow. |
+| `StockTransactions` | Append-only stock-operation evidence. Physical movement types record quantity movement; `Quarantine` and `QuarantineRelease` record hold changes without changing on-hand quantity. Interpret `TransactionType` before reconciling quantities; do not count every row as physical flow. The DbContext enforces append-only behavior. |
 | `StockInHand` | Current on-hand quantity by item, location and lot. `ReservedQuantity` and `QuarantinedQuantity` are holds within that position, not additional physical movements. Read it as the current operational position; do not independently write it or treat it as the movement history. |
-| `StockValuationEntries` | Append-only moving-average valuation postings linked to stock movements. These are inventory valuation evidence, not general-ledger journals. |
+| `StockValuationEntries` | Append-only moving-average valuation postings linked to valued stock movements. These are inventory valuation evidence, not general-ledger journals. |
 | `StockValuationBuckets` | Current weighted-average quantity/value position by item and location. Keep it consistent with the valuation entries through the existing posting service; do not use it as a second, independently writable ledger. |
 | `TransferOrders`, `TransferTransitEntries` and `TransferTransitSettlements` | Transfer intent and the recorded in-transit/settlement history. A transfer extension must preserve source, transit and destination movement lineage through the existing transfer workflows. |
 
@@ -114,12 +114,17 @@ owner to make an example appear extensible.
   registrations described above remain host-owned implementation seams. A
   .NET or database contract becomes stable only when its scope and compatibility
   rules are explicitly documented.
+- Existing import/export routes and webhook behavior documented in
+  `docs/API.md` are part of the declared public v1 contract and follow the same
+  compatibility rule, including documented authentication, response, event
+  identity, signature, retry and payload guarantees. Issue #355 tracks
+  additional implementation and acceptance evidence; its open status is not an
+  exception to those existing v1 guarantees. Undocumented future behavior is
+  not promised as part of the stable contract.
 - Once another contract is declared stable, compatible additions stay within
   its declared version. A breaking change requires a new contract version and
   a documented consumer transition. No support or deprecation period is
-  promised unless the owner publishes one for that contract. Webhook and
-  import/export guarantees remain subject to the open integration-contract
-  work in issue #355.
+  promised unless the owner publishes one for that contract.
 - EF Core changes use the existing forward migration history. Do not rewrite
   applied migrations, reset migration history, or silently discard approved
   data. The repository does not declare the EF schema as a public contract or
