@@ -56,4 +56,57 @@ public sealed class SalesDocumentAmountAdapterTests
             CurrencyScale: 2,
             CalculationVersion: DocumentAmountCalculator.CalculationVersion));
     }
+
+    [Theory]
+    [MemberData(
+        nameof(DocumentAmountCalculatorTests.SyntheticGoldenExamples),
+        MemberType = typeof(DocumentAmountCalculatorTests))]
+    public void SyntheticGoldenExamples_ProduceMatchingSalesLineAndDocumentSnapshots(
+        DocumentLineAmount calculatorInput,
+        decimal expectedNet,
+        decimal expectedDiscount,
+        decimal expectedTaxable,
+        decimal expectedTax,
+        decimal expectedGross)
+    {
+        var salesInput = new SalesDocumentLineAmount(
+            calculatorInput.Quantity,
+            calculatorInput.UnitPrice,
+            calculatorInput.DiscountPercent,
+            calculatorInput.TaxRatePercent,
+            calculatorInput.TaxMode,
+            calculatorInput.CurrencyScale,
+            calculatorInput.TaxCategory,
+            calculatorInput.Direction);
+
+        var expectedLine = new CalculatedLineAmount(
+            expectedNet,
+            expectedDiscount,
+            expectedTaxable,
+            expectedTax,
+            expectedGross,
+            calculatorInput.TaxRatePercent,
+            calculatorInput.TaxMode,
+            calculatorInput.TaxCategory,
+            calculatorInput.CurrencyScale,
+            calculatorInput.Direction,
+            DocumentAmountCalculator.CalculationVersion);
+
+        SalesDocumentAmountAdapter.CalculateLine(salesInput)
+            .Should().Be(expectedLine);
+
+        var expectedDocument = new CalculatedDocumentAmount(
+            expectedNet,
+            expectedDiscount,
+            expectedTaxable,
+            expectedTax,
+            expectedGross,
+            calculatorInput.CurrencyScale,
+            DocumentAmountCalculator.CalculationVersion);
+
+        SalesDocumentAmountAdapter.CalculateDocument(
+                [salesInput],
+                calculatorInput.CurrencyScale)
+            .Should().Be(expectedDocument);
+    }
 }
