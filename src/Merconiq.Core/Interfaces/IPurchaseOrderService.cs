@@ -31,7 +31,7 @@ public interface IPurchaseOrderService
     /// <summary>Gets a purchase order and its existing lines for a controlled amendment form.</summary>
     Task<PurchaseOrder?> GetForAmendmentAsync(int id);
 
-    /// <summary>Gets a snapshot of ordered and conservatively outstanding line obligations.</summary>
+    /// <summary>Gets a read-only snapshot of ordered charge-line quantities.</summary>
     Task<PurchaseOrderLineObligations?> GetLineObligationsAsync(int id, CancellationToken cancellationToken = default);
 
     /// <summary>Creates a new purchase order with its line items.</summary>

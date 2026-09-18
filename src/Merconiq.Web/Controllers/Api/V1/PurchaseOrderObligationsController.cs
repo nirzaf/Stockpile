@@ -24,8 +24,8 @@ public sealed class PurchaseOrderObligationsController(
     ICurrentUserAuthorization authorization) : ControllerBase
 {
     /// <summary>
-    /// Gets ordered quantities and conservative outstanding obligations for a company-mapped PO.
-    /// No receipt or acceptance progress is inferred in this slice.
+    /// Gets ordered charge-line quantities for a company-mapped purchase order.
+    /// No receipt, acceptance, rejection, or outstanding quantity is inferred in this slice.
     /// </summary>
     [HttpGet("{purchaseOrderId:int}/obligations")]
     [Authorize(Policy = CapabilityPolicies.View)]
