@@ -6,7 +6,7 @@
 @inject IPurchaseOrderService POService
 @inject AuthenticationStateProvider AuthenticationStateProvider
 @inject ICurrentUserAuthorization CurrentUserAuthorization
-@inject ISnackbar Snackbar
+@inject IStringLocalizer<SharedResource> L
 @inject NavigationManager Nav
 
 <PageTitle>Purchase Order Details</PageTitle>
@@ -14,9 +14,32 @@
 <MudText Typo="Typo.h4" Color="Color.Primary" Class="mb-3">Purchase Order Details</MudText>
 <MudDivider Class="mb-4" />
 
-@if (_po == null)
+@if (_statusFeedback is not null)
 {
-    <MudProgressCircular Color="Color.Primary" Indeterminate="true" />
+    <div class="status-feedback-focus mb-3" tabindex="-1" @ref="_statusFeedbackFocusTarget">
+        <MudAlert Severity="@_statusFeedbackSeverity"
+                  Variant="Variant.Outlined"
+                  Class="document-status-feedback"
+                  role="@StatusFeedbackRole"
+                  aria-live="@StatusFeedbackLive">
+            <div>@_statusFeedback</div>
+            @if (_showStatusReload)
+            {
+                <MudButton Variant="Variant.Text"
+                           Color="Color.Primary"
+                           Class="document-action"
+                           Disabled="@_isUpdatingStatus"
+                           OnClick="ReloadCurrentPurchaseOrder">
+                    @L["Reload current purchase order"]
+                </MudButton>
+            }
+        </MudAlert>
+    </div>
+}
+
+@if (_po is null)
+{
+    <MudProgressCircular Color="Color.Primary" Indeterminate="true" aria-label="@L["Loading purchase order"]" />
 }
 else
 {
@@ -87,21 +110,45 @@ else
         </RowTemplate>
     </MudTable>
 
-    <div class="mt-4 d-flex gap-2">
+    <div class="document-actions mt-4 d-flex gap-2">
         @if (_po.Status == PurchaseOrderStatus.Pending)
         {
-            <MudButton Variant="Variant.Filled" Color="Color.Success" OnClick="@(() => UpdateStatus(PurchaseOrderStatus.Approved))">Approve</MudButton>
-            <MudButton Variant="Variant.Filled" Color="Color.Error" OnClick="@(() => UpdateStatus(PurchaseOrderStatus.Cancelled))">Cancel PO</MudButton>
+            <MudButton Class="document-action"
+                       Disabled="@(_isUpdatingStatus || _showStatusReload)"
+                       Variant="Variant.Filled"
+                       Color="Color.Success"
+                       OnClick="@(() => UpdateStatus(PurchaseOrderStatus.Approved))">
+                Approve
+            </MudButton>
+            <MudButton Class="document-action"
+                       Disabled="@(_isUpdatingStatus || _showStatusReload)"
+                       Variant="Variant.Filled"
+                       Color="Color.Error"
+                       OnClick="@(() => UpdateStatus(PurchaseOrderStatus.Cancelled))">
+                Cancel PO
+            </MudButton>
         }
         @if (_po.Status == PurchaseOrderStatus.Approved)
         {
-            <MudButton Variant="Variant.Outlined" Color="Color.Warning" Href="@($"/PurchaseOrders/Amend/{_po.Id}")">Amend commercial terms</MudButton>
+            <MudButton Class="document-action"
+                       Disabled="@(_isUpdatingStatus || _showStatusReload)"
+                       Variant="Variant.Outlined"
+                       Color="Color.Warning"
+                       Href="@($"/PurchaseOrders/Amend/{_po.Id}")">
+                Amend commercial terms
+            </MudButton>
         }
         @if (_po.Status is PurchaseOrderStatus.Submitted or PurchaseOrderStatus.Approved)
         {
-            <MudButton Variant="Variant.Outlined" Color="Color.Error" OnClick="@(() => UpdateStatus(PurchaseOrderStatus.Voided))">Void PO</MudButton>
+            <MudButton Class="document-action"
+                       Disabled="@(_isUpdatingStatus || _showStatusReload)"
+                       Variant="Variant.Outlined"
+                       Color="Color.Error"
+                       OnClick="@(() => UpdateStatus(PurchaseOrderStatus.Voided))">
+                Void PO
+            </MudButton>
         }
-        <MudButton Href="/PurchaseOrders" Variant="Variant.Outlined" Color="Color.Secondary">Back to List</MudButton>
+        <MudButton Class="document-action" Href="/PurchaseOrders" Variant="Variant.Outlined" Color="Color.Secondary">Back to List</MudButton>
     </div>
 }
 
@@ -110,6 +157,24 @@ else
     public int Id { get; set; }
 
     private PurchaseOrder? _po;
+    private bool _isUpdatingStatus;
+    private bool _showStatusReload;
+    private bool _focusStatusFeedback;
+    private ElementReference _statusFeedbackFocusTarget;
+    private string? _statusFeedback;
+    private Severity _statusFeedbackSeverity = Severity.Info;
+
+    private string StatusFeedbackRole => _statusFeedbackSeverity == Severity.Error ? "alert" : "status";
+    private string StatusFeedbackLive => _statusFeedbackSeverity == Severity.Error ? "assertive" : "polite";
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_focusStatusFeedback)
+        {
+            _focusStatusFeedback = false;
+            await _statusFeedbackFocusTarget.FocusAsync();
+        }
+    }
 
     protected override async Task OnInitializedAsync()
     {
@@ -136,25 +201,78 @@ else
 
     private async Task UpdateStatus(PurchaseOrderStatus newStatus)
     {
-        if (_po != null)
+        if (_po is null || _isUpdatingStatus || _showStatusReload)
         {
-            try
-            {
-                var principal = (await AuthenticationStateProvider.GetAuthenticationStateAsync()).User;
-                if (!await CurrentUserAuthorization.IsTenantAdministratorAsync(principal))
-                {
-                    Snackbar.Add("Tenant administrator access is required for tenant-wide purchase orders.", Severity.Error);
-                    return;
-                }
-
-                await POService.UpdateStatusAsync(_po.Id, newStatus.ToString());
-                Snackbar.Add($"Status updated to {newStatus}", Severity.Success);
-                _po = await POService.GetByIdAsync(Id); // Reload
-            }
-            catch (Exception ex)
-            {
-                Snackbar.Add(ex.Message, Severity.Error);
-            }
+            return;
         }
+
+        _isUpdatingStatus = true;
+        _showStatusReload = false;
+        SetStatusFeedback(L["Updating purchase-order status…"], Severity.Info);
+        try
+        {
+            var principal = (await AuthenticationStateProvider.GetAuthenticationStateAsync()).User;
+            if (!await CurrentUserAuthorization.IsTenantAdministratorAsync(principal))
+            {
+                SetStatusFeedback(
+                    L["Tenant administrator access is required for tenant-wide purchase orders."],
+                    Severity.Error);
+                return;
+            }
+
+            await POService.UpdateStatusAsync(_po.Id, newStatus.ToString());
+            SetStatusFeedback(L["Purchase-order status updated."], Severity.Success);
+        }
+        catch (Exception exception)
+        {
+            SetStatusUpdateFailure(exception);
+        }
+        finally
+        {
+            _isUpdatingStatus = false;
+        }
+    }
+
+    private void SetStatusUpdateFailure(Exception exception)
+    {
+        var (messageKey, severity) = PurchaseOrderStatusPresentation.GetFailureFeedback(exception) switch
+        {
+            PurchaseOrderStatusUpdateFailureKind.ConcurrencyConflict =>
+                (
+                    "The purchase order changed while you were viewing it. Reload the current purchase order before trying again.",
+                    Severity.Error),
+            PurchaseOrderStatusUpdateFailureKind.Rejected =>
+                (
+                    "The status change was not accepted. Reload the current purchase order and review its status before taking another action.",
+                    Severity.Warning),
+            _ =>
+                (
+                    "We could not confirm the current purchase-order status. Reload the latest details before trying again.",
+                    Severity.Error)
+        };
+
+        SetStatusFeedback(L[messageKey], severity, offerReload: true);
+    }
+
+    private Task ReloadCurrentPurchaseOrder()
+    {
+        if (_isUpdatingStatus)
+        {
+            return Task.CompletedTask;
+        }
+
+        _isUpdatingStatus = true;
+        _showStatusReload = false;
+        SetStatusFeedback(L["Reloading purchase-order details…"], Severity.Info);
+        Nav.NavigateTo(Nav.Uri, forceLoad: true);
+        return Task.CompletedTask;
+    }
+
+    private void SetStatusFeedback(string message, Severity severity, bool offerReload = false)
+    {
+        _statusFeedback = message;
+        _statusFeedbackSeverity = severity;
+        _showStatusReload = offerReload;
+        _focusStatusFeedback = true;
     }
 }
