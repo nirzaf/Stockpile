@@ -156,6 +156,68 @@ public sealed class TransferOrderPostgreSqlIntegrationTests(PostgreSqlIntegratio
     }
 
     [PostgreSqlFact]
+    public async Task Dispatch_commits_durable_notification_with_the_stock_movement()
+    {
+        fixture.EnsureEnabled();
+        var tenantId = $"transfer-dispatch-outbox-{Guid.NewGuid():N}";
+        var seeded = await CreateApprovedTransferAsync(tenantId, 30, unitCost: 10m);
+
+        await using (var setup = fixture.CreateContext(tenantId))
+        {
+            setup.WebhookSubscriptions.Add(new WebhookSubscription
+            {
+                TenantId = tenantId,
+                EventType = "TransferOrder.Dispatched",
+                Url = "https://hooks.example.test/transfer-dispatched"
+            });
+            await setup.SaveChangesAsync();
+        }
+
+        var dispatchStartedAt = DateTimeOffset.UtcNow;
+        await using (var operation = fixture.CreateContext(tenantId))
+        {
+            var dispatcher = new WebhookDispatcher(
+                Mock.Of<IServiceProvider>(),
+                Mock.Of<IHttpClientFactory>(),
+                NullLogger<WebhookDispatcher>.Instance,
+                operation);
+            var orders = CreateService(operation, tenantId, dispatcher);
+            var dispatch = await orders.DispatchAsync(
+                seeded.OrderId,
+                seeded.LineId,
+                30,
+                "dispatch-outbox",
+                "warehouse-user-42",
+                new StockMutationScope(seeded.CompanyId, () => Task.FromResult(true)));
+
+            dispatch.DispatchedAt.Should().BeOnOrAfter(dispatchStartedAt);
+            dispatch.FromLocationId.Should().Be(seeded.SourceLocationId);
+            dispatch.DispatchedBy.Should().Be("warehouse-user-42");
+        }
+
+        await using var verify = fixture.CreateContext(tenantId);
+        var delivery = await verify.WebhookDeliveries
+            .AsNoTracking()
+            .SingleAsync(candidate => candidate.EventType == "TransferOrder.Dispatched");
+        delivery.TenantId.Should().Be(tenantId);
+        delivery.Status.Should().Be(WebhookDeliveryStatus.Pending);
+        delivery.AttemptCount.Should().Be(0);
+        delivery.Payload.Should().Contain(seeded.OrderId.ToString());
+        delivery.Payload.Should().Contain(seeded.LineId.ToString());
+
+        (await verify.StockInHand.SingleAsync(stock =>
+                stock.ItemId == seeded.ItemId && stock.LocationId == seeded.SourceLocationId))
+            .Should().Match<StockInHand>(stock => stock.Quantity == 70 && stock.ReservedQuantity == 0);
+        (await verify.StockValuationBuckets.SingleAsync(bucket =>
+                bucket.ItemId == seeded.ItemId && bucket.LocationId == seeded.SourceLocationId))
+            .Should().Match<StockValuationBucket>(bucket => bucket.Quantity == 70 && bucket.Value == 700m);
+        (await verify.TransferTransitEntries.SingleAsync())
+            .Should().Match<TransferTransitEntry>(entry =>
+                entry.Quantity == 30 && entry.TotalValue == 300m &&
+                entry.FromLocationId == seeded.SourceLocationId && entry.DispatchedBy == "warehouse-user-42");
+    }
+
+    [PostgreSqlFact]
     public async Task Amendment_replaces_lines_preserves_retained_identity_and_releases_approved_reservations()
     {
         fixture.EnsureEnabled();
