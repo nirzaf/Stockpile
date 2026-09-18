@@ -155,7 +155,10 @@ public sealed class TransferAgingReconciliationPostgreSqlApiTests(
             approve: false);
 
         using var response = await client.GetAsync("/api/v1/transfer-orders/aging?pageSize=100");
-        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        response.StatusCode.Should().Be(
+            HttpStatusCode.OK,
+            "report response was: {0}",
+            await response.Content.ReadAsStringAsync());
         var envelope = await response.Content.ReadFromJsonAsync<ApiResponse<TransferAgingReconciliationPage>>();
         envelope.Should().NotBeNull();
         envelope!.Success.Should().BeTrue();
@@ -260,7 +263,10 @@ public sealed class TransferAgingReconciliationPostgreSqlApiTests(
 
         using var response = await client.GetAsync(
             $"/api/v1/transfer-orders/aging?companyId={company.CompanyId}&pageSize=1");
-        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        response.StatusCode.Should().Be(
+            HttpStatusCode.OK,
+            "report response was: {0}",
+            await response.Content.ReadAsStringAsync());
         var envelope = await response.Content.ReadFromJsonAsync<ApiResponse<TransferAgingReconciliationPage>>();
         var report = envelope!.Data!.Lines.Should().ContainSingle().Subject;
         report.DispatchedQuantity.Should().Be(64);
@@ -318,7 +324,10 @@ public sealed class TransferAgingReconciliationPostgreSqlApiTests(
 
         using var response = await client.GetAsync(
             $"/api/v1/transfer-orders/aging?companyId={company.CompanyId}&pageSize=1");
-        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        response.StatusCode.Should().Be(
+            HttpStatusCode.OK,
+            "report response was: {0}",
+            await response.Content.ReadAsStringAsync());
         var envelope = await response.Content.ReadFromJsonAsync<ApiResponse<TransferAgingReconciliationPage>>();
         var report = envelope!.Data!.Lines.Should().ContainSingle().Subject;
         report.DispatchedValue.Should().Be(0m);

@@ -163,35 +163,19 @@ public sealed class TransferAgingReconciliationService(InventoryDbContext db)
                             : 0)))))
             .ToListAsync(cancellationToken);
 
-        var eventTransactionIds = dispatchEntries.Select(entry => entry.StockTransactionId)
-            .Concat(settlementEntries.Select(settlement => settlement.StockTransactionId));
-        var valuationPostings = db.StockValuationEntries.AsNoTracking()
-            .Where(posting => posting.TenantId == tenantId &&
-                              eventTransactionIds.Contains(posting.StockTransactionId))
-            .GroupBy(posting => new
-            {
-                posting.StockTransactionId,
-                posting.EntryType,
-                posting.ItemId,
-                posting.LocationId
-            })
-            .Select(group => new
-            {
-                group.Key.StockTransactionId,
-                group.Key.EntryType,
-                group.Key.ItemId,
-                group.Key.LocationId,
-                Count = group.Count(),
-                Quantity = group.Sum(posting => posting.Quantity),
-                TotalValue = group.Sum(posting => posting.TotalValue)
-            });
+        // Valuation entries are unique per (tenant, stock transaction), so join each expected
+        // event directly to its posting. This keeps one database row per event without a nested
+        // grouped subquery or materializing fragmented event history in application memory.
+        var valuationEntries = db.StockValuationEntries.AsNoTracking()
+            .Where(posting => posting.TenantId == tenantId);
 
         var dispatchValuationVariances = await (
                 from entry in dispatchEntries
-                join posting in valuationPostings
+                join posting in valuationEntries
                     on new
                     {
                         entry.StockTransactionId,
+                        entry.TenantId,
                         EntryType = StockValuationEntryType.TransferOut,
                         entry.ItemId,
                         LocationId = entry.FromLocationId
@@ -199,6 +183,7 @@ public sealed class TransferAgingReconciliationService(InventoryDbContext db)
                     equals new
                     {
                         posting.StockTransactionId,
+                        posting.TenantId,
                         posting.EntryType,
                         posting.ItemId,
                         posting.LocationId
@@ -210,23 +195,24 @@ public sealed class TransferAgingReconciliationService(InventoryDbContext db)
                     entry.TransferOrderLineId,
                     ExpectedQuantity = entry.Quantity,
                     ExpectedValue = entry.TotalValue,
-                    PostingCount = posting == null ? 0 : posting.Count,
+                    PostingCount = posting == null ? 0 : 1,
                     PostingQuantity = posting == null ? 0 : posting.Quantity,
                     PostingValue = posting == null ? 0m : posting.TotalValue
                 } by entry.TransferOrderLineId into g
                 select new ValuationVariance(
                     g.Key,
-                    g.Sum(row => Math.Abs(1 - row.PostingCount)),
+                    g.Sum(row => 1 - row.PostingCount),
                     g.Sum(row => Math.Abs(row.ExpectedQuantity - row.PostingQuantity)),
                     g.Sum(row => Math.Abs(row.ExpectedValue - row.PostingValue))))
             .ToListAsync(cancellationToken);
 
         var settlementValuationVariances = await (
                 from settlement in settlementEntries
-                join posting in valuationPostings
+                join posting in valuationEntries
                     on new
                     {
                         settlement.StockTransactionId,
+                        settlement.TenantId,
                         EntryType = settlement.SettlementType == TransferTransitSettlementType.Returned
                             ? StockValuationEntryType.TransferReturn
                             : StockValuationEntryType.TransferIn,
@@ -238,6 +224,7 @@ public sealed class TransferAgingReconciliationService(InventoryDbContext db)
                     equals new
                     {
                         posting.StockTransactionId,
+                        posting.TenantId,
                         posting.EntryType,
                         posting.ItemId,
                         posting.LocationId
@@ -249,13 +236,13 @@ public sealed class TransferAgingReconciliationService(InventoryDbContext db)
                     settlement.TransferOrderLineId,
                     ExpectedQuantity = settlement.Quantity,
                     ExpectedValue = settlement.TotalValue,
-                    PostingCount = posting == null ? 0 : posting.Count,
+                    PostingCount = posting == null ? 0 : 1,
                     PostingQuantity = posting == null ? 0 : posting.Quantity,
                     PostingValue = posting == null ? 0m : posting.TotalValue
                 } by settlement.TransferOrderLineId into g
                 select new ValuationVariance(
                     g.Key,
-                    g.Sum(row => Math.Abs(1 - row.PostingCount)),
+                    g.Sum(row => 1 - row.PostingCount),
                     g.Sum(row => Math.Abs(row.ExpectedQuantity - row.PostingQuantity)),
                     g.Sum(row => Math.Abs(row.ExpectedValue - row.PostingValue))))
             .ToListAsync(cancellationToken);
