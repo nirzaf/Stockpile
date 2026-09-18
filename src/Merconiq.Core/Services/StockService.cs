@@ -635,7 +635,7 @@ public class StockService : IStockService
                 {
                     var destinationValuedQuantity = await GetValuedLotQuantityAsync(
                         itemId, toLocationId, source.BatchNumber, source.ExpiryDate);
-                    if (destinationValuedQuantity != destination.Quantity)
+                    if (destinationValuedQuantity != 0 && destinationValuedQuantity != destination.Quantity)
                         throw new StockAvailabilityConflictException(
                             "The destination lot's valued quantity does not match its on-hand balance; its value coverage cannot be determined safely.");
                     if (destination.Quantity > 0 &&
@@ -1245,7 +1245,7 @@ public class StockService : IStockService
                     original.BatchNumber,
                     original.ExpiryDate,
                     cancellationToken);
-                if (valuedQuantity != stock.Quantity ||
+                if ((valuedQuantity != 0 && valuedQuantity != stock.Quantity) ||
                     stock.Quantity > 0 && (originalValuation is not null) != (valuedQuantity == stock.Quantity))
                     throw new StockAvailabilityConflictException(
                         "The return would leave the tracked lot's valued quantity inconsistent with its on-hand balance.");

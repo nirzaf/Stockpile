@@ -2,6 +2,7 @@ using System.Linq.Expressions;
 using FluentAssertions;
 using Merconiq.Core.Entities;
 using Merconiq.Core.Interfaces;
+using Merconiq.Core.Models;
 using Merconiq.Core.Services;
 using Merconiq.Infrastructure.Data;
 using Merconiq.Infrastructure.Repositories;
@@ -118,6 +119,91 @@ public sealed class StockValuationIntegrationTests
         entries[0].StockTransaction.BatchNumber.Should().Be("LOT-1");
         entries[1].TotalValue.Should().Be(200m);
         entries[1].StockTransaction.BatchNumber.Should().Be("LOT-2");
+    }
+
+    [Fact]
+    public async Task Unvalued_lot_receipts_transfers_and_returns_remain_unvalued()
+    {
+        var tenantId = $"valuation-unvalued-lot-{Guid.NewGuid():N}";
+        var databaseName = Guid.NewGuid().ToString();
+        int companyId;
+        int itemId;
+        int sourceLocationId;
+        int destinationLocationId;
+        var batchNumber = "LOT-UNVALUED";
+        var expiryDate = DateTime.UtcNow.Date.AddMonths(6);
+
+        await using (var setup = CreateInMemoryContext(databaseName, tenantId))
+        {
+            var suffix = Guid.NewGuid().ToString("N")[..8];
+            var company = new Company { Code = $"UL-{suffix}", LegalName = "Unvalued lot company" };
+            setup.Companies.Add(company);
+            await setup.SaveChangesAsync();
+            var sourceBranch = new Branch { CompanyId = company.Id, Code = $"ULS-{suffix}", Name = "Unvalued lot source" };
+            var destinationBranch = new Branch { CompanyId = company.Id, Code = $"ULD-{suffix}", Name = "Unvalued lot destination" };
+            setup.Branches.AddRange(sourceBranch, destinationBranch);
+            await setup.SaveChangesAsync();
+            var item = new Item
+            {
+                ItemCode = $"UL-ITEM-{suffix}",
+                Description = "Unvalued lot transfer regression"
+            };
+            var source = new Location { Name = "Unvalued lot source location", BranchId = sourceBranch.Id };
+            var destination = new Location { Name = "Unvalued lot destination location", BranchId = destinationBranch.Id };
+            setup.Items.Add(item);
+            setup.Locations.AddRange(source, destination);
+            await setup.SaveChangesAsync();
+            companyId = company.Id;
+            itemId = item.Id;
+            sourceLocationId = source.Id;
+            destinationLocationId = destination.Id;
+        }
+        var mutationScope = new StockMutationScope(companyId);
+
+        await using (var firstReceipt = CreateInMemoryContext(databaseName, tenantId))
+            await CreateService(firstReceipt, tenantId).ReceiveStockAsync(
+                itemId, sourceLocationId, 5, "first quantity-only receipt", batchNumber, expiryDate,
+                mutationScope: mutationScope);
+        await using (var secondReceipt = CreateInMemoryContext(databaseName, tenantId))
+            await CreateService(secondReceipt, tenantId).ReceiveStockAsync(
+                itemId, sourceLocationId, 3, "repeat quantity-only receipt", batchNumber, expiryDate,
+                mutationScope: mutationScope);
+
+        await using (var firstTransfer = CreateInMemoryContext(databaseName, tenantId))
+            await CreateService(firstTransfer, tenantId).TransferStockAsync(
+                itemId, sourceLocationId, destinationLocationId, 2, "first unvalued transfer", batchNumber, expiryDate,
+                mutationScope);
+        await using (var secondTransfer = CreateInMemoryContext(databaseName, tenantId))
+            await CreateService(secondTransfer, tenantId).TransferStockAsync(
+                itemId, sourceLocationId, destinationLocationId, 2, "repeat unvalued transfer", batchNumber, expiryDate,
+                mutationScope);
+
+        int saleId;
+        await using (var sale = CreateInMemoryContext(databaseName, tenantId))
+        {
+            await CreateService(sale, tenantId).SellStockAsync(
+                itemId, destinationLocationId, 1, "partial unvalued lot sale", batchNumber, expiryDate,
+                mutationScope: mutationScope);
+            saleId = await sale.StockTransactions
+                .Where(transaction => transaction.TransactionType == TransactionType.Sell)
+                .Select(transaction => transaction.Id)
+                .SingleAsync();
+        }
+
+        await using (var stockReturn = CreateInMemoryContext(databaseName, tenantId))
+            await CreateService(stockReturn, tenantId).ReturnStockAsync(
+                new CreateStockReturnRequest(
+                    saleId, 1, StockReturnDisposition.Restockable, "unvalued-lot-return"));
+
+        await using var verify = CreateInMemoryContext(databaseName, tenantId);
+        (await verify.StockInHand.SingleAsync(stock => stock.LocationId == sourceLocationId))
+            .Should().Match<StockInHand>(stock =>
+                stock.Quantity == 4 && stock.BatchNumber == batchNumber && stock.ExpiryDate == expiryDate);
+        (await verify.StockInHand.SingleAsync(stock => stock.LocationId == destinationLocationId))
+            .Should().Match<StockInHand>(stock =>
+                stock.Quantity == 4 && stock.BatchNumber == batchNumber && stock.ExpiryDate == expiryDate);
+        (await verify.StockValuationBuckets.CountAsync()).Should().Be(0);
+        (await verify.StockValuationEntries.CountAsync()).Should().Be(0);
     }
 
     [Fact]
