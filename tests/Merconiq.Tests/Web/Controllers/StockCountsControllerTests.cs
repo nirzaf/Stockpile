@@ -65,7 +65,8 @@ public sealed class StockCountsControllerTests
                 It.IsAny<ClaimsPrincipal>(), locationId, CompanyCapability.View, cancellationToken))
             .ReturnsAsync(true);
         authorization
-            .Setup(service => service.IsTenantAdministratorAsync(It.IsAny<ClaimsPrincipal>()))
+            .Setup(service => service.IsTenantAdministratorAsync(
+                It.IsAny<ClaimsPrincipal>(), cancellationToken))
             .ReturnsAsync(false);
         authorization
             .Setup(service => service.GetAccessibleCompanyIdsAsync(
@@ -90,6 +91,85 @@ public sealed class StockCountsControllerTests
         result.Should().BeOfType<NotFoundObjectResult>();
         authorization.Verify(service => service.GetAccessibleCompanyIdsAsync(
             It.IsAny<ClaimsPrincipal>(), CompanyCapability.View, cancellationToken), Times.Once);
+    }
+
+    [Fact]
+    public async Task Get_passes_request_cancellation_to_tenant_and_company_scope_lookups()
+    {
+        const int countId = 7;
+        using var cancellation = new CancellationTokenSource();
+        var cancellationToken = cancellation.Token;
+        var stockCounts = new Mock<IStockCountService>(MockBehavior.Strict);
+        stockCounts
+            .Setup(service => service.GetAsync(countId, It.IsAny<IReadOnlyCollection<int>?>(), cancellationToken))
+            .ReturnsAsync((StockCountView?)null);
+        var authorization = new Mock<ICurrentUserAuthorization>(MockBehavior.Strict);
+        authorization
+            .Setup(service => service.IsTenantAdministratorAsync(
+                It.IsAny<ClaimsPrincipal>(), cancellationToken))
+            .ReturnsAsync(false);
+        authorization
+            .Setup(service => service.GetAccessibleCompanyIdsAsync(
+                It.IsAny<ClaimsPrincipal>(), CompanyCapability.View, cancellationToken))
+            .ReturnsAsync((IReadOnlySet<int>)new HashSet<int> { 9 });
+
+        var controller = new StockCountsController(stockCounts.Object, authorization.Object)
+        {
+            ControllerContext = new ControllerContext
+            {
+                HttpContext = new DefaultHttpContext
+                {
+                    User = new ClaimsPrincipal(new ClaimsIdentity())
+                }
+            }
+        };
+
+        var result = await controller.Get(countId, cancellationToken);
+
+        result.Should().BeOfType<NotFoundObjectResult>();
+        authorization.Verify(service => service.IsTenantAdministratorAsync(
+            It.IsAny<ClaimsPrincipal>(), cancellationToken), Times.Once);
+        authorization.Verify(service => service.GetAccessibleCompanyIdsAsync(
+            It.IsAny<ClaimsPrincipal>(), CompanyCapability.View, cancellationToken), Times.Once);
+    }
+
+    [Fact]
+    public async Task Start_passes_request_cancellation_to_location_company_lookup()
+    {
+        const int locationId = 42;
+        using var cancellation = new CancellationTokenSource();
+        var cancellationToken = cancellation.Token;
+        var stockCounts = new Mock<IStockCountService>(MockBehavior.Strict);
+        stockCounts
+            .Setup(service => service.StartAsync(
+                locationId, It.IsAny<StockMutationScope>(), cancellationToken))
+            .ThrowsAsync(new InvalidOperationException("Stop after the authorization lookup."));
+        var authorization = new Mock<ICurrentUserAuthorization>(MockBehavior.Strict);
+        authorization
+            .Setup(service => service.CanAccessLocationAsync(
+                It.IsAny<ClaimsPrincipal>(), locationId, CompanyCapability.Post, cancellationToken))
+            .ReturnsAsync(true);
+        authorization
+            .Setup(service => service.GetLocationCompanyIdAsync(
+                It.IsAny<ClaimsPrincipal>(), locationId, cancellationToken))
+            .ReturnsAsync(9);
+
+        var controller = new StockCountsController(stockCounts.Object, authorization.Object)
+        {
+            ControllerContext = new ControllerContext
+            {
+                HttpContext = new DefaultHttpContext
+                {
+                    User = new ClaimsPrincipal(new ClaimsIdentity())
+                }
+            }
+        };
+
+        Func<Task> start = () => controller.Start(new StartStockCountRequest(locationId), cancellationToken);
+
+        await start.Should().ThrowAsync<InvalidOperationException>();
+        authorization.Verify(service => service.GetLocationCompanyIdAsync(
+            It.IsAny<ClaimsPrincipal>(), locationId, cancellationToken), Times.Once);
     }
 
     [Fact]

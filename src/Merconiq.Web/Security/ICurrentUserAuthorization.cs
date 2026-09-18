@@ -8,6 +8,7 @@ public interface ICurrentUserAuthorization
 {
     Task<bool> IsSessionCurrentAsync(ClaimsPrincipal principal);
     Task<bool> IsTenantAdministratorAsync(ClaimsPrincipal principal);
+    Task<bool> IsTenantAdministratorAsync(ClaimsPrincipal principal, CancellationToken cancellationToken);
     Task<bool> CanEditOrganizationAsync(ClaimsPrincipal principal);
     Task<bool> HasCompanyCapabilityAsync(ClaimsPrincipal principal, CompanyCapability capability);
     Task<bool> CanAccessCompanyAsync(ClaimsPrincipal principal, int companyId, CompanyCapability capability);
@@ -24,6 +25,10 @@ public interface ICurrentUserAuthorization
     Task<bool> CanOverrideExpiredStockAtLocationAsync(ClaimsPrincipal principal, int locationId);
     Task<bool> CanOverrideQuarantinedStockAtLocationAsync(ClaimsPrincipal principal, int locationId);
     Task<int?> GetLocationCompanyIdAsync(ClaimsPrincipal principal, int locationId);
+    Task<int?> GetLocationCompanyIdAsync(
+        ClaimsPrincipal principal,
+        int locationId,
+        CancellationToken cancellationToken);
     Task<bool> CanAccessTransferAsync(
         ClaimsPrincipal principal,
         int fromLocationId,

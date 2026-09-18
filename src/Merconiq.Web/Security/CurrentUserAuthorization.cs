@@ -27,6 +27,15 @@ public sealed class CurrentUserAuthorization(
         WithCurrentUserAsync(principal, false, (_, _, roles) =>
             Task.FromResult(roles.Contains("Admin", StringComparer.Ordinal)));
 
+    public Task<bool> IsTenantAdministratorAsync(
+        ClaimsPrincipal principal,
+        CancellationToken cancellationToken) =>
+        WithCurrentUserAsync(
+            principal,
+            false,
+            (_, _, roles, _) => Task.FromResult(roles.Contains("Admin", StringComparer.Ordinal)),
+            cancellationToken);
+
     public Task<bool> CanEditOrganizationAsync(ClaimsPrincipal principal) =>
         WithCurrentUserAsync(principal, false, (_, _, roles) => Task.FromResult(
             roles.Contains("Admin", StringComparer.Ordinal) ||
@@ -158,6 +167,19 @@ public sealed class CurrentUserAuthorization(
                 .Where(location => location.Id == locationId)
                 .Select(location => (int?)location.Branch!.CompanyId)
                 .SingleOrDefaultAsync());
+
+    public Task<int?> GetLocationCompanyIdAsync(
+        ClaimsPrincipal principal,
+        int locationId,
+        CancellationToken cancellationToken) =>
+        WithCurrentUserAsync(
+            principal,
+            (int?)null,
+            async (db, _, _, token) => await db.Locations
+                .Where(location => location.Id == locationId)
+                .Select(location => (int?)location.Branch!.CompanyId)
+                .SingleOrDefaultAsync(token),
+            cancellationToken);
 
     public Task<bool> CanAccessTransferAsync(
         ClaimsPrincipal principal,
