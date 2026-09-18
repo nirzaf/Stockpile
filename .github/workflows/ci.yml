@@ -65,6 +65,9 @@ jobs:
           ADMIN_PASSWORD: ci-compose-admin-password
         run: ./scripts/validate-compose.sh
 
+      - name: Validate release candidate workflows
+        run: bash scripts/validate-release-workflows.sh
+
       - name: Test with coverage
         run: |
           dotnet test --no-build --configuration Release \
