@@ -107,6 +107,7 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
 
     public override int SaveChanges(bool acceptAllChangesOnSuccess)
     {
+        EnsureAuditLogsAreAppendOnly();
         EnsureValuationEntriesAreAppendOnly();
         EnsureDocumentLineLinksAreAppendOnly();
         EnsureStockTransactionsAreAppendOnly();
@@ -122,6 +123,7 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
         bool acceptAllChangesOnSuccess,
         CancellationToken cancellationToken = default)
     {
+        EnsureAuditLogsAreAppendOnly();
         EnsureValuationEntriesAreAppendOnly();
         EnsureDocumentLineLinksAreAppendOnly();
         EnsureStockTransactionsAreAppendOnly();
@@ -147,8 +149,23 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
     /// </remarks>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The number of state entries written to the database.</returns>
-    public override async Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
+    public override Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
     {
+        var currentUser = _httpContextAccessor?.HttpContext?.User?.Identity?.Name ?? "System";
+        return SaveChangesAsAsync(currentUser, cancellationToken);
+    }
+
+    /// <summary>Saves changes with a server-verified actor label for audit entries.</summary>
+    public async Task<int> SaveChangesAsAsync(
+        string auditUsername,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(auditUsername))
+        {
+            throw new ArgumentException("An authenticated audit identity is required.", nameof(auditUsername));
+        }
+
+        EnsureAuditLogsAreAppendOnly();
         EnsureValuationEntriesAreAppendOnly();
         EnsureDocumentLineLinksAreAppendOnly();
         EnsureStockTransactionsAreAppendOnly();
@@ -157,7 +174,7 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
         EnsureTransferTransitEntriesAreAppendOnly();
         EnsureTransferTransitSettlementsAreAppendOnly();
         NormalizeStockLotExpiryDates();
-        var currentUser = _httpContextAccessor?.HttpContext?.User?.Identity?.Name ?? "System";
+        var currentUser = auditUsername.Trim();
         var utcNow = DateTime.UtcNow;
 
         foreach (var entry in ChangeTracker.Entries<ITenantScoped>()
@@ -200,6 +217,15 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
         }
 
         return result;
+    }
+
+    private void EnsureAuditLogsAreAppendOnly()
+    {
+        if (ChangeTracker.Entries<AuditLog>()
+            .Any(entry => entry.State is EntityState.Modified or EntityState.Deleted))
+        {
+            throw new InvalidOperationException("Audit logs are append-only and cannot be updated or deleted.");
+        }
     }
 
     private void EnsureValuationEntriesAreAppendOnly()

@@ -23,6 +23,8 @@ namespace Merconiq.Tests.Integration;
 [Trait("Category", "PostgreSQL")]
 public sealed class PurchaseOrderApprovalPostgreSqlIntegrationTests(PostgreSqlIntegrationFixture fixture)
 {
+    private static readonly PurchaseOrderStatusActor TestActor = new("approval-test-user", "Approval Test User");
+
     [PostgreSqlFact]
     public async Task Migration_backfills_approval_snapshot_before_enabling_the_database_guard()
     {
@@ -237,6 +239,60 @@ public sealed class PurchaseOrderApprovalPostgreSqlIntegrationTests(PostgreSqlIn
     }
 
     [PostgreSqlFact]
+    public async Task Purchase_order_status_history_records_authenticated_actor_and_is_tenant_scoped()
+    {
+        fixture.EnsureEnabled();
+        var tenantId = $"po-audit-{Guid.NewGuid():N}";
+        var otherTenantId = $"po-audit-other-{Guid.NewGuid():N}";
+        await using var context = fixture.CreateContext(tenantId);
+
+        var unit = new UnitOfMeasure { Code = "EA", Name = "Each", DecimalPlaces = 0, IsWholeUnitOnly = true };
+        var supplier = new Supplier { Name = "Audit history supplier" };
+        context.UnitsOfMeasure.Add(unit);
+        context.Suppliers.Add(supplier);
+        await context.SaveChangesAsync();
+
+        var item = new Item
+        {
+            ItemCode = $"AUDIT-{Guid.NewGuid():N}"[..20], Description = "Audit history item", Rate = 1m,
+            BaseUnitId = unit.Id, PurchaseUnitId = unit.Id, PurchaseToBaseFactor = 1m,
+            QuantityPrecision = 0, WholeUnitOnly = true
+        };
+        context.Items.Add(item);
+        await context.SaveChangesAsync();
+
+        var service = CreateService(context, tenantId);
+        var order = await service.CreateAsync(
+            new PurchaseOrder { PONumber = $"PO-AUDIT-{Guid.NewGuid():N}"[..32], SupplierId = supplier.Id },
+            [new OrderDetail { ItemId = item.Id, Quantity = 1, UnitPrice = 1m }],
+            Guid.NewGuid().ToString("N"));
+
+        var actor = new PurchaseOrderStatusActor("stable-approver-id", "Audit Approver");
+        await service.UpdateStatusAsync(order.Id, nameof(PurchaseOrderStatus.Approved), actor);
+        await service.UpdateStatusAsync(order.Id, nameof(PurchaseOrderStatus.Cancelled), actor);
+
+        await using var verification = fixture.CreateContext(tenantId);
+        var auditRows = await verification.AuditLogs
+            .Where(row => row.EntityName == nameof(PurchaseOrder) &&
+                          row.Action == "Update" &&
+                          row.Username == actor.AuditUsername &&
+                          row.ChangedColumns != null && row.ChangedColumns.Contains("\"Status\""))
+            .OrderBy(row => row.Id)
+            .ToListAsync();
+        auditRows.Should().HaveCount(2);
+        auditRows.Select(row => row.Username).Should().OnlyContain(username => username == actor.AuditUsername);
+
+        var history = await CreateService(verification, tenantId).GetStatusHistoryAsync(order.Id);
+        history.Select(entry => (entry.PreviousStatus, entry.Status)).Should().ContainInOrder(
+            (PurchaseOrderStatus.Approved, PurchaseOrderStatus.Cancelled),
+            (PurchaseOrderStatus.Pending, PurchaseOrderStatus.Approved));
+        history.Select(entry => entry.Actor).Should().OnlyContain(username => username == actor.AuditUsername);
+
+        await using var otherTenant = fixture.CreateContext(otherTenantId);
+        (await CreateService(otherTenant, otherTenantId).GetStatusHistoryAsync(order.Id)).Should().BeEmpty();
+    }
+
+    [PostgreSqlFact]
     public async Task Approval_retry_after_ambiguous_commit_reloads_purchase_order_state()
     {
         fixture.EnsureEnabled();
@@ -276,7 +332,7 @@ public sealed class PurchaseOrderApprovalPostgreSqlIntegrationTests(PostgreSqlIn
             Guid.NewGuid().ToString("N"));
 
         commitInterceptor.Arm();
-        await service.UpdateStatusAsync(order.Id, nameof(PurchaseOrderStatus.Approved));
+        await service.UpdateStatusAsync(order.Id, nameof(PurchaseOrderStatus.Approved), TestActor);
 
         commitInterceptor.CommitCallbacksAfterArm.Should().Be(2,
             "the first successful database commit reports a transient client-side error and must be retried");
@@ -348,7 +404,7 @@ public sealed class PurchaseOrderApprovalPostgreSqlIntegrationTests(PostgreSqlIn
                     line.TaxRuleId, line.TaxRatePercent, line.TaxCategory, line.TaxMode, line.Direction)]));
         });
 
-        var approval = () => service.UpdateStatusAsync(order.Id, nameof(PurchaseOrderStatus.Approved));
+        var approval = () => service.UpdateStatusAsync(order.Id, nameof(PurchaseOrderStatus.Approved), TestActor);
         var failure = await FluentActions.Awaiting(approval)
             .Should().ThrowAsync<InvalidOperationException>();
         failure.Which.Message.Should().Contain("changed after approval started");
@@ -396,7 +452,7 @@ public sealed class PurchaseOrderApprovalPostgreSqlIntegrationTests(PostgreSqlIn
             },
             [new OrderDetail { ItemId = item.Id, Quantity = 3, UnitPrice = 1m }],
             Guid.NewGuid().ToString("N"));
-        await service.UpdateStatusAsync(order.Id, nameof(PurchaseOrderStatus.Approved));
+        await service.UpdateStatusAsync(order.Id, nameof(PurchaseOrderStatus.Approved), TestActor);
 
         var form = await service.GetForAmendmentAsync(order.Id);
         var line = form!.OrderDetails.Single();
@@ -529,7 +585,7 @@ public sealed class PurchaseOrderApprovalPostgreSqlIntegrationTests(PostgreSqlIn
             },
             [new OrderDetail { ItemId = item.Id, Quantity = 1, UnitPrice = 100m, TaxRuleId = rule.Id }],
             Guid.NewGuid().ToString("N"));
-        await service.UpdateStatusAsync(order.Id, nameof(PurchaseOrderStatus.Approved));
+        await service.UpdateStatusAsync(order.Id, nameof(PurchaseOrderStatus.Approved), TestActor);
 
         var originalLine = await context.OrderDetails.SingleAsync(line => line.PurchaseOrderId == order.Id);
         var originalRate = originalLine.TaxRatePercent;
@@ -607,7 +663,7 @@ public sealed class PurchaseOrderApprovalPostgreSqlIntegrationTests(PostgreSqlIn
             [new OrderDetail { ItemId = item.Id, Quantity = 2, UnitPrice = 4m }],
             Guid.NewGuid().ToString("N"));
 
-        await service.UpdateStatusAsync(order.Id, nameof(PurchaseOrderStatus.Approved));
+        await service.UpdateStatusAsync(order.Id, nameof(PurchaseOrderStatus.Approved), TestActor);
         order.ApprovedCommercialVersion.Should().Be(1);
         order.ApprovedCommercialSnapshotJson.Should().Contain("\"unitOfMeasureCode\":\"EA\"");
         using (var approvedSnapshot = System.Text.Json.JsonDocument.Parse(order.ApprovedCommercialSnapshotJson!))
@@ -647,7 +703,7 @@ public sealed class PurchaseOrderApprovalPostgreSqlIntegrationTests(PostgreSqlIn
         var constraintFailure = await FluentActions.Awaiting(bypass).Should().ThrowAsync<PostgresException>();
         constraintFailure.Which.SqlState.Should().Be(PostgresErrorCodes.CheckViolation);
 
-        await service.UpdateStatusAsync(order.Id, nameof(PurchaseOrderStatus.Approved));
+        await service.UpdateStatusAsync(order.Id, nameof(PurchaseOrderStatus.Approved), TestActor);
         context.ChangeTracker.Clear();
         var reapproved = await context.PurchaseOrders.SingleAsync(po => po.Id == order.Id);
         reapproved.Status.Should().Be(PurchaseOrderStatus.Approved);
@@ -799,7 +855,7 @@ public sealed class PurchaseOrderApprovalPostgreSqlIntegrationTests(PostgreSqlIn
         Task? approvalTask = null;
         try
         {
-            approvalTask = service.UpdateStatusAsync(order.Id, nameof(PurchaseOrderStatus.Approved));
+            approvalTask = service.UpdateStatusAsync(order.Id, nameof(PurchaseOrderStatus.Approved), TestActor);
             await pause.Paused.WaitAsync(TimeSpan.FromSeconds(15));
 
             await using (var editor = fixture.CreateContext(tenantId))
@@ -851,6 +907,7 @@ public sealed class PurchaseOrderApprovalPostgreSqlIntegrationTests(PostgreSqlIn
             webhooks,
             new TestTenantContext(tenantId),
             NullLogger<PurchaseOrderService>.Instance,
+            new Repository<AuditLog>(context),
             new Repository<TaxRule>(context),
             new Repository<OrderDetail>(context),
             new Repository<Supplier>(context),
