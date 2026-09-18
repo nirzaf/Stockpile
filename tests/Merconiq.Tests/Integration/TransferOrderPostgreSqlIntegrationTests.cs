@@ -63,7 +63,6 @@ public sealed class TransferOrderPostgreSqlIntegrationTests(PostgreSqlIntegratio
 
         nextOrder.DocumentId.Should().NotBe(retainedIdentity.Id.Value);
         nextOrder.Number.Should().NotBe(retainedIdentity.HumanNumber);
-        nextOrder.Number.Should().Be($"TO-{retainedIdentity.Period:0000}-000002");
 
         var nextIdentityId = new DocumentIdentityId(nextOrder.DocumentId);
         var nextIdentity = await operation.DocumentIdentities
@@ -71,7 +70,10 @@ public sealed class TransferOrderPostgreSqlIntegrationTests(PostgreSqlIntegratio
             .SingleAsync(identity => identity.Id == nextIdentityId);
         nextIdentity.CompanyId.Should().Be(retainedIdentity.CompanyId);
         nextIdentity.DocumentType.Should().Be(retainedIdentity.DocumentType);
-        nextIdentity.Period.Should().Be(retainedIdentity.Period);
+        // Periods use the UTC calendar year; this integration test may cross New Year.
+        nextIdentity.Period.Should().BeOneOf(retainedIdentity.Period, retainedIdentity.Period + 1);
+        var expectedSequence = nextIdentity.Period == retainedIdentity.Period ? 2 : 1;
+        nextOrder.Number.Should().Be($"TO-{nextIdentity.Period:0000}-{expectedSequence:000000}");
         nextIdentity.HumanNumber.Should().Be(nextOrder.Number);
         nextIdentity.Status.Should().Be(DocumentLifecycleStatus.Draft);
     }
