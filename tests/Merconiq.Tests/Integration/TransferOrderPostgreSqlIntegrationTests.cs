@@ -20,6 +20,63 @@ namespace Merconiq.Tests.Integration;
 public sealed class TransferOrderPostgreSqlIntegrationTests(PostgreSqlIntegrationFixture fixture)
 {
     [PostgreSqlFact]
+    public async Task Cancelled_transfer_order_retains_its_identity_and_the_number_is_not_reused()
+    {
+        fixture.EnsureEnabled();
+        var tenantId = $"transfer-number-cancellation-{Guid.NewGuid():N}";
+        var seeded = await CreateApprovedTransferAsync(tenantId, 10, unitCost: 10m);
+
+        await using var operation = fixture.CreateContext(tenantId);
+        var orders = CreateService(operation, tenantId);
+        var originalOrder = await operation.TransferOrders
+            .AsNoTracking()
+            .SingleAsync(order => order.Id == seeded.OrderId);
+        var assignedIdentity = await operation.DocumentIdentities
+            .AsNoTracking()
+            .SingleAsync(identity => identity.Id == originalOrder.DocumentId);
+
+        assignedIdentity.CompanyId.Should().Be(seeded.CompanyId);
+        assignedIdentity.DocumentType.Should().Be("TransferOrder");
+        assignedIdentity.Status.Should().Be(DocumentLifecycleStatus.Active);
+
+        await orders.CancelAsync(seeded.OrderId, new StockMutationScope(seeded.CompanyId));
+
+        var retainedIdentity = await operation.DocumentIdentities
+            .AsNoTracking()
+            .SingleAsync(identity => identity.Id == assignedIdentity.Id);
+        retainedIdentity.Id.Should().Be(assignedIdentity.Id);
+        retainedIdentity.HumanNumber.Should().Be(assignedIdentity.HumanNumber);
+        retainedIdentity.CompanyId.Should().Be(assignedIdentity.CompanyId);
+        retainedIdentity.DocumentType.Should().Be(assignedIdentity.DocumentType);
+        retainedIdentity.Period.Should().Be(assignedIdentity.Period);
+        retainedIdentity.Status.Should().Be(DocumentLifecycleStatus.Cancelled);
+        (await operation.TransferOrders.AsNoTracking().SingleAsync(order => order.Id == seeded.OrderId))
+            .Status.Should().Be(TransferOrderStatus.Cancelled);
+
+        var nextOrder = await orders.CreateAsync(
+            new CreateTransferOrderRequest(
+                seeded.CompanyId,
+                seeded.SourceLocationId,
+                seeded.DestinationLocationId,
+                [new TransferOrderLineRequest(seeded.ItemId, 1)]),
+            $"create-after-cancel-{Guid.NewGuid():N}");
+
+        nextOrder.DocumentId.Should().NotBe(retainedIdentity.Id.Value);
+        nextOrder.Number.Should().NotBe(retainedIdentity.HumanNumber);
+        nextOrder.Number.Should().Be($"TO-{retainedIdentity.Period:0000}-000002");
+
+        var nextIdentityId = new DocumentIdentityId(nextOrder.DocumentId);
+        var nextIdentity = await operation.DocumentIdentities
+            .AsNoTracking()
+            .SingleAsync(identity => identity.Id == nextIdentityId);
+        nextIdentity.CompanyId.Should().Be(retainedIdentity.CompanyId);
+        nextIdentity.DocumentType.Should().Be(retainedIdentity.DocumentType);
+        nextIdentity.Period.Should().Be(retainedIdentity.Period);
+        nextIdentity.HumanNumber.Should().Be(nextOrder.Number);
+        nextIdentity.Status.Should().Be(DocumentLifecycleStatus.Draft);
+    }
+
+    [PostgreSqlFact]
     public async Task Dispatch_is_partial_idempotent_and_conserves_source_value_in_transit()
     {
         fixture.EnsureEnabled();
