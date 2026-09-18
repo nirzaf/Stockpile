@@ -277,7 +277,7 @@ The following endpoints intentionally do not use that envelope:
 | `200` | Successful read, token issuance, webhook mutation, forecast, or anomaly response |
 | `201` | Item created; the `Location` header identifies the item resource |
 | `204` | Successful stock mutation, item update/delete, or webhook delete; no body |
-| `400` | Unmapped host, invalid query/body, validation failure, route/body ID mismatch, or an `Idempotency-Key` longer than 200 characters |
+| `400` | Unmapped host, invalid query/body, validation failure, route/body ID mismatch, a missing required `Idempotency-Key`, or an `Idempotency-Key` longer than 200 characters |
 | `401` | Missing/invalid/expired bearer token, failed credentials, or token tenant mismatch |
 | `403` | Authenticated caller lacks the required role |
 | `404` | Requested item, stock balance, or webhook subscription does not exist |
