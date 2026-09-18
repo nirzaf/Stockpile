@@ -32,4 +32,40 @@ public sealed class CurrentUserAuthorizationCancellationTests
         await check.Should().ThrowAsync<OperationCanceledException>();
         scopeFactory.VerifyNoOtherCalls();
     }
+
+    [Fact]
+    public async Task IsTenantAdministratorAsync_observes_cancellation_before_creating_a_scope()
+    {
+        var scopeFactory = new Mock<IServiceScopeFactory>(MockBehavior.Strict);
+        var authorization = new CurrentUserAuthorization(
+            Mock.Of<ITenantContext>(),
+            scopeFactory.Object,
+            Options.Create(new IdentityOptions()));
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+
+        Func<Task> check = () => authorization.IsTenantAdministratorAsync(
+            new ClaimsPrincipal(new ClaimsIdentity()), cancellation.Token);
+
+        await check.Should().ThrowAsync<OperationCanceledException>();
+        scopeFactory.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task GetLocationCompanyIdAsync_observes_cancellation_before_creating_a_scope()
+    {
+        var scopeFactory = new Mock<IServiceScopeFactory>(MockBehavior.Strict);
+        var authorization = new CurrentUserAuthorization(
+            Mock.Of<ITenantContext>(),
+            scopeFactory.Object,
+            Options.Create(new IdentityOptions()));
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+
+        Func<Task> check = () => authorization.GetLocationCompanyIdAsync(
+            new ClaimsPrincipal(new ClaimsIdentity()), locationId: 7, cancellationToken: cancellation.Token);
+
+        await check.Should().ThrowAsync<OperationCanceledException>();
+        scopeFactory.VerifyNoOtherCalls();
+    }
 }

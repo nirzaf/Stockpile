@@ -36,7 +36,7 @@ public sealed class StockCountsController(
         }
 
         var scope = new StockMutationScope(
-            await authorization.GetLocationCompanyIdAsync(User, request.LocationId),
+            await authorization.GetLocationCompanyIdAsync(User, request.LocationId, cancellationToken),
             token => authorization.CanAccessLocationAsync(
                 User, request.LocationId, CompanyCapability.Post, token));
         var count = await stockCounts.StartAsync(request.LocationId, scope, cancellationToken);
@@ -53,10 +53,11 @@ public sealed class StockCountsController(
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> Get(int countId, CancellationToken cancellationToken)
     {
-        var isTenantAdministrator = await authorization.IsTenantAdministratorAsync(User);
+        var isTenantAdministrator = await authorization.IsTenantAdministratorAsync(User, cancellationToken);
         var companyIds = isTenantAdministrator
             ? null
-            : await authorization.GetAccessibleCompanyIdsAsync(User, CompanyCapability.View);
+            : await authorization.GetAccessibleCompanyIdsAsync(
+                User, CompanyCapability.View, cancellationToken);
         var count = await stockCounts.GetAsync(countId, companyIds, cancellationToken);
 
         return count is null
@@ -79,7 +80,7 @@ public sealed class StockCountsController(
             return Forbid();
         }
 
-        var isTenantAdministrator = await authorization.IsTenantAdministratorAsync(User);
+        var isTenantAdministrator = await authorization.IsTenantAdministratorAsync(User, cancellationToken);
         var companyIds = isTenantAdministrator
             ? null
             : await authorization.GetAccessibleCompanyIdsAsync(
