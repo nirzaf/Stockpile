@@ -103,6 +103,26 @@ public sealed class OpeningStockImportService(
                 foreach (var group in validation.ValidRows.GroupBy(row => new { row.ItemId, row.LocationId }))
                 {
                     var quantity = group.Sum(row => row.Quantity);
+                    // The approved CSV describes the balance at the cutover instant. Applying
+                    // today's balance before an existing quantity movement would replay that
+                    // movement twice in the historical ledger. Quarantine transitions do not
+                    // change on-hand quantity and are therefore not part of this guard.
+                    var hasLaterQuantityMovement = await context.StockTransactions.AnyAsync(transaction =>
+                            transaction.ItemId == group.Key.ItemId &&
+                            transaction.TransactionDate >= cutoverAt &&
+                            transaction.TransactionType != TransactionType.Quarantine &&
+                            transaction.TransactionType != TransactionType.QuarantineRelease &&
+                            (transaction.FromLocationId == group.Key.LocationId ||
+                             transaction.ToLocationId == group.Key.LocationId),
+                        cancellationToken);
+                    if (hasLaterQuantityMovement)
+                    {
+                        throw new InvalidOperationException(
+                            $"Opening baseline cutover for item {group.Key.ItemId} at location {group.Key.LocationId} " +
+                            "cannot precede or coincide with an existing stock movement; choose a cutover after the " +
+                            "latest quantity movement or reconcile the stock history first.");
+                    }
+
                     var stock = await context.StockInHand.SingleOrDefaultAsync(
                         candidate => candidate.ItemId == group.Key.ItemId &&
                                     candidate.LocationId == group.Key.LocationId &&
