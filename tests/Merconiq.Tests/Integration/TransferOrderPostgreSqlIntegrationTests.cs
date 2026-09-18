@@ -403,27 +403,93 @@ public sealed class TransferOrderPostgreSqlIntegrationTests(PostgreSqlIntegratio
     }
 
     [PostgreSqlFact]
-    public async Task Dispatch_refuses_lot_costing_until_M03_defines_a_lot_valuation_scope()
+    public async Task Dispatch_values_each_valued_lot_at_location_average_and_never_borrows_for_an_unvalued_lot()
     {
         fixture.EnsureEnabled();
         var tenantId = $"transfer-dispatch-lot-{Guid.NewGuid():N}";
-        var seeded = await CreateApprovedTransferAsync(
-            tenantId, 20, unitCost: null, batchNumber: "LOT-281", expiryDate: DateTime.UtcNow.AddYears(1).Date);
-
-        await using (var operation = fixture.CreateContext(tenantId))
+        var today = DateTime.UtcNow.Date;
+        var lots = new[]
         {
-            var orders = CreateService(operation, tenantId);
-            var scope = new StockMutationScope(seeded.CompanyId, () => Task.FromResult(true));
-            await FluentAssertions.FluentActions.Invoking(() => orders.DispatchAsync(
-                    seeded.OrderId, seeded.LineId, 10, "dispatch-lot", "warehouse-user-42", scope))
-                .Should().ThrowAsync<StockAvailabilityConflictException>()
-                .WithMessage("Valued transfer dispatch is limited to unbatched stock until lot valuation is implemented.");
-        }
+            new TransferLotSeed("LOT-A", 10, 10m, today.AddMonths(6)),
+            new TransferLotSeed("LOT-B", 10, 20m, today.AddYears(1)),
+            new TransferLotSeed("LOT-UNVALUED", 10, null, today.AddYears(2))
+        };
+        var seeded = await CreateApprovedLotTransferAsync(tenantId, lots);
+        var lineA = seeded.Lines.Single(line => line.BatchNumber == "LOT-A");
+        var lineB = seeded.Lines.Single(line => line.BatchNumber == "LOT-B");
+        var unvaluedLine = seeded.Lines.Single(line => line.BatchNumber == "LOT-UNVALUED");
+
+        await using var operation = fixture.CreateContext(tenantId);
+        var orders = CreateService(operation, tenantId);
+        var scope = new StockMutationScope(seeded.CompanyId, () => Task.FromResult(true));
+        var first = await orders.DispatchAsync(
+            seeded.OrderId, lineA.Id, 4, "dispatch-lot-a", "warehouse-user-42", scope);
+        first.BatchNumber.Should().Be("LOT-A");
+        first.ExpiryDate.Should().Be(lineA.ExpiryDate);
+        first.UnitCost.Should().Be(15m, "the item/location bucket starts at (10×10 + 10×20) / 20");
+        first.TotalValue.Should().Be(60m);
+
+        var replay = await orders.DispatchAsync(
+            seeded.OrderId, lineA.Id, 4, "dispatch-lot-a", "retry-user", scope);
+        replay.Should().BeEquivalentTo(first);
+
+        var second = await orders.DispatchAsync(
+            seeded.OrderId, lineB.Id, 3, "dispatch-lot-b", "warehouse-user-42", scope);
+        second.BatchNumber.Should().Be("LOT-B");
+        second.ExpiryDate.Should().Be(lineB.ExpiryDate);
+        second.UnitCost.Should().Be(15m, "the first dispatch removed four units at the same moving average");
+        second.TotalValue.Should().Be(45m);
+
+        await FluentAssertions.FluentActions.Invoking(() => orders.DispatchAsync(
+                seeded.OrderId,
+                unvaluedLine.Id,
+                3,
+                "dispatch-unvalued-lot",
+                "warehouse-user-42",
+                scope))
+            .Should().ThrowAsync<StockAvailabilityConflictException>()
+            .WithMessage("Transfer dispatch requires valuation coverage for the selected source lot.");
 
         await using var verify = fixture.CreateContext(tenantId);
-        (await verify.StockInHand.SingleAsync(stock => stock.ItemId == seeded.ItemId))
-            .Should().Match<StockInHand>(stock => stock.Quantity == 20 && stock.ReservedQuantity == 20);
-        (await verify.TransferTransitEntries.CountAsync()).Should().Be(0);
+        var sourceLots = await verify.StockInHand
+            .Where(stock => stock.ItemId == seeded.ItemId && stock.LocationId == seeded.SourceLocationId)
+            .OrderBy(stock => stock.BatchNumber)
+            .ToListAsync();
+        sourceLots.Should().HaveCount(3);
+        sourceLots.Single(stock => stock.BatchNumber == "LOT-A")
+            .Should().Match<StockInHand>(stock => stock.Quantity == 6 && stock.ReservedQuantity == 6);
+        sourceLots.Single(stock => stock.BatchNumber == "LOT-B")
+            .Should().Match<StockInHand>(stock => stock.Quantity == 7 && stock.ReservedQuantity == 7);
+        sourceLots.Single(stock => stock.BatchNumber == "LOT-UNVALUED")
+            .Should().Match<StockInHand>(stock => stock.Quantity == 10 && stock.ReservedQuantity == 10);
+        sourceLots.Should().OnlyContain(stock =>
+            stock.Quantity - stock.ReservedQuantity - stock.QuarantinedQuantity == 0,
+            "reserved stock must not become available for another sale after dispatch");
+
+        var transitEntries = await verify.TransferTransitEntries
+            .OrderBy(entry => entry.BatchNumber)
+            .ToListAsync();
+        transitEntries.Should().HaveCount(2);
+        transitEntries.Single(entry => entry.BatchNumber == "LOT-A")
+            .Should().Match<TransferTransitEntry>(entry =>
+                entry.ExpiryDate == lineA.ExpiryDate && entry.Quantity == 4 &&
+                entry.UnitCost == 15m && entry.TotalValue == 60m &&
+                entry.SourceDocumentLineId.Value == lineA.DocumentLineId);
+        transitEntries.Single(entry => entry.BatchNumber == "LOT-B")
+            .Should().Match<TransferTransitEntry>(entry =>
+                entry.ExpiryDate == lineB.ExpiryDate && entry.Quantity == 3 &&
+                entry.UnitCost == 15m && entry.TotalValue == 45m &&
+                entry.SourceDocumentLineId.Value == lineB.DocumentLineId);
+
+        (await verify.StockTransactions.CountAsync(transaction =>
+            transaction.TransactionType == TransactionType.TransferDispatch)).Should().Be(2);
+        (await verify.StockValuationEntries.CountAsync(entry =>
+            entry.EntryType == StockValuationEntryType.TransferOut)).Should().Be(2);
+        (await verify.StockValuationBuckets.SingleAsync(bucket =>
+            bucket.ItemId == seeded.ItemId && bucket.LocationId == seeded.SourceLocationId))
+            .Should().Match<StockValuationBucket>(bucket => bucket.Quantity == 13 && bucket.Value == 195m);
+        (await verify.TransferOrderLines.SingleAsync(line => line.Id == unvaluedLine.Id))
+            .DispatchedQuantity.Should().Be(0);
     }
 
     [PostgreSqlFact]
@@ -890,6 +956,75 @@ public sealed class TransferOrderPostgreSqlIntegrationTests(PostgreSqlIntegratio
         }
     }
 
+    private async Task<MultiLotTransferFixture> CreateApprovedLotTransferAsync(
+        string tenantId,
+        IReadOnlyList<TransferLotSeed> lots)
+    {
+        int companyId;
+        int sourceLocationId;
+        int destinationLocationId;
+        int itemId;
+        int orderId;
+        IReadOnlyList<TransferLotLine> transferLines;
+
+        await using (var setup = fixture.CreateContext(tenantId))
+        {
+            var suffix = Guid.NewGuid().ToString("N")[..8];
+            var company = new Company { Code = $"TL-{suffix}", LegalName = "Valued lot transfer company" };
+            setup.Companies.Add(company);
+            await setup.SaveChangesAsync();
+            var sourceBranch = new Branch { CompanyId = company.Id, Code = $"LS-{suffix}", Name = "Lot source" };
+            var destinationBranch = new Branch { CompanyId = company.Id, Code = $"LD-{suffix}", Name = "Lot destination" };
+            setup.Branches.AddRange(sourceBranch, destinationBranch);
+            await setup.SaveChangesAsync();
+            var source = new Location { BranchId = sourceBranch.Id, Name = "Lot dispatch source" };
+            var destination = new Location { BranchId = destinationBranch.Id, Name = "Lot dispatch destination" };
+            var item = new Item { ItemCode = $"TL-ITEM-{suffix}", Description = "Moving-average lot transfer item" };
+            setup.Locations.AddRange(source, destination);
+            setup.Items.Add(item);
+            await setup.SaveChangesAsync();
+
+            var stock = CreateStockService(setup, tenantId);
+            foreach (var lot in lots)
+            {
+                await stock.ReceiveStockAsync(
+                    item.Id,
+                    source.Id,
+                    lot.Quantity,
+                    "Synthetic lot valuation fixture",
+                    lot.BatchNumber,
+                    lot.ExpiryDate,
+                    lot.UnitCost,
+                    new StockMutationScope(company.Id));
+            }
+
+            var orders = CreateService(setup, tenantId);
+            var order = await orders.CreateAsync(new CreateTransferOrderRequest(
+                company.Id,
+                source.Id,
+                destination.Id,
+                lots.Select(lot => new TransferOrderLineRequest(
+                    item.Id, lot.Quantity, lot.BatchNumber, lot.ExpiryDate)).ToArray()),
+                $"create-lots-{Guid.NewGuid():N}");
+            await orders.ApproveAsync(order.Id, new StockMutationScope(company.Id));
+
+            companyId = company.Id;
+            sourceLocationId = source.Id;
+            destinationLocationId = destination.Id;
+            itemId = item.Id;
+            orderId = order.Id;
+            transferLines = order.Lines.Select(line => new TransferLotLine(
+                line.Id,
+                line.BatchNumber!,
+                line.ExpiryDate,
+                line.Quantity,
+                line.DocumentLineId)).ToArray();
+        }
+
+        return new MultiLotTransferFixture(
+            companyId, sourceLocationId, destinationLocationId, itemId, orderId, transferLines);
+    }
+
     private async Task<TransferFixture> CreateApprovedTransferAsync(
         string tenantId,
         int transferQuantity,
@@ -1015,6 +1150,27 @@ public sealed class TransferOrderPostgreSqlIntegrationTests(PostgreSqlIntegratio
         int OrderId,
         int LineId,
         Guid DocumentLineId);
+
+    private sealed record TransferLotSeed(
+        string BatchNumber,
+        int Quantity,
+        decimal? UnitCost,
+        DateTime ExpiryDate);
+
+    private sealed record TransferLotLine(
+        int Id,
+        string BatchNumber,
+        DateTime? ExpiryDate,
+        int Quantity,
+        Guid DocumentLineId);
+
+    private sealed record MultiLotTransferFixture(
+        int CompanyId,
+        int SourceLocationId,
+        int DestinationLocationId,
+        int ItemId,
+        int OrderId,
+        IReadOnlyList<TransferLotLine> Lines);
 
     private sealed class ThrowingWebhookDispatcher : IWebhookDispatcher
     {

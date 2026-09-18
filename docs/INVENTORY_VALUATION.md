@@ -1,7 +1,8 @@
 # Inventory valuation
 
-Merconiq stores moving-average cost for unbatched stock at the tenant, item, and
-location scope. A costed receipt must provide an explicit `UnitCost`; the item
+Merconiq stores moving-average cost at the tenant/company/item/location scope in
+base stock units. A valuation bucket has no batch or expiry dimension: explicit-
+cost receipts for tracked lots update the same item/location bucket, and the
 selling rate is never used as acquisition cost. Existing quantity-only stock
 movements remain supported and remain unvalued.
 
@@ -13,8 +14,10 @@ Each valued receive or sale creates one append-only valuation entry linked to it
 - a sale of the final valued units consumes the exact remaining bucket value.
 
 Valuation updates commit atomically with the stock movement and use PostgreSQL
-`xmin` optimistic retries. Costed postings are intentionally limited to unbatched
-stock in this slice. An approved opening baseline uses an explicit cutover instant,
+`xmin` optimistic retries. Lot and expiry identify quantity for traceability only;
+they do not establish separate cost pools or FIFO layers. Lot-tagged valued entries
+retain the source movement's lot identity so an unvalued lot cannot borrow another
+lot's valuation coverage. An approved opening baseline uses an explicit cutover instant,
 creates an `Opening` stock transaction and valued receipt entry for each source
 line, and links the import line to that movement. The dry-run reports current
 versus approved quantities; replay rejects an existing quantity mismatch and
@@ -28,14 +31,17 @@ are not enabled by this stock slice. A baseline correction uses the approved
 reversal endpoint, which posts forward stock/valuation effects and retains the
 original baseline. Backups and restore rehearsals remain operational prerequisites;
 rollback of a failed request is the surrounding database transaction, not a
-production database reset. FIFO, lot/expiry valuation and GL postings remain
-separate follow-up work; transfers, reservations, and expiry eligibility are
-controlled by the stock service rather than this valuation slice.
+production database reset. FIFO and GL postings remain separate follow-up work;
+transfers, reservations, and expiry eligibility are controlled by the stock
+service rather than this valuation slice.
 
-A quantity-only sale with no valuation bucket remains unvalued and creates no
-valuation entry. If a bucket exists, a sale must be fully covered by its valued
-quantity; a sale that would combine valued and unvalued quantities is rejected
-atomically. Partial valuation of one sale is not inferred in this slice.
+A quantity-only issue with no valuation bucket remains unvalued and creates no
+valuation entry. Tracked-lot issues use the shared item/location moving average
+only when immutable valuation movements cover the selected lot's full on-hand
+quantity and the aggregate bucket covers the issue. Unvalued or mixed valued and
+unvalued quantities in the selected lot cannot consume value belonging to another
+lot. Such mixed lot positions are rejected atomically; partial valuation of one
+lot issue is not inferred.
 
 ## Lot expiry restrictions
 
@@ -105,23 +111,23 @@ first-expiry selection; reservation consumption still enforces expiry.
 
 ## Transfer-order dispatch
 
-Dispatch is supported only for approved, unbatched transfer reservations whose
-source warehouse has an existing valuation bucket covering the dispatched
-quantity. The source bucket's weighted-average carrying value is captured at the
-dispatch boundary, reduced atomically with the source quantity/reservation, and
-recorded in the company-scoped transfer transit ledger against the immutable
-transfer-order line identity. Transit value is not recalculated from selling
-price, and no destination quantity is created by dispatch. A later receipt or
-return must post its own source-linked transit movement.
+Dispatch is supported for approved transfer reservations only when the source
+warehouse has an existing moving-average valuation bucket covering the dispatched
+quantity. For tracked stock, immutable valuation movements must also cover the
+selected source lot's full on-hand quantity; an unvalued lot cannot consume another
+lot's value merely because both share an item/location bucket. The source bucket's
+weighted-average carrying value is captured at dispatch, reduced atomically with
+the source quantity/reservation, and recorded with the exact batch/expiry and
+transfer-order line identity in the company-scoped transit ledger. The bucket is
+not split or revalued per lot, and transit value is not recalculated from selling
+price. Dispatch creates no destination quantity; a later receipt or return posts
+its own source-linked transit movement.
 
-Batch/expiry reservations and quantity-only stock are rejected for valued
-dispatch. M03 currently does not carry acquisition value by lot and explicitly
-keeps lot/expiry as quantity traceability dimensions; accepting such stock here
-would require inventing which cost belongs to the selected lot. Cross-company
-transfers remain unsupported. Dispatch entries are append-only, and the transfer
-cannot be amended or cancelled after dispatch. The dispatch notification is
-written to the durable outbox in the same database transaction; delivery happens
-asynchronously after commit and cannot undo a committed movement.
+Quantity-only and mixed valued/unvalued lots remain ineligible for valued dispatch.
+Cross-company transfers remain unsupported. Dispatch entries are append-only,
+and the transfer cannot be amended or cancelled after dispatch. The dispatch
+notification is written to the durable outbox in the same database transaction;
+delivery happens asynchronously after commit and cannot undo a committed movement.
 
 ## Transit settlement
 
@@ -134,6 +140,7 @@ value. Settlement rows are append-only and reference the transit entry,
 transfer-order line, source document line, and stock transaction. Partial
 settlement leaves the balance in transit. Quarantine is an interim custody
 state only; it does not authorize a write-off or disposition, which must use a
-separately approved M03 workflow. The current dispatch boundary still rejects
-lot/expiry and quantity-only stock until lot-level acquisition valuation is
-defined.
+separately approved M03 workflow. Transit settlement retains the source batch and
+expiry identity while carrying the dispatch-captured item/location moving average;
+it does not create lot-specific costing. Quantity-only dispatch remains unvalued
+and is rejected at this valued-transit boundary.

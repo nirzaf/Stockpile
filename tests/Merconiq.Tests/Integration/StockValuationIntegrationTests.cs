@@ -2,6 +2,7 @@ using System.Linq.Expressions;
 using FluentAssertions;
 using Merconiq.Core.Entities;
 using Merconiq.Core.Interfaces;
+using Merconiq.Core.Models;
 using Merconiq.Core.Services;
 using Merconiq.Infrastructure.Data;
 using Merconiq.Infrastructure.Repositories;
@@ -85,21 +86,124 @@ public sealed class StockValuationIntegrationTests
     }
 
     [Fact]
-    public async Task Costed_receipt_rejects_lot_scope_without_writing()
+    public async Task Costed_lot_receipts_feed_the_shared_item_location_moving_average_bucket()
     {
-        var tenantId = $"valuation-reject-{Guid.NewGuid():N}";
-        await using var context = CreateInMemoryContext(Guid.NewGuid().ToString(), tenantId);
+        var tenantId = $"valuation-lots-{Guid.NewGuid():N}";
+        var databaseName = Guid.NewGuid().ToString();
+        await using var context = CreateInMemoryContext(databaseName, tenantId);
         var (itemId, locationId) = await SeedItemAndLocationAsync(context);
         var service = CreateService(context, tenantId);
+        var firstExpiry = DateTime.UtcNow.Date.AddMonths(6);
+        var secondExpiry = DateTime.UtcNow.Date.AddYears(1);
 
-        var act = () => service.ReceiveStockAsync(
-            itemId, locationId, 2, null, "LOT-1", unitCost: 10m);
+        await service.ReceiveStockAsync(
+            itemId, locationId, 10, null, "LOT-1", firstExpiry, unitCost: 10m);
+        await service.ReceiveStockAsync(
+            itemId, locationId, 10, null, "LOT-2", secondExpiry, unitCost: 20m);
 
-        await act.Should().ThrowAsync<InvalidOperationException>()
-            .WithMessage("Valuation is scoped to unbatched stock.");
-        (await context.StockInHand.CountAsync()).Should().Be(0);
-        (await context.StockTransactions.CountAsync()).Should().Be(0);
-        (await context.StockValuationBuckets.CountAsync()).Should().Be(0);
+        var bucket = await context.StockValuationBuckets.SingleAsync();
+        bucket.Quantity.Should().Be(20);
+        bucket.Value.Should().Be(300m);
+        var lots = await context.StockInHand.OrderBy(stock => stock.BatchNumber).ToListAsync();
+        lots.Should().HaveCount(2);
+        lots[0].Should().Match<StockInHand>(stock =>
+            stock.BatchNumber == "LOT-1" && stock.Quantity == 10 && stock.ExpiryDate == firstExpiry);
+        lots[1].Should().Match<StockInHand>(stock =>
+            stock.BatchNumber == "LOT-2" && stock.Quantity == 10 && stock.ExpiryDate == secondExpiry);
+        var entries = await context.StockValuationEntries
+            .Include(entry => entry.StockTransaction)
+            .OrderBy(entry => entry.Id)
+            .ToListAsync();
+        entries.Should().HaveCount(2);
+        entries[0].TotalValue.Should().Be(100m);
+        entries[0].StockTransaction.BatchNumber.Should().Be("LOT-1");
+        entries[1].TotalValue.Should().Be(200m);
+        entries[1].StockTransaction.BatchNumber.Should().Be("LOT-2");
+    }
+
+    [Fact]
+    public async Task Unvalued_lot_receipts_transfers_and_returns_remain_unvalued()
+    {
+        var tenantId = $"valuation-unvalued-lot-{Guid.NewGuid():N}";
+        var databaseName = Guid.NewGuid().ToString();
+        int companyId;
+        int itemId;
+        int sourceLocationId;
+        int destinationLocationId;
+        var batchNumber = "LOT-UNVALUED";
+        var expiryDate = DateTime.UtcNow.Date.AddMonths(6);
+
+        await using (var setup = CreateInMemoryContext(databaseName, tenantId))
+        {
+            var suffix = Guid.NewGuid().ToString("N")[..8];
+            var company = new Company { Code = $"UL-{suffix}", LegalName = "Unvalued lot company" };
+            setup.Companies.Add(company);
+            await setup.SaveChangesAsync();
+            var sourceBranch = new Branch { CompanyId = company.Id, Code = $"ULS-{suffix}", Name = "Unvalued lot source" };
+            var destinationBranch = new Branch { CompanyId = company.Id, Code = $"ULD-{suffix}", Name = "Unvalued lot destination" };
+            setup.Branches.AddRange(sourceBranch, destinationBranch);
+            await setup.SaveChangesAsync();
+            var item = new Item
+            {
+                ItemCode = $"UL-ITEM-{suffix}",
+                Description = "Unvalued lot transfer regression"
+            };
+            var source = new Location { Name = "Unvalued lot source location", BranchId = sourceBranch.Id };
+            var destination = new Location { Name = "Unvalued lot destination location", BranchId = destinationBranch.Id };
+            setup.Items.Add(item);
+            setup.Locations.AddRange(source, destination);
+            await setup.SaveChangesAsync();
+            companyId = company.Id;
+            itemId = item.Id;
+            sourceLocationId = source.Id;
+            destinationLocationId = destination.Id;
+        }
+        var mutationScope = new StockMutationScope(companyId);
+
+        await using (var firstReceipt = CreateInMemoryContext(databaseName, tenantId))
+            await CreateService(firstReceipt, tenantId).ReceiveStockAsync(
+                itemId, sourceLocationId, 5, "first quantity-only receipt", batchNumber, expiryDate,
+                mutationScope: mutationScope);
+        await using (var secondReceipt = CreateInMemoryContext(databaseName, tenantId))
+            await CreateService(secondReceipt, tenantId).ReceiveStockAsync(
+                itemId, sourceLocationId, 3, "repeat quantity-only receipt", batchNumber, expiryDate,
+                mutationScope: mutationScope);
+
+        await using (var firstTransfer = CreateInMemoryContext(databaseName, tenantId))
+            await CreateService(firstTransfer, tenantId).TransferStockAsync(
+                itemId, sourceLocationId, destinationLocationId, 2, "first unvalued transfer", batchNumber, expiryDate,
+                mutationScope);
+        await using (var secondTransfer = CreateInMemoryContext(databaseName, tenantId))
+            await CreateService(secondTransfer, tenantId).TransferStockAsync(
+                itemId, sourceLocationId, destinationLocationId, 2, "repeat unvalued transfer", batchNumber, expiryDate,
+                mutationScope);
+
+        int saleId;
+        await using (var sale = CreateInMemoryContext(databaseName, tenantId))
+        {
+            await CreateService(sale, tenantId).SellStockAsync(
+                itemId, destinationLocationId, 1, "partial unvalued lot sale", batchNumber, expiryDate,
+                mutationScope: mutationScope);
+            saleId = await sale.StockTransactions
+                .Where(transaction => transaction.TransactionType == TransactionType.Sell)
+                .Select(transaction => transaction.Id)
+                .SingleAsync();
+        }
+
+        await using (var stockReturn = CreateInMemoryContext(databaseName, tenantId))
+            await CreateService(stockReturn, tenantId).ReturnStockAsync(
+                new CreateStockReturnRequest(
+                    saleId, 1, StockReturnDisposition.Restockable, "unvalued-lot-return"));
+
+        await using var verify = CreateInMemoryContext(databaseName, tenantId);
+        (await verify.StockInHand.SingleAsync(stock => stock.LocationId == sourceLocationId))
+            .Should().Match<StockInHand>(stock =>
+                stock.Quantity == 4 && stock.BatchNumber == batchNumber && stock.ExpiryDate == expiryDate);
+        (await verify.StockInHand.SingleAsync(stock => stock.LocationId == destinationLocationId))
+            .Should().Match<StockInHand>(stock =>
+                stock.Quantity == 4 && stock.BatchNumber == batchNumber && stock.ExpiryDate == expiryDate);
+        (await verify.StockValuationBuckets.CountAsync()).Should().Be(0);
+        (await verify.StockValuationEntries.CountAsync()).Should().Be(0);
     }
 
     [Fact]
@@ -334,6 +438,76 @@ public sealed class StockValuationPostgreSqlIntegrationTests
         bucket.Value.Should().Be(0m);
         (await verify.StockValuationEntries.SingleAsync(entry => entry.EntryType == StockValuationEntryType.Sale))
             .TotalValue.Should().Be(0.999999m);
+    }
+
+    [PostgreSqlFact]
+    public async Task PostgreSQL_legacy_non_midnight_lot_expiry_retains_valuation_coverage()
+    {
+        _fixture.EnsureEnabled();
+        var tenantId = $"valuation-legacy-expiry-{Guid.NewGuid():N}";
+        var (itemId, locationId) = await SeedItemAndLocationAsync(tenantId);
+        var expiryDay = DateTime.UtcNow.Date.AddMonths(6);
+        var legacyExpiry = DateTime.SpecifyKind(expiryDay.AddHours(16), DateTimeKind.Utc);
+        const string batchNumber = "LOT-LEGACY-VALUED";
+
+        await using (var legacyBaseline = _fixture.CreateContext(tenantId))
+        {
+            var legacyReceipt = new StockTransaction
+            {
+                ItemId = itemId,
+                FromLocationId = locationId,
+                Quantity = 10,
+                TransactionType = TransactionType.Receive,
+                TransactionDate = DateTime.UtcNow,
+                BatchNumber = batchNumber,
+                ExpiryDate = legacyExpiry,
+                UnitCost = 10m,
+                Notes = "Legacy receipt expiry retained its time component"
+            };
+            legacyBaseline.StockInHand.Add(new StockInHand
+            {
+                ItemId = itemId,
+                LocationId = locationId,
+                Quantity = 10,
+                BatchNumber = batchNumber,
+                ExpiryDate = expiryDay
+            });
+            legacyBaseline.StockTransactions.Add(legacyReceipt);
+            legacyBaseline.StockValuationBuckets.Add(new StockValuationBucket
+            {
+                ItemId = itemId,
+                LocationId = locationId,
+                Quantity = 10,
+                Value = 100m
+            });
+            await legacyBaseline.SaveChangesAsync();
+            legacyBaseline.StockValuationEntries.Add(new StockValuationEntry
+            {
+                StockTransactionId = legacyReceipt.Id,
+                ItemId = itemId,
+                LocationId = locationId,
+                EntryType = StockValuationEntryType.Receipt,
+                Quantity = 10,
+                UnitCost = 10m,
+                TotalValue = 100m
+            });
+            await legacyBaseline.SaveChangesAsync();
+        }
+
+        await using (var followupReceipt = _fixture.CreateContext(tenantId))
+        {
+            await CreateService(followupReceipt, tenantId).ReceiveStockAsync(
+                itemId, locationId, 3, "follow-up valued lot receipt", batchNumber, expiryDay, unitCost: 20m);
+        }
+
+        await using var verify = _fixture.CreateContext(tenantId);
+        var bucket = await verify.StockValuationBuckets.SingleAsync();
+        bucket.Quantity.Should().Be(13);
+        bucket.Value.Should().Be(160m);
+        (await verify.StockInHand.SingleAsync(stock => stock.ItemId == itemId && stock.LocationId == locationId))
+            .Should().Match<StockInHand>(stock => stock.Quantity == 13 && stock.ExpiryDate == expiryDay);
+        (await verify.StockValuationEntries.OrderBy(entry => entry.Id).Select(entry => entry.TotalValue).ToListAsync())
+            .Should().Equal(100m, 60m);
     }
 
     [PostgreSqlFact]

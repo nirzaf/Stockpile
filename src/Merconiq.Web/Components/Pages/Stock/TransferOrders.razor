@@ -29,6 +29,10 @@
     Use <a href="/Stock/Transfer">Transfer Stock</a> for an immediate transfer. Use a transfer order when stock must be approved and reserved before dispatch.
 </MudAlert>
 
+<MudText Typo="Typo.caption" Color="Color.Secondary" Class="mb-4">
+    Transit value uses the source item's current location moving average, not a separate lot cost. Batch and expiry remain attached for traceability; a lot with unvalued or mixed on-hand quantity cannot dispatch.
+</MudText>
+
 <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween" Class="mb-4" Wrap="Wrap.Wrap">
     <MudText Typo="Typo.body2" Color="Color.Secondary">Showing up to 100 most recent orders in companies you can view.</MudText>
     @if (_viewCompanyIds.Any(_editableCompanyIds.Contains))
@@ -131,13 +135,7 @@ else
                                             <span> · Expires @line.ExpiryDate.Value.ToString("d")</span>
                                         }
                                     </MudText>
-                                    @if (CanDispatchOrder(order) && remainingQuantity > 0 && !string.IsNullOrWhiteSpace(line.BatchNumber))
-                                    {
-                                        <MudAlert Severity="Severity.Warning" Variant="Variant.Outlined" Class="mt-1">
-                                            Lot-tracked dispatch is not supported yet; this quantity remains reserved until that valuation path is available.
-                                        </MudAlert>
-                                    }
-                                    else if (CanDispatchOrder(order) && remainingQuantity > 0)
+                                    @if (CanDispatchOrder(order) && remainingQuantity > 0)
                                     {
                                         <MudGrid Spacing="2" Class="mt-1">
                                             <MudItem xs="12" sm="5" md="4">

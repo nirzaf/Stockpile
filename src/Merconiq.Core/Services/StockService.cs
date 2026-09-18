@@ -291,9 +291,8 @@ public class StockService : IStockService
     {
         if (quantity <= 0) throw new ArgumentException("Quantity must be positive");
         if (unitCost is < 0) throw new ArgumentException("Unit cost must be non-negative");
+        batchNumber = string.IsNullOrWhiteSpace(batchNumber) ? null : batchNumber.Trim();
         expiryDate = StockLotExpiryDate.Normalize(expiryDate);
-        if (unitCost.HasValue && (batchNumber is not null || expiryDate.HasValue))
-            throw new InvalidOperationException("Valuation is scoped to unbatched stock.");
 
         StockTransaction? transaction = null;
         await ExecuteWithRetryAsync(itemId, async () =>
@@ -303,6 +302,18 @@ public class StockService : IStockService
             await EnsureAuthorizedCompanyScopeAsync(location, mutationScope, cancellationToken);
             var existing = await GetByItemAndLocationAsync(
                 itemId, locationId, batchNumber, expiryDate, cancellationToken);
+            if (batchNumber is not null || expiryDate.HasValue)
+            {
+                var existingQuantity = existing?.Quantity ?? 0;
+                var valuedQuantity = await GetValuedLotQuantityAsync(
+                    itemId, locationId, batchNumber, expiryDate, cancellationToken);
+                if (valuedQuantity != 0 && valuedQuantity != existingQuantity)
+                    throw new StockAvailabilityConflictException(
+                        "The tracked lot's valued quantity must be zero or match its on-hand balance.");
+                if (existingQuantity > 0 && unitCost.HasValue != (valuedQuantity == existingQuantity))
+                    throw new StockAvailabilityConflictException(
+                        "A tracked lot position must remain consistently valued or unvalued; receive stock with matching valuation status.");
+            }
             if (existing != null)
             {
                 existing.Quantity += quantity;
@@ -395,6 +406,7 @@ public class StockService : IStockService
         var reason = request.Reason.Trim();
         StockTransaction? transaction = null;
         StockValuationPosting? valuationPosting = null;
+        var lotIsValued = false;
         await ExecuteWithRetryAsync(request.ItemId, async () =>
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -419,6 +431,19 @@ public class StockService : IStockService
             if (currentQuantity != request.ExpectedCurrentQuantity)
                 throw new StockAvailabilityConflictException(
                     "Stock changed after the physical count; take a new count before posting this variance.");
+
+            if (!isUnbatched)
+            {
+                var valuedQuantity = await GetValuedLotQuantityAsync(
+                    request.ItemId, request.LocationId, batchNumber, expiryDate, cancellationToken);
+                if (valuedQuantity != 0 && valuedQuantity != currentQuantity)
+                    throw new StockAvailabilityConflictException(
+                        "The counted lot's valued quantity does not match its on-hand balance; its value coverage cannot be determined safely.");
+                lotIsValued = currentQuantity > 0 && valuedQuantity == currentQuantity;
+                if (delta > 0 && lotIsValued)
+                    throw new StockAvailabilityConflictException(
+                        "A positive count variance cannot be added to a valued lot without an approved cost for the item/location valuation scope.");
+            }
 
             if (delta > 0 && isUnbatched)
             {
@@ -484,7 +509,7 @@ public class StockService : IStockService
             };
             await _txRepo.AddAsync(transaction);
 
-            if (isUnbatched)
+            if (isUnbatched || lotIsValued)
             {
                 if (delta > 0)
                 {
@@ -506,7 +531,13 @@ public class StockService : IStockService
                         transaction,
                         StockValuationEntryType.CountAdjustment,
                         requireValuation: true,
-                        cancellationToken: cancellationToken);
+                        cancellationToken: cancellationToken,
+                        missingValuationMessage: isUnbatched
+                            ? "Unbatched stock must have a complete moving-average valuation before a negative count variance can be posted."
+                            : "The valued lot requires its item/location moving-average bucket.",
+                        insufficientValuationMessage: isUnbatched
+                            ? "Unbatched stock must have a complete moving-average valuation before a negative count variance can be posted."
+                            : "The item/location moving-average bucket does not cover this valued lot count adjustment.");
                 }
             }
 
@@ -588,15 +619,39 @@ public class StockService : IStockService
                 throw new InvalidOperationException("Insufficient stock at source location");
             EnsureAvailable(source, quantity, "transfer");
 
+            var sourceLotIsValued = false;
+            var destination = await GetByItemAndLocationAsync(
+                itemId, toLocationId, source.BatchNumber, source.ExpiryDate);
+            if (IsLotTracked(source))
+            {
+                var sourceValuedQuantity = await GetValuedLotQuantityAsync(
+                    itemId, fromLocationId, source.BatchNumber, source.ExpiryDate);
+                if (sourceValuedQuantity != 0 && sourceValuedQuantity != source.Quantity)
+                    throw new StockAvailabilityConflictException(
+                        "The source lot's valued quantity does not match its on-hand balance; its value coverage cannot be determined safely.");
+                sourceLotIsValued = sourceValuedQuantity == source.Quantity;
+
+                if (destination is not null)
+                {
+                    var destinationValuedQuantity = await GetValuedLotQuantityAsync(
+                        itemId, toLocationId, source.BatchNumber, source.ExpiryDate);
+                    if (destinationValuedQuantity != 0 && destinationValuedQuantity != destination.Quantity)
+                        throw new StockAvailabilityConflictException(
+                            "The destination lot's valued quantity does not match its on-hand balance; its value coverage cannot be determined safely.");
+                    if (destination.Quantity > 0 &&
+                        (destinationValuedQuantity == destination.Quantity) != sourceLotIsValued)
+                        throw new StockAvailabilityConflictException(
+                            "Valued and unvalued quantities cannot be mixed in the same tracked lot position.");
+                }
+            }
+
             source.Quantity -= quantity;
             await _stockRepo.UpdateAsync(source);
 
-            var dest = await GetByItemAndLocationAsync(
-                itemId, toLocationId, source.BatchNumber, source.ExpiryDate);
-            if (dest != null)
+            if (destination != null)
             {
-                dest.Quantity += quantity;
-                await _stockRepo.UpdateAsync(dest);
+                destination.Quantity += quantity;
+                await _stockRepo.UpdateAsync(destination);
             }
             else
             {
@@ -624,6 +679,30 @@ public class StockService : IStockService
                 ExpiryExceptionReason = normalizedExpiryExceptionReason
             };
             await _txRepo.AddAsync(transaction);
+
+            if (sourceLotIsValued)
+            {
+                var valuation = await ApplySaleValuationAsync(
+                    itemId,
+                    fromLocationId,
+                    quantity,
+                    transaction,
+                    StockValuationEntryType.TransferOut,
+                    requireValuation: true,
+                    missingValuationMessage: "The valued source lot requires its item/location moving-average bucket.",
+                    insufficientValuationMessage: "The source moving-average bucket does not cover this valued lot transfer.");
+                if (valuation is null)
+                    throw new StockAvailabilityConflictException(
+                        "The valued source lot could not be reconciled to its item/location moving-average bucket.");
+                await ApplyReceiptValuationAsync(
+                    itemId,
+                    toLocationId,
+                    quantity,
+                    valuation.UnitCost,
+                    transaction,
+                    StockValuationEntryType.TransferIn,
+                    valuation.TotalValue);
+            }
 
             await _webhookDispatcher.EnqueueAsync(WebhookEventFactory.Create(_tenantContext, "Stock.Transferred",
                 new { ItemId = itemId, FromLocationId = fromLocationId, ToLocationId = toLocationId, Quantity = quantity, Notes = notes, BatchNumber = source.BatchNumber, ExpiryDate = source.ExpiryDate, ExpiryExceptionReason = normalizedExpiryExceptionReason }));
@@ -705,6 +784,28 @@ public class StockService : IStockService
             if (stock.Quantity < quantity)
                 throw new InvalidOperationException("Insufficient stock for sale");
 
+            var lotIsValued = false;
+            if (IsLotTracked(stock))
+            {
+                var valuedLotQuantity = await GetValuedLotQuantityAsync(
+                    itemId, locationId, stock.BatchNumber, stock.ExpiryDate, cancellationToken);
+                if (valuedLotQuantity == 0)
+                {
+                    if (requireValuation)
+                        throw new StockAvailabilityConflictException(
+                            "Transfer dispatch requires valuation coverage for the selected source lot.");
+                }
+                else if (valuedLotQuantity != stock.Quantity)
+                {
+                    throw new StockAvailabilityConflictException(
+                        "The selected lot's valued quantity does not match its on-hand balance; its value coverage cannot be determined safely.");
+                }
+                else
+                {
+                    lotIsValued = true;
+                }
+            }
+
             StockReservation? reservation = null;
             var reservationRemaining = 0;
             if (!string.IsNullOrWhiteSpace(reservationSourceLineReference))
@@ -781,7 +882,7 @@ public class StockService : IStockService
             };
             await _txRepo.AddAsync(transaction);
 
-            if (stock.BatchNumber is null && stock.ExpiryDate is null)
+            if (!IsLotTracked(stock) || lotIsValued)
             {
                 valuationPosting = await ApplySaleValuationAsync(
                     itemId,
@@ -791,12 +892,11 @@ public class StockService : IStockService
                     movementType == TransactionType.TransferDispatch
                         ? StockValuationEntryType.TransferOut
                         : StockValuationEntryType.Sale,
-                    requireValuation);
-            }
-            else if (requireValuation)
-            {
-                throw new InvalidOperationException(
-                    "Valued transfer dispatch is limited to unbatched stock until lot valuation is implemented.");
+                    requireValuation || lotIsValued,
+                    cancellationToken,
+                    requireValuation
+                        ? "Transfer dispatch requires an existing valued source bucket."
+                        : "The valued lot requires its item/location moving-average bucket.");
             }
 
             if (enqueueStockWebhook)
@@ -880,12 +980,9 @@ public class StockService : IStockService
             .OrderBy(candidate => candidate.Ordinal)
             .FirstOrDefault(candidate => Remaining(candidate) > 0)
             ?? throw new StockAvailabilityConflictException("Transfer reservation has no outstanding allocation.");
-        if (allocation.BatchNumber is not null || allocation.ExpiryDate is not null)
-            throw new StockAvailabilityConflictException(
-                "Valued transfer dispatch is limited to unbatched stock until lot valuation is implemented.");
         if (Remaining(allocation) < quantity)
             throw new StockAvailabilityConflictException(
-                "A partial dispatch cannot span lot allocations until lot valuation is implemented.");
+                "A partial dispatch cannot span multiple reserved lot allocations.");
 
         var movement = await SellStockCoreAsync(
             reservation.ItemId,
@@ -962,6 +1059,15 @@ public class StockService : IStockService
 
             var stock = await GetByItemAndLocationAsync(
                 request.ItemId, request.ToLocationId, batchNumber, expiryDate);
+            if (batchNumber is not null || expiryDate.HasValue)
+            {
+                var currentQuantity = stock?.Quantity ?? 0;
+                var valuedQuantity = await GetValuedLotQuantityAsync(
+                    request.ItemId, request.ToLocationId, batchNumber, expiryDate, cancellationToken);
+                if (valuedQuantity != currentQuantity)
+                    throw new StockAvailabilityConflictException(
+                        "The destination lot contains unvalued or inconsistently valued quantity and cannot accept this valued transit receipt.");
+            }
             var isNewStock = stock is null;
             if (stock is null)
             {
@@ -1107,6 +1213,11 @@ public class StockService : IStockService
             if (request.Disposition == StockReturnDisposition.Restockable)
                 EnsureLotNotExpired(original.ExpiryDate);
 
+            var originalValuation = (await _valuationEntryRepo.FindAsync(entry =>
+                entry.StockTransactionId == original.Id && entry.EntryType == StockValuationEntryType.Sale,
+                cancellationToken))
+                .SingleOrDefault();
+
             var stock = await GetByItemAndLocationAsync(
                 original.ItemId,
                 original.FromLocationId,
@@ -1126,15 +1237,25 @@ public class StockService : IStockService
                 await _stockRepo.AddAsync(stock);
             }
 
+            if (IsLotTracked(stock))
+            {
+                var valuedQuantity = await GetValuedLotQuantityAsync(
+                    original.ItemId,
+                    original.FromLocationId,
+                    original.BatchNumber,
+                    original.ExpiryDate,
+                    cancellationToken);
+                if ((valuedQuantity != 0 && valuedQuantity != stock.Quantity) ||
+                    stock.Quantity > 0 && (originalValuation is not null) != (valuedQuantity == stock.Quantity))
+                    throw new StockAvailabilityConflictException(
+                        "The return would leave the tracked lot's valued quantity inconsistent with its on-hand balance.");
+            }
+
             stock.Quantity = checked(stock.Quantity + request.Quantity);
             if (request.Disposition != StockReturnDisposition.Restockable)
                 stock.QuarantinedQuantity = checked(stock.QuarantinedQuantity + request.Quantity);
             await _stockRepo.UpdateAsync(stock);
 
-            var originalValuation = (await _valuationEntryRepo.FindAsync(entry =>
-                entry.StockTransactionId == original.Id && entry.EntryType == StockValuationEntryType.Sale,
-                cancellationToken))
-                .SingleOrDefault();
             var unitCost = originalValuation?.UnitCost;
             returnTransaction = new StockTransaction
             {
@@ -2235,6 +2356,94 @@ public class StockService : IStockService
         });
     }
 
+    private async Task<int> GetValuedLotQuantityAsync(
+        int itemId,
+        int locationId,
+        string? batchNumber,
+        DateTime? expiryDate,
+        CancellationToken cancellationToken = default)
+    {
+        expiryDate = StockLotExpiryDate.Normalize(expiryDate);
+        IEnumerable<StockTransaction> matchingTransactions;
+        if (expiryDate is DateTime expiryDayStart)
+        {
+            var expiryDayEnd = expiryDayStart.AddDays(1);
+            matchingTransactions = await _txRepo.FindAsync(transaction =>
+                transaction.ItemId == itemId &&
+                transaction.BatchNumber == batchNumber &&
+                transaction.ExpiryDate >= expiryDayStart &&
+                transaction.ExpiryDate < expiryDayEnd &&
+                (transaction.FromLocationId == locationId || transaction.ToLocationId == locationId),
+                cancellationToken);
+        }
+        else
+        {
+            matchingTransactions = await _txRepo.FindAsync(transaction =>
+                transaction.ItemId == itemId &&
+                transaction.BatchNumber == batchNumber &&
+                transaction.ExpiryDate == null &&
+                (transaction.FromLocationId == locationId || transaction.ToLocationId == locationId),
+                cancellationToken);
+        }
+
+        var transactions = matchingTransactions.ToArray();
+        if (transactions.Length == 0)
+            return 0;
+
+        var transactionsById = transactions.ToDictionary(transaction => transaction.Id);
+        var transactionIds = transactionsById.Keys.ToArray();
+        var entries = await _valuationEntryRepo.FindAsync(entry =>
+            entry.ItemId == itemId &&
+            entry.LocationId == locationId &&
+            transactionIds.Contains(entry.StockTransactionId),
+            cancellationToken);
+
+        long valuedQuantity = 0;
+        foreach (var entry in entries)
+        {
+            var signedQuantity = entry.EntryType switch
+            {
+                StockValuationEntryType.Receipt or
+                    StockValuationEntryType.Return or
+                    StockValuationEntryType.TransferIn or
+                    StockValuationEntryType.TransferReturn => entry.Quantity,
+                StockValuationEntryType.Sale or
+                    StockValuationEntryType.TransferOut => -entry.Quantity,
+                StockValuationEntryType.CountAdjustment => GetCountAdjustmentValuedQuantity(
+                    transactionsById, entry, locationId),
+                _ => throw new StockAvailabilityConflictException(
+                    "The tracked lot has an unsupported valuation movement and cannot be dispatched safely.")
+            };
+            valuedQuantity += signedQuantity;
+        }
+
+        if (valuedQuantity < 0 || valuedQuantity > int.MaxValue)
+            throw new StockAvailabilityConflictException(
+                "The tracked lot's valued quantity is inconsistent with its immutable movement history.");
+        return (int)valuedQuantity;
+    }
+
+    private static int GetCountAdjustmentValuedQuantity(
+        IReadOnlyDictionary<int, StockTransaction> transactionsById,
+        StockValuationEntry entry,
+        int locationId)
+    {
+        if (!transactionsById.TryGetValue(entry.StockTransactionId, out var adjustment))
+            throw new StockAvailabilityConflictException(
+                "The tracked lot has an ambiguous valued count adjustment.");
+
+        if (adjustment.ToLocationId == locationId)
+            return entry.Quantity;
+        if (adjustment.ToLocationId is null)
+            return -entry.Quantity;
+
+        throw new StockAvailabilityConflictException(
+            "The tracked lot has an ambiguous valued count adjustment.");
+    }
+
+    private static bool IsLotTracked(StockInHand stock) =>
+        stock.BatchNumber is not null || stock.ExpiryDate.HasValue;
+
     private async Task<StockValuationPosting?> ApplySaleValuationAsync(
         int itemId,
         int locationId,
@@ -2242,7 +2451,9 @@ public class StockService : IStockService
         StockTransaction source,
         StockValuationEntryType entryType = StockValuationEntryType.Sale,
         bool requireValuation = false,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        string missingValuationMessage = "Transfer dispatch requires an existing valued source bucket.",
+        string insufficientValuationMessage = "Valued stock is insufficient for sale.")
     {
         // A sale with no bucket remains explicitly unvalued. The required repositories
         // ensure an existing bucket is always consulted instead of silently bypassed.
@@ -2252,15 +2463,12 @@ public class StockService : IStockService
         if (existing is null || existing.Quantity == 0)
         {
             if (requireValuation)
-                throw new StockAvailabilityConflictException(
-                    "Transfer dispatch requires an existing valued source bucket.");
+                throw new StockAvailabilityConflictException(missingValuationMessage);
             return null;
         }
 
         if (existing.Quantity < quantity)
-        {
-            throw new InvalidOperationException("Valued stock is insufficient for sale.");
-        }
+            throw new StockAvailabilityConflictException(insufficientValuationMessage);
 
         var bucket = await _valuationBucketRepo.GetByIdAsync(existing.Id, cancellationToken)
             ?? throw new InvalidOperationException("Valuation bucket disappeared during posting.");
