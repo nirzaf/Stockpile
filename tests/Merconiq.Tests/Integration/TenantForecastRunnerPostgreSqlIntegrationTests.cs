@@ -44,11 +44,9 @@ public sealed class TenantForecastRunnerPostgreSqlIntegrationTests(PostgreSqlInt
 
         observations.Should().HaveCount(2);
         observations.Select(observation => observation.TenantIdAtResolution)
-            .Should().Equal(tenantAId, tenantBId,
-                "the runner must select the tenant before resolving the scoped forecast service and DbContext");
+            .Should().Equal([tenantAId, tenantBId]);
         observations.Select(observation => observation.DatabaseTenantIdAtResolution)
-            .Should().Equal(tenantAId, tenantBId,
-                "the real EF Core context must be created with the explicitly selected tenant");
+            .Should().Equal([tenantAId, tenantBId]);
         observations[0].VisibleItemIds.Should().Equal([tenantAItemId]);
         observations[1].VisibleItemIds.Should().Equal([tenantBItemId]);
     }
