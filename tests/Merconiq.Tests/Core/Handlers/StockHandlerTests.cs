@@ -78,6 +78,20 @@ public class StockHandlerTests
     }
 
     [Fact]
+    public async Task ReceiveStockCommandHandler_ForwardsCancellationToken()
+    {
+        using var cancellation = new CancellationTokenSource();
+        var serviceMock = new Mock<IStockService>();
+        var handler = new ReceiveStockCommandHandler(serviceMock.Object,
+            NullLogger<ReceiveStockCommandHandler>.Instance);
+
+        await handler.Handle(new ReceiveStockCommand(1, 2, 25, "Notes"), cancellation.Token);
+
+        serviceMock.Verify(service => service.ReceiveStockAsync(
+            1, 2, 25, "Notes", null, null, null, null, cancellation.Token), Times.Once);
+    }
+
+    [Fact]
     public async Task ReceiveStockCommandHandler_ForwardsLotIdentity()
     {
         var serviceMock = new Mock<IStockService>();
