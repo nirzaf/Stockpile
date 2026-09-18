@@ -4,6 +4,7 @@ using FluentAssertions;
 using Merconiq.Core.Entities;
 using Merconiq.Core.Models;
 using Merconiq.Infrastructure.Data;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Merconiq.Tests.Integration;
@@ -19,6 +20,16 @@ public class StockApiTests : IClassFixture<CustomWebApplicationFactory>
 
     private HttpClient AuthClient => _factory.CreateAuthenticatedClient();
     private HttpClient AnonClient => _factory.CreateUnauthenticatedClient();
+
+    private static async Task<HttpResponseMessage> PostStockReceiveAsync(HttpClient client, object command)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/stock/receive")
+        {
+            Content = JsonContent.Create(command)
+        };
+        request.Headers.Add("Idempotency-Key", $"stock-api-receive-{Guid.NewGuid():N}");
+        return await client.SendAsync(request);
+    }
 
     private async Task<(Item item, Location loc)> SeedItemAndLocationAsync()
     {
@@ -115,7 +126,7 @@ public class StockApiTests : IClassFixture<CustomWebApplicationFactory>
         var client = AuthClient;
         var (item, loc) = await SeedItemAndLocationAsync();
 
-        (await client.PostAsJsonAsync("/api/v1/stock/receive", new
+        (await PostStockReceiveAsync(client, new
         {
             itemId = item.Id,
             locationId = loc.Id,
@@ -149,9 +160,32 @@ public class StockApiTests : IClassFixture<CustomWebApplicationFactory>
         var (item, loc) = await SeedItemAndLocationAsync();
 
         var command = new { ItemId = item.Id, LocationId = loc.Id, Quantity = 10, Notes = "test" };
-        var response = await client.PostAsJsonAsync("/api/v1/stock/receive", command);
+        var response = await PostStockReceiveAsync(client, command);
 
         response.StatusCode.Should().Be(HttpStatusCode.NoContent);
+    }
+
+    [Fact]
+    public async Task Receive_WithoutIdempotencyKey_Returns400WithoutChangingStock()
+    {
+        var client = AuthClient;
+        var (item, loc) = await SeedItemAndLocationAsync();
+
+        var response = await client.PostAsJsonAsync("/api/v1/stock/receive", new
+        {
+            ItemId = item.Id,
+            LocationId = loc.Id,
+            Quantity = 10,
+            Notes = "missing idempotency key"
+        });
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<InventoryDbContext>();
+        (await db.StockInHand.CountAsync(stock => stock.ItemId == item.Id && stock.LocationId == loc.Id))
+            .Should().Be(0);
+        (await db.StockTransactions.CountAsync(transaction => transaction.ItemId == item.Id))
+            .Should().Be(0);
     }
 
     [Fact]
@@ -161,7 +195,7 @@ public class StockApiTests : IClassFixture<CustomWebApplicationFactory>
         var (item, loc) = await SeedItemAndLocationAsync();
 
         var command = new { ItemId = item.Id, LocationId = loc.Id, Quantity = 0, Notes = "test" };
-        var response = await client.PostAsJsonAsync("/api/v1/stock/receive", command);
+        var response = await PostStockReceiveAsync(client, command);
 
         response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }

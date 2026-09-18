@@ -93,7 +93,7 @@ mutations. Webhook administration is restricted to `Admin` and `Manager`.
 | GET | `/api/v1/stock/in-hand/{itemId}/{locationId}` | Any API JWT | `200` or `404` |
 | GET | `/api/v1/stock/transactions` | Any API JWT | `200` |
 | GET | `/api/v1/stock/valuation` | Any API JWT | `200` |
-| POST | `/api/v1/stock/receive` | `Admin`, `Manager`, or `Staff` | `204` |
+| POST | `/api/v1/stock/receive` | `Admin`, `Manager`, or `Staff` | `204` with an idempotency key; otherwise `400` |
 | POST | `/api/v1/stock/transfer` | `Admin`, `Manager`, or `Staff` | `204` |
 | POST | `/api/v1/stock/sell` | `Admin`, `Manager`, or `Staff` | `204` |
 | POST | `/api/v1/stock/opening/preview` | Tenant `Admin` with `Approve` | `200` or `422` |
@@ -277,7 +277,7 @@ The following endpoints intentionally do not use that envelope:
 | `200` | Successful read, token issuance, webhook mutation, forecast, or anomaly response |
 | `201` | Item created; the `Location` header identifies the item resource |
 | `204` | Successful stock mutation, item update/delete, or webhook delete; no body |
-| `400` | Unmapped host, invalid query/body, validation failure, route/body ID mismatch, or an `Idempotency-Key` longer than 200 characters |
+| `400` | Unmapped host, invalid query/body, validation failure, route/body ID mismatch, a missing required `Idempotency-Key`, or an `Idempotency-Key` longer than 200 characters |
 | `401` | Missing/invalid/expired bearer token, failed credentials, or token tenant mismatch |
 | `403` | Authenticated caller lacks the required role |
 | `404` | Requested item, stock balance, or webhook subscription does not exist |
@@ -300,13 +300,19 @@ not configure a `Retry-After` header.
 
 ## Idempotent stock mutations
 
-`POST /api/v1/stock/receive`, `/transfer`, and `/sell` accept the existing
-`Idempotency-Key` request header. It is optional and must be 200 characters or
-fewer. Without it, the command follows the normal one-shot path.
+`POST /api/v1/stock/receive` requires the `Idempotency-Key` request header;
+missing or over-200-character keys are rejected with `400` before posting.
+`POST /api/v1/stock/transfer`, `/api/v1/stock/sell`,
+`/api/v1/stock/quarantine`, and `/api/v1/stock/quarantine/release` accept the
+header optionally; when supplied, it must be 200 characters or fewer. Those
+commands retain their normal one-shot path when the header is omitted.
 
-With a key, the durable coordinator stores a claim for the current tenant,
-HTTP method/path scope, key, and SHA-256 hash of the serialized command. The
-claim is retained for one hour and has a two-minute lease.
+For these stock routes, retry the same supplied key with the same request body
+to replay a completed operation. Receive always requires a key; the other
+listed routes retain their one-shot path when the header is omitted. The durable
+coordinator scopes the claim to the current tenant, HTTP method/path, key, and
+SHA-256 hash of the serialized command; it retains claims for one hour with a
+two-minute lease.
 
 ```http
 POST /api/v1/stock/receive

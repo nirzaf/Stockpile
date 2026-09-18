@@ -115,6 +115,10 @@ public class StockController : ControllerBase
     }
 
     /// <summary>Receive stock into a location</summary>
+    /// <remarks>
+    /// Requires an <c>Idempotency-Key</c> header (maximum 200 characters). Retry the same key with
+    /// the same request body to replay a completed receive.
+    /// </remarks>
     [HttpPost("receive")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
@@ -131,20 +135,23 @@ public class StockController : ControllerBase
         var authorizedCommand = command with { MutationScope = mutationScope };
 
         var idempotencyKey = Request.Headers["Idempotency-Key"].ToString();
+        if (string.IsNullOrWhiteSpace(idempotencyKey))
+        {
+            return BadRequest(ApiResponse<object>.CreateFailure("Idempotency-Key is required for stock receive."));
+        }
+
         if (idempotencyKey.Length > 200)
         {
             return BadRequest(ApiResponse<object>.CreateFailure("Idempotency-Key must be 200 characters or fewer."));
         }
 
-        if (string.IsNullOrWhiteSpace(idempotencyKey))
-        {
-            await _mediator.Send(authorizedCommand, HttpContext.RequestAborted);
-        }
-        else
-        {
-            var scope = $"{tenantContext.TenantId}:{Request.Method}:{Request.Path}";
-            await idempotencyKeyStore.ExecuteAsync(scope, idempotencyKey, IdempotencyRequestHasher.Compute(command), () => _mediator.Send(authorizedCommand, HttpContext.RequestAborted), HttpContext.RequestAborted);
-        }
+        var scope = $"{tenantContext.TenantId}:{Request.Method}:{Request.Path}";
+        await idempotencyKeyStore.ExecuteAsync(
+            scope,
+            idempotencyKey,
+            IdempotencyRequestHasher.Compute(command),
+            () => _mediator.Send(authorizedCommand, HttpContext.RequestAborted),
+            HttpContext.RequestAborted);
         return NoContent();
     }
 

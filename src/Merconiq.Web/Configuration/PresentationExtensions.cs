@@ -77,6 +77,7 @@ public static class PresentationExtensions
             {
                 [new OpenApiSecuritySchemeReference("Bearer", document)] = []
             });
+            options.OperationFilter<StockIdempotencyKeyOperationFilter>();
 
             foreach (var xmlFile in Directory.GetFiles(
                          AppContext.BaseDirectory, "*.xml", SearchOption.TopDirectoryOnly))
