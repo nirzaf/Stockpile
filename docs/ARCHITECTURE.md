@@ -94,12 +94,23 @@ Any such implementation must be called only through an authorized application
 entry point and preserve tenant scope, audit and posting invariants. Replacing
 a registration does not itself provide those controls.
 
-Until an adapter/report example and its upgrade fixture are implemented and
-reviewed, contributors must treat these interfaces as internal implementation
-seams rather than promise them as supported extension points. Do not introduce
-runtime assembly discovery, arbitrary or untrusted plugin loading, a generic
-plugin framework, direct cross-module ledger writes, or a second migration
-owner to make an example appear extensible.
+`tests/Merconiq.Tests/Integration/ExtensionUpgradeFixturePostgreSqlTests.cs`
+defines one bounded, test-only example around the existing MediatR
+`CreateItemCommand` pipeline. It starts at the explicitly named
+`20260918183139_EnforceAuditLogAppendOnly` migration, applies the current
+forward migrations, then sends an authenticated item-creation request through
+the Web host with the adapter registered by dependency injection. Its assertions
+cover the host authorization boundary, the existing EF audit record, and the
+absence of writes to stock, valuation, procurement, and transfer ledgers. This
+is an executable example of an in-process observer around one existing
+operation; it does not publish a third-party report, rules, or adapter API and
+does not establish that arbitrary business behavior can be replaced safely.
+
+The interfaces remain internal implementation seams until a stable external
+contract is explicitly designed, reviewed, versioned, and qualified. Do not
+introduce runtime assembly discovery, arbitrary or untrusted plugin loading, a
+generic plugin framework, direct cross-module ledger writes, or a second
+migration owner to make an example appear extensible.
 
 ## Versioning and breaking changes
 
@@ -134,22 +145,23 @@ owner to make an example appear extensible.
   must identify its exact source migration state and target revision. There is
   currently one migration owner: `Merconiq.Infrastructure` /
   `InventoryDbContext`.
-- Before describing an extension or contract as supported, add a compiled
-  example and automated coverage for its behavior, authorization/audit
-  boundary, and database upgrade from an explicitly identified starting
-  migration state. Until those tests exist, documentation of a seam is not
-  evidence that an external extension works.
+- The PostgreSQL fixture above is scoped to one compiled command observer and
+  an explicitly identified forward migration. It does not make a C# service,
+  MediatR handler, DI registration, or EF table a supported third-party
+  contract. A future external contract needs a separately reviewed definition,
+  versioning rules, and automated coverage for its behavior, authorization,
+  audit, and upgrade boundaries; documentation of an internal seam alone is
+  not evidence that an external extension works.
 
 ## Remaining evidence for a supported extension contract
 
 This page records the current ownership, dependency, persistence and versioning
-boundaries. It does not complete the full extension acceptance scope. The
-repository still needs a minimal report or adapter example that can be compiled
-without edits to core business logic, proves that it cannot bypass
-authorization/audit or write another module's ledger, and is exercised by an
-upgrade fixture. The integration contracts and evidence tracked by issue #355
-also remain open; they do not prevent this current-state documentation, but
-they must be resolved before claiming the broader M18 integration/extension
+boundaries. The PostgreSQL fixture is a focused example, not completion of the
+full extension acceptance scope: it covers a test-only observer, not an
+external report or rules API, and still requires successful PostgreSQL CI and
+review. The integration contracts and evidence tracked by issue #355 also
+remain open; they do not prevent this current-state documentation, but they
+must be resolved before claiming the broader M18 integration/extension
 contract is complete. The M10 qualification prerequisite is also independent
-and is not satisfied by this documentation. Keep issue #359 open until the
-remaining evidence and prerequisites are reviewed.
+and is not satisfied by this fixture. Keep issue #359 open until the remaining
+evidence and prerequisites are reviewed.
