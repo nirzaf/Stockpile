@@ -41,7 +41,9 @@ public sealed class CustomerMasterApiTests(CustomWebApplicationFactory factory)
                 contactPhone = " +1 555 0100 ",
                 billingAddress = "  1 Main Street  ",
                 shippingAddress = "  2 Warehouse Road  ",
-                paymentTermDays = 30
+                paymentTermDays = 30,
+                companyId = companies.CompanyBId,
+                tenantId = "forged-tenant"
             });
         created.StatusCode.Should().Be(HttpStatusCode.Created);
         using var createdBody = await created.Content.ReadFromJsonAsync<JsonDocument>();
@@ -124,8 +126,9 @@ public sealed class CustomerMasterApiTests(CustomWebApplicationFactory factory)
             .Select(audit => audit.Action)
             .ToListAsync();
         auditActions.Should().Contain("Insert").And.Contain("Update");
-        (await db.Customers.SingleAsync(customer => customer.Id == customerId)).CompanyId
-            .Should().Be(companies.CompanyAId);
+        var persisted = await db.Customers.SingleAsync(customer => customer.Id == customerId);
+        persisted.CompanyId.Should().Be(companies.CompanyAId);
+        persisted.TenantId.Should().Be("test-tenant");
     }
 
     private static async Task<TestCompanyScope> SeedCompanyScopeAsync(
