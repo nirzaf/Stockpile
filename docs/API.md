@@ -302,14 +302,17 @@ not configure a `Retry-After` header.
 
 `POST /api/v1/stock/receive` requires the `Idempotency-Key` request header;
 missing or over-200-character keys are rejected with `400` before posting.
-`POST /api/v1/stock/transfer` and `/sell` still accept the header optionally;
-when supplied, it must be 200 characters or fewer. Those two commands retain
-their normal one-shot path when the header is omitted.
+`POST /api/v1/stock/transfer`, `/api/v1/stock/sell`,
+`/api/v1/stock/quarantine`, and `/api/v1/stock/quarantine/release` accept the
+header optionally; when supplied, it must be 200 characters or fewer. Those
+commands retain their normal one-shot path when the header is omitted.
 
-For stock receive, retry the same key with the same request body to replay a
-completed operation. The durable coordinator stores a claim for the current
-tenant, HTTP method/path scope, key, and SHA-256 hash of the serialized command.
-The claim is retained for one hour and has a two-minute lease.
+For these stock routes, retry the same supplied key with the same request body
+to replay a completed operation. Receive always requires a key; the other
+listed routes retain their one-shot path when the header is omitted. The durable
+coordinator scopes the claim to the current tenant, HTTP method/path, key, and
+SHA-256 hash of the serialized command; it retains claims for one hour with a
+two-minute lease.
 
 ```http
 POST /api/v1/stock/receive
