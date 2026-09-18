@@ -189,14 +189,19 @@ public sealed class WebhookDeliveryLeasesPostgreSqlIntegrationTests(PostgreSqlIn
             delivery.LeaseUntil.Should().BeNull();
 
             var commands = commandCapture.Commands.ToArray();
-            var claimProjection = commands.Single(command =>
-                command.Contains("PayloadByteLength", StringComparison.Ordinal));
-            claimProjection.Should().Contain("octet_length(convert_to(\"Payload\", 'UTF8'))");
-            Regex.IsMatch(
-                claimProjection,
-                "(?:\\bSELECT|,)\\s*(?:[\\w\\\".]+\\.)?\\\"Payload\\\"(?:\\s|,)",
-                RegexOptions.IgnoreCase)
-                .Should().BeFalse("the metadata projection must not return the Payload column");
+            var claimProjections = commands
+                .Where(command => command.Contains("PayloadByteLength", StringComparison.Ordinal))
+                .ToArray();
+            claimProjections.Should().NotBeEmpty("the worker must inspect the payload size before loading it");
+            foreach (var claimProjection in claimProjections)
+            {
+                claimProjection.Should().Contain("octet_length(convert_to(\"Payload\", 'UTF8'))");
+                Regex.IsMatch(
+                    claimProjection,
+                    "(?:\\bSELECT|,)\\s*(?:[\\w\\\".]+\\.)?\\\"Payload\\\"(?:\\s|,)",
+                    RegexOptions.IgnoreCase)
+                    .Should().BeFalse("the metadata projection must not return the Payload column");
+            }
 
             var deadLetterUpdate = commands.Single(command =>
                 command.Contains("UPDATE \"WebhookDeliveries\"", StringComparison.Ordinal) &&
