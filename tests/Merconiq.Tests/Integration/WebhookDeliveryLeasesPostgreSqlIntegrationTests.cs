@@ -244,6 +244,80 @@ public sealed class WebhookDeliveryLeasesPostgreSqlIntegrationTests(PostgreSqlIn
     }
 
     [PostgreSqlFact]
+    public async Task Worker_dead_letters_signature_mismatch_without_receiver_business_effect()
+    {
+        fixture.EnsureEnabled();
+        var tenantId = UniqueTenant();
+        var eventId = Guid.NewGuid();
+        const string secret = "synthetic-webhook-secret";
+        var payload = $$"""{"eventId":"{{eventId:D}}","eventType":"Stock.Received","itemId":42}""";
+        var receiver = new SignatureValidatingIdempotentReceiver(secret);
+        long deliveryId;
+
+        await using (var setup = fixture.CreateContext(tenantId))
+        {
+            var subscription = new WebhookSubscription
+            {
+                TenantId = tenantId,
+                Url = "https://8.8.8.8/webhook",
+                EventType = "Stock.Received",
+                Secret = secret
+            };
+            setup.WebhookSubscriptions.Add(subscription);
+            await setup.SaveChangesAsync();
+
+            var delivery = NewDelivery(tenantId, PostgreSqlTimestampNow());
+            delivery.SubscriptionId = subscription.Id;
+            delivery.EventId = eventId;
+            delivery.EventType = "Stock.Received";
+            delivery.Payload = payload;
+            setup.WebhookDeliveries.Add(delivery);
+            await setup.SaveChangesAsync();
+            deliveryId = delivery.Id;
+        }
+
+        var services = new ServiceCollection();
+        services.AddScoped<TenantContext>();
+        services.AddScoped<Merconiq.Infrastructure.Data.InventoryDbContext>(
+            _ => fixture.CreateContext(tenantId));
+        services.AddHttpClient("Webhooks")
+            .AddHttpMessageHandler(() => new CorruptFirstWebhookSignatureHandler())
+            .ConfigurePrimaryHttpMessageHandler(() => receiver);
+        await using var provider = services.BuildServiceProvider();
+
+        var worker = CreateWorker(provider);
+        await worker.StartAsync(CancellationToken.None);
+        WebhookDelivery deadLetter;
+        try
+        {
+            deadLetter = await WaitForDeadLetterAsync(tenantId, deliveryId);
+        }
+        finally
+        {
+            using var stopTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            await worker.StopAsync(stopTimeout.Token);
+        }
+
+        var requests = receiver.Requests.ToArray();
+        requests.Should().ContainSingle();
+        requests[0].EventId.Should().Be(eventId);
+        requests[0].Payload.Should().Be(payload);
+        requests[0].Signature.Should().NotBeNull();
+        requests[0].SignatureValid.Should().BeFalse("the receiver must reject a mismatched signature before processing the event");
+
+        using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(secret));
+        var expectedSignature = Convert.ToHexString(hmac.ComputeHash(Encoding.UTF8.GetBytes(payload))).ToLowerInvariant();
+        requests[0].Signature.Should().NotBe(expectedSignature);
+        receiver.BusinessEffectCount.Should().Be(0);
+
+        deadLetter.Status.Should().Be(WebhookDeliveryStatus.DeadLetter);
+        deadLetter.AttemptCount.Should().Be(1);
+        deadLetter.LastStatusCode.Should().Be((int)HttpStatusCode.Unauthorized);
+        deadLetter.DeliveredAt.Should().BeNull();
+        deadLetter.LeaseToken.Should().BeNull();
+    }
+
+    [PostgreSqlFact]
     public async Task Worker_retries_response_stream_failure_and_reuses_event_identity_for_receiver_deduplication()
     {
         fixture.EnsureEnabled();
@@ -251,7 +325,7 @@ public sealed class WebhookDeliveryLeasesPostgreSqlIntegrationTests(PostgreSqlIn
         var eventId = Guid.NewGuid();
         const string secret = "synthetic-webhook-secret";
         var payload = $$"""{"eventId":"{{eventId:D}}","eventType":"Stock.Received","itemId":42}""";
-        var receiver = new IdempotentReceiverWithLostFirstResponse();
+        var receiver = new SignatureValidatingIdempotentReceiver(secret);
         long deliveryId;
 
         await using (var setup = fixture.CreateContext(tenantId))
@@ -331,7 +405,8 @@ public sealed class WebhookDeliveryLeasesPostgreSqlIntegrationTests(PostgreSqlIn
 
         var requests = receiver.Requests.ToArray();
         requests.Should().HaveCount(2);
-        requests.Should().OnlyContain(request => request.EventId == eventId && request.Payload == payload);
+        requests.Should().OnlyContain(request =>
+            request.EventId == eventId && request.Payload == payload && request.SignatureValid);
         using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(secret));
         var expectedSignature = Convert.ToHexString(hmac.ComputeHash(Encoding.UTF8.GetBytes(payload))).ToLowerInvariant();
         requests.Should().OnlyContain(request => request.Signature == expectedSignature);
@@ -443,7 +518,28 @@ public sealed class WebhookDeliveryLeasesPostgreSqlIntegrationTests(PostgreSqlIn
         }
     }
 
-    private sealed class IdempotentReceiverWithLostFirstResponse : HttpMessageHandler
+    private sealed class CorruptFirstWebhookSignatureHandler : DelegatingHandler
+    {
+        private int _corrupted;
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            if (Interlocked.Exchange(ref _corrupted, 1) == 0)
+            {
+                var signature = request.Headers.GetValues("X-Inventory-Signature").Single();
+                var invalidSignature = signature.ToCharArray();
+                invalidSignature[0] = invalidSignature[0] == '0' ? '1' : '0';
+                request.Headers.Remove("X-Inventory-Signature");
+                request.Headers.Add("X-Inventory-Signature", new string(invalidSignature));
+            }
+
+            return base.SendAsync(request, cancellationToken);
+        }
+    }
+
+    private sealed class SignatureValidatingIdempotentReceiver(string secret) : HttpMessageHandler
     {
         private readonly ConcurrentQueue<ReceivedWebhook> _requests = new();
         private readonly ConcurrentDictionary<Guid, byte> _processedEvents = new();
@@ -458,9 +554,18 @@ public sealed class WebhookDeliveryLeasesPostgreSqlIntegrationTests(PostgreSqlIn
             CancellationToken cancellationToken)
         {
             var eventId = Guid.Parse(request.Headers.GetValues("X-Inventory-Event-Id").Single());
-            var payload = await request.Content!.ReadAsStringAsync(cancellationToken);
-            var signature = request.Headers.GetValues("X-Inventory-Signature").Single();
-            _requests.Enqueue(new ReceivedWebhook(eventId, payload, signature));
+            var payloadBytes = await request.Content!.ReadAsByteArrayAsync(cancellationToken);
+            var payload = Encoding.UTF8.GetString(payloadBytes);
+            var signature = request.Headers.TryGetValues("X-Inventory-Signature", out var signatures)
+                ? signatures.SingleOrDefault()
+                : null;
+            var signatureValid = HasValidSignature(payloadBytes, secret, signature);
+            _requests.Enqueue(new ReceivedWebhook(eventId, payload, signature, signatureValid));
+            if (!signatureValid)
+            {
+                return new HttpResponseMessage(HttpStatusCode.Unauthorized);
+            }
+
             if (_processedEvents.TryAdd(eventId, 0))
             {
                 Interlocked.Increment(ref _businessEffectCount);
@@ -479,9 +584,36 @@ public sealed class WebhookDeliveryLeasesPostgreSqlIntegrationTests(PostgreSqlIn
                 Content = new StringContent("accepted", Encoding.UTF8, "text/plain")
             };
         }
+
+        private static bool HasValidSignature(ReadOnlySpan<byte> rawBody, string signingSecret, string? signature)
+        {
+            if (string.IsNullOrEmpty(signingSecret) || signature is null || signature.Length != 64)
+            {
+                return false;
+            }
+
+            byte[] supplied;
+            try
+            {
+                supplied = Convert.FromHexString(signature);
+            }
+            catch (FormatException)
+            {
+                return false;
+            }
+
+            if (supplied.Length != 32)
+            {
+                return false;
+            }
+
+            Span<byte> expected = stackalloc byte[32];
+            HMACSHA256.HashData(Encoding.UTF8.GetBytes(signingSecret), rawBody, expected);
+            return CryptographicOperations.FixedTimeEquals(expected, supplied);
+        }
     }
 
-    private sealed record ReceivedWebhook(Guid EventId, string Payload, string Signature);
+    private sealed record ReceivedWebhook(Guid EventId, string Payload, string? Signature, bool SignatureValid);
 
     private sealed class FailingResponseBodyStream : Stream
     {
