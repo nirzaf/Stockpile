@@ -3,6 +3,7 @@ using System;
 using Merconiq.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace Merconiq.Infrastructure.Migrations
 {
     [DbContext(typeof(InventoryDbContext))]
-    partial class InventoryDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260918220745_AddCompanyChartOfAccounts")]
+    partial class AddCompanyChartOfAccounts
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -2540,7 +2543,7 @@ namespace Merconiq.Infrastructure.Migrations
                     b.Property<Guid>("SourceDocumentLineId")
                         .HasColumnType("uuid");
 
-                    b.Property<int?>("StockTransactionId")
+                    b.Property<int>("StockTransactionId")
                         .HasColumnType("integer");
 
                     b.Property<string>("TenantId")
@@ -2618,8 +2621,6 @@ namespace Merconiq.Infrastructure.Migrations
                             t.HasCheckConstraint("CK_TransferTransitSettlements_NonNegativeValue", "\"UnitCost\" >= 0 AND \"TotalValue\" >= 0");
 
                             t.HasCheckConstraint("CK_TransferTransitSettlements_PositiveQuantity", "\"Quantity\" > 0");
-
-                            t.HasCheckConstraint("CK_TransferTransitSettlements_StockTransactionDisposition", "(\"SettlementType\" = 'WrittenOff' AND \"StockTransactionId\" IS NULL) OR (\"SettlementType\" <> 'WrittenOff' AND \"StockTransactionId\" IS NOT NULL)");
                         });
                 });
 
@@ -3578,7 +3579,8 @@ namespace Merconiq.Infrastructure.Migrations
                         .WithMany()
                         .HasForeignKey("StockTransactionId", "TenantId")
                         .HasPrincipalKey("Id", "TenantId")
-                        .OnDelete(DeleteBehavior.Restrict);
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
 
                     b.HasOne("Merconiq.Core.Entities.Location", null)
                         .WithMany()
