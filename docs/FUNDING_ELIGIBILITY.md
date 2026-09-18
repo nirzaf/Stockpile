@@ -6,7 +6,7 @@ description: Source-dated, public-safe review of OSS programs and maintainer ben
 
 # Funding and OSS Eligibility Ledger
 
-Reviewed **2026-09-16**. This is a public-safe decision ledger for the 26 offerings in the owner-authorized OSS readiness packet. It is a documentary review, not an eligibility calculator, application, award record, or provider endorsement.
+Reviewed **2026-09-18** against public `nirzaf/merconiq` at `1bbcc50600b4e15fbe295717f19e5d67838b6017`. This is a public-safe decision ledger for the 26 offerings in the owner-authorized OSS readiness packet. It is a documentary review, not an eligibility calculator, submitted application, award record, or provider endorsement.
 
 ## How to read this ledger
 
@@ -17,7 +17,7 @@ The gates below are intentionally independent:
 3. **Application status** — preparation state only. No application is submitted by this repository change.
 4. **Provider confirmation** — an explicit provider decision or entitlement. None is recorded here unless linked to a real provider confirmation.
 
-The repository baseline for this branch is `b1646978f51ac7493d70e1b701685d0e8fd7b7f2` (`origin/master`). The supplied matrix was reviewed on the same date and referenced a separate packet snapshot. Project evidence should be refreshed when the repository or provider terms change. Unknown, unverified, and not-applicable states are preserved deliberately.
+The current repository evidence baseline is `1bbcc50600b4e15fbe295717f19e5d67838b6017` (`master`, 2026-09-18). The supplied matrix was reviewed on 2026-09-16 against a separate packet snapshot; it is not a claim that every program condition or project metric remains current. Project evidence should be refreshed when the repository or provider terms change. Unknown, unverified, and not-applicable states are preserved deliberately.
 
 ### Status vocabulary
 
@@ -29,31 +29,31 @@ The repository baseline for this branch is `b1646978f51ac7493d70e1b701685d0e8fd7
 
 ## Project evidence boundary
 
-Merconiq’s public repository includes an MIT license, an inventory application, active maintenance material, CI/test evidence, and security/release documentation. Those facts support project-readiness review only. They do not establish external adoption, personal eligibility, payment details, a nomination, a provider selection, an award, or a guaranteed benefit. Native Codex review activity is not evidence of project API-credit spending.
+Merconiq’s public repository includes an MIT license, an inventory/procurement foundation, active maintenance material, CI/test evidence, and security/release documentation. On 2026-09-18 the public GitHub API showed 49 stars and 11 forks; these are visibility signals, not usage or adoption. The repository had 76 open issues, which is backlog state, not user demand. No production adoption, downloads, or project API-credit spending is recorded. These facts support project-readiness review only; they do not establish personal eligibility, payment details, a nomination, a provider selection, an award, or a guaranteed benefit. Native Codex review activity is not evidence of project API-credit spending.
 
 Do not add identities, residence, age, employer status, account addresses, organization IDs, tax or bank details, subscription billing information, private contacts, or unapproved budgets to this file. Keep completed personal fields in a private owner checklist.
 
 ## Program ledger
 
-### P01 — OpenAI Codex Open Source Fund
+### P01 — OpenAI Codex Open Source Fund (earlier form)
 
 - **Offering:** API credits.
-- **Project readiness / fit:** **Conditional candidate.** The official form asks for a real OSS project and a concrete API-credit use; awards are discretionary and the published maximum is credits, not cash. Merconiq’s quantified API workload and attributable cost evidence are missing.
-- **Owner gate:** Privately confirm the applicant, project ownership, account or organization, current terms, and an owner-approved budget. The public form returned HTTP 403 during the 2026-09-16 packet review and remains provider-side recheck pending; it must not be described as readable or accepting an application.
-- **Application status:** Not submitted; application candidate only.
+- **Project readiness / fit:** **Conditional candidate.** The earlier public form still renders and states that grants may provide up to $25,000 in API credits. That amount belongs to this page's copy; do not carry it into P02 or treat it as a current approved request, entitlement, or award.
+- **Owner gate:** The relationship between this earlier route and the current P02 program is not established by the pages reviewed. Privately confirm the intended program, applicant, project ownership, account/organization, current terms, and an owner-approved budget before using this route.
+- **Application status:** Not submitted; this issue's draft targets P02, not this earlier form.
 - **Provider confirmation:** None recorded.
-- **Next action:** Complete the public API-workload and maintenance-evidence work, then recheck the live form and obtain separate submission authorization.
-- **Source:** [OpenAI Codex Open Source Fund](https://openai.com/form/codex-open-source-fund/) — reviewed 2026-09-16.
+- **Next action:** Owner decides whether P01 is a distinct current route; do not submit duplicate applications or combine benefit descriptions without provider confirmation.
+- **Source:** [OpenAI Codex Open Source Fund](https://openai.com/form/codex-open-source-fund/) — page rechecked 2026-09-18.
 
-### P02 — OpenAI Codex for Open Source
+### P02 — OpenAI Codex for Open Source (current draft target)
 
-- **Offering:** Maintainer subscription and possible additional support.
-- **Project readiness / fit:** **Partial.** Public maintenance is visible, but adoption or ecosystem importance still needs evidence. Native Codex reviews do not prove API-credit expenditure. No universal star threshold is claimed here.
-- **Owner gate:** Privately confirm the correct account and organization, maintainer role, and current terms. The public form returned HTTP 403 during the 2026-09-16 packet review and remains provider-side recheck pending; recheck its limits before drafting.
-- **Application status:** Not submitted; application candidate only.
+- **Offering:** Six months of ChatGPT Pro with Codex, possible API credits, and conditional Codex Security access; benefits are selected/approved at the provider's discretion.
+- **Project readiness / fit:** **Conditional candidate.** The current page accepts applications from maintainers of active open-source projects and says it considers meaningful usage, broad adoption, or clear ecosystem importance. Merconiq has public maintenance evidence, but no verified production adoption, downloads, or API-cost baseline. The 49-star/11-fork snapshot is visibility only, not proof of usage.
+- **Owner gate:** The visible form requires applicant name, ChatGPT-account email, public GitHub username/profile, public repository, primary/core-maintainer role, OpenAI Organization ID, benefit selection, and application answers. It shows a 500-character maximum for “Why does this repository qualify?”, “How will you use API credits for your project?”, and “Anything else we should know?”. The linked terms make benefits personal, limited, non-transferable, and discretionary; they also warn applicants not to submit confidential information. Keep private identity/account details outside the repository.
+- **Application status:** Not submitted. A public-safe, unsubmitted answer draft and evidence index are prepared in [FUNDING_APPLICATION_DRAFT.md](FUNDING_APPLICATION_DRAFT.md) and [FUNDING_APPLICATION_EVIDENCE.md](FUNDING_APPLICATION_EVIDENCE.md). Applicant identity, maintainer-role confirmation, organization details, benefit selection, measurement, and any budget remain owner inputs.
 - **Provider confirmation:** None recorded.
-- **Next action:** Record dated project/adoption evidence and obtain owner authorship/review of any draft.
-- **Source:** [OpenAI Codex for Open Source](https://openai.com/form/codex-for-oss/) — reviewed 2026-09-16.
+- **Next action:** Applicant reviews the live form/terms and draft, supplies private required values, authorizes and records a measured API-use plan, and separately decides whether to submit. The visible form is not a provider decision or guarantee of acceptance.
+- **Sources:** [Codex for Open Source form](https://openai.com/form/codex-for-oss/) and [Program Terms](https://developers.openai.com/codex/codex-for-oss-terms) — checked 2026-09-18.
 
 ### P03 — Anthropic Claude for Open Source
 

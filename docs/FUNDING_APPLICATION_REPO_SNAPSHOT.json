@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "capture_started_at_utc": "2026-09-18T05:28:28Z",
+  "capture_finished_at_utc": "2026-09-18T05:28:33Z",
+  "repository": {
+    "name": "nirzaf/merconiq",
+    "visibility": "public",
+    "default_branch": "master",
+    "default_branch_sha": "1bbcc50600b4e15fbe295717f19e5d67838b6017",
+    "license_spdx_id": "MIT"
+  },
+  "metrics": {
+    "stars": {
+      "value": 49,
+      "source": "GET https://api.github.com/repos/nirzaf/merconiq",
+      "interpretation": "Visibility signal only; not usage or adoption."
+    },
+    "forks": {
+      "value": 11,
+      "source": "GET https://api.github.com/repos/nirzaf/merconiq",
+      "interpretation": "Visibility signal only; not usage or adoption."
+    },
+    "open_issues": {
+      "value": 76,
+      "source": "gh issue list --repo nirzaf/merconiq --state open --limit 100",
+      "interpretation": "Open issues only; pull requests are excluded. This is backlog state, not user demand."
+    },
+    "published_github_releases": {
+      "value": 0,
+      "source": "GET https://api.github.com/repos/nirzaf/merconiq/releases (all pages)",
+      "interpretation": "No published GitHub release was listed; this is not a complete artifact-download measure."
+    }
+  }
+}
