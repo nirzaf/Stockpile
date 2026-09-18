@@ -713,6 +713,149 @@ public sealed class PurchaseOrderApprovalPostgreSqlIntegrationTests(PostgreSqlIn
     }
 
     [PostgreSqlFact]
+    public async Task Each_supported_supplier_item_quantity_price_and_delivery_amendment_requires_reapproval()
+    {
+        fixture.EnsureEnabled();
+        var tenantId = $"po-amend-fields-{Guid.NewGuid():N}";
+        await using var context = fixture.CreateContext(tenantId);
+
+        var each = new UnitOfMeasure
+        {
+            ExternalId = $"EA-{Guid.NewGuid():N}",
+            Code = "EA",
+            Name = "Each",
+            DecimalPlaces = 0,
+            IsWholeUnitOnly = true
+        };
+        var box = new UnitOfMeasure
+        {
+            ExternalId = $"BOX-{Guid.NewGuid():N}",
+            Code = "BOX",
+            Name = "Box of six",
+            DecimalPlaces = 0,
+            IsWholeUnitOnly = true
+        };
+        var originalSupplier = new Supplier { Name = "Original amendment supplier" };
+        var amendedSupplier = new Supplier { Name = "Replacement amendment supplier" };
+        context.UnitsOfMeasure.AddRange(each, box);
+        context.Suppliers.AddRange(originalSupplier, amendedSupplier);
+        await context.SaveChangesAsync();
+
+        var originalItem = new Item
+        {
+            ItemCode = $"SKU-EA-{Guid.NewGuid():N}"[..20],
+            Description = "Amendment item sold each",
+            Rate = 4m,
+            BaseUnitId = each.Id,
+            PurchaseUnitId = each.Id,
+            PurchaseToBaseFactor = 1m,
+            QuantityPrecision = 0,
+            WholeUnitOnly = true
+        };
+        var amendedItem = new Item
+        {
+            ItemCode = $"SKU-BOX-{Guid.NewGuid():N}"[..20],
+            Description = "Amendment item sold by box",
+            Rate = 24m,
+            BaseUnitId = each.Id,
+            PurchaseUnitId = box.Id,
+            PurchaseToBaseFactor = 6m,
+            QuantityPrecision = 0,
+            WholeUnitOnly = true
+        };
+        context.Items.AddRange(originalItem, amendedItem);
+        await context.SaveChangesAsync();
+
+        var service = CreateService(context, tenantId);
+        var order = await service.CreateAsync(
+            new PurchaseOrder
+            {
+                PONumber = $"PO-{Guid.NewGuid():N}"[..20],
+                SupplierId = originalSupplier.Id,
+                CurrencyScale = 2,
+                DeliveryTerms = "Deliver to Dock 1"
+            },
+            [new OrderDetail { ItemId = originalItem.Id, Quantity = 2, UnitPrice = 4m }],
+            Guid.NewGuid().ToString("N"));
+        await service.UpdateStatusAsync(order.Id, nameof(PurchaseOrderStatus.Approved), TestActor);
+
+        await ApplyAmendmentAndReapprove(
+            amendedSupplier.Id, originalItem.Id, 2, 4m, "Deliver to Dock 1", "EA", 1m);
+        await ApplyAmendmentAndReapprove(
+            amendedSupplier.Id, amendedItem.Id, 2, 4m, "Deliver to Dock 1", "BOX", 6m);
+        await ApplyAmendmentAndReapprove(
+            amendedSupplier.Id, amendedItem.Id, 3, 4m, "Deliver to Dock 1", "BOX", 6m);
+        await ApplyAmendmentAndReapprove(
+            amendedSupplier.Id, amendedItem.Id, 3, 5m, "Deliver to Dock 1", "BOX", 6m);
+        await ApplyAmendmentAndReapprove(
+            amendedSupplier.Id, amendedItem.Id, 3, 5m, "Deliver to Dock 2", "BOX", 6m);
+
+        async Task ApplyAmendmentAndReapprove(
+            int supplierId,
+            int itemId,
+            int quantity,
+            decimal unitPrice,
+            string deliveryTerms,
+            string expectedUnitCode,
+            decimal expectedPurchaseToBaseFactor)
+        {
+            context.ChangeTracker.Clear();
+            var current = await service.GetForAmendmentAsync(order.Id);
+            current.Should().NotBeNull();
+            var line = current!.OrderDetails.Single();
+            var priorCommercialVersion = current.CommercialVersion;
+            var priorApprovedSnapshot = current.ApprovedCommercialSnapshotJson;
+
+            await service.AmendApprovedAsync(order.Id, new PurchaseOrderAmendment(
+                ExpectedCommercialVersion: current.CommercialVersion,
+                SupplierId: supplierId,
+                DeliveryTerms: deliveryTerms,
+                Notes: current.Notes,
+                CurrencyScale: current.CurrencyScale,
+                Lines: [new PurchaseOrderAmendmentLine(
+                    line.Id,
+                    itemId,
+                    quantity,
+                    unitPrice,
+                    line.DiscountPercent,
+                    line.TaxRuleId,
+                    line.TaxRatePercent,
+                    line.TaxCategory,
+                    line.TaxMode,
+                    line.Direction)]));
+
+            context.ChangeTracker.Clear();
+            var pending = await context.PurchaseOrders.SingleAsync(po => po.Id == order.Id);
+            pending.Status.Should().Be(PurchaseOrderStatus.Pending);
+            pending.CommercialVersion.Should().Be(priorCommercialVersion + 1);
+            pending.ApprovedCommercialVersion.Should().Be(priorCommercialVersion);
+            pending.ApprovedCommercialSnapshotJson.Should().Be(priorApprovedSnapshot);
+
+            await service.UpdateStatusAsync(order.Id, nameof(PurchaseOrderStatus.Approved), TestActor);
+            context.ChangeTracker.Clear();
+            var reapproved = await context.PurchaseOrders.SingleAsync(po => po.Id == order.Id);
+            var reapprovedLine = await context.OrderDetails.SingleAsync(candidate => candidate.PurchaseOrderId == order.Id);
+            reapproved.Status.Should().Be(PurchaseOrderStatus.Approved);
+            reapproved.ApprovedCommercialVersion.Should().Be(reapproved.CommercialVersion);
+            reapprovedLine.ItemId.Should().Be(itemId);
+            reapprovedLine.Quantity.Should().Be(quantity);
+            reapprovedLine.UnitPrice.Should().Be(unitPrice);
+            reapproved.DeliveryTerms.Should().Be(deliveryTerms);
+
+            using var snapshot = System.Text.Json.JsonDocument.Parse(reapproved.ApprovedCommercialSnapshotJson!);
+            snapshot.RootElement.GetProperty("supplierId").GetInt32().Should().Be(supplierId);
+            snapshot.RootElement.GetProperty("deliveryTerms").GetString().Should().Be(deliveryTerms);
+            snapshot.RootElement.GetProperty("lines")[0].GetProperty("itemId").GetInt32().Should().Be(itemId);
+            snapshot.RootElement.GetProperty("lines")[0].GetProperty("unitOfMeasureCode").GetString()
+                .Should().Be(expectedUnitCode);
+            snapshot.RootElement.GetProperty("lines")[0].GetProperty("purchaseToBaseFactor").GetDecimal()
+                .Should().Be(expectedPurchaseToBaseFactor);
+            snapshot.RootElement.GetProperty("lines")[0].GetProperty("quantity").GetInt32().Should().Be(quantity);
+            snapshot.RootElement.GetProperty("lines")[0].GetProperty("unitPrice").GetDecimal().Should().Be(unitPrice);
+        }
+    }
+
+    [PostgreSqlFact]
     public async Task Approval_migration_downgrade_holds_table_lock_through_preflight_and_column_drops()
     {
         fixture.EnsureEnabled();
