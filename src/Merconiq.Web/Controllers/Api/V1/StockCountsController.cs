@@ -64,6 +64,36 @@ public sealed class StockCountsController(
             : Ok(ApiResponse<StockCountView>.CreateSuccess(count));
     }
 
+    [HttpGet("reconciliation")]
+    [Authorize(Policy = CapabilityPolicies.View)]
+    [ProducesResponseType(typeof(ApiResponse<StockCountReconciliationView>), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> Reconcile(
+        [FromQuery] StockCountReconciliationRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (!await authorization.CanAccessLocationAsync(
+                User, request.LocationId, CompanyCapability.View, cancellationToken))
+        {
+            return Forbid();
+        }
+
+        var isTenantAdministrator = await authorization.IsTenantAdministratorAsync(User);
+        var companyIds = isTenantAdministrator
+            ? null
+            : await authorization.GetAccessibleCompanyIdsAsync(
+                User, CompanyCapability.View, cancellationToken);
+        var reconciliation = await stockCounts.GetReconciliationAsync(
+            request,
+            companyIds,
+            cancellationToken);
+
+        return reconciliation is null
+            ? NotFound(ApiResponse<object>.CreateFailure("Stock reconciliation scope not found."))
+            : Ok(ApiResponse<StockCountReconciliationView>.CreateSuccess(reconciliation));
+    }
+
     [HttpPost("{countId:int}/lines/{lineId:int}/observations")]
     [Authorize(Policy = CapabilityPolicies.Post)]
     [ValidateAntiForgeryToken]
@@ -95,6 +125,51 @@ public sealed class StockCountsController(
             countId,
             lineId,
             request.CountedQuantity,
+            scope,
+            cancellationToken);
+
+        return line is null
+            ? NotFound(ApiResponse<object>.CreateFailure("Stock-count line not found."))
+            : Ok(ApiResponse<StockCountLineView>.CreateSuccess(line));
+    }
+
+    [HttpPost("{countId:int}/lines/{lineId:int}/variance")]
+    [Authorize(Policy = CapabilityPolicies.Approve)]
+    [Authorize(Policy = CapabilityPolicies.Post)]
+    [ValidateAntiForgeryToken]
+    [IgnoreAntiforgeryToken]
+    [ProducesResponseType(typeof(ApiResponse<StockCountLineView>), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> PostVariance(
+        int countId,
+        int lineId,
+        [FromBody] PostStockCountVarianceRequest request,
+        CancellationToken cancellationToken)
+    {
+        var access = await stockCounts.GetAuthorizationContextAsync(countId, cancellationToken);
+        if (access is null)
+            return NotFound(ApiResponse<object>.CreateFailure("Stock count not found."));
+
+        if (!await authorization.CanAccessLocationAsync(
+                User, access.LocationId, CompanyCapability.Approve, cancellationToken)
+            || !await authorization.CanAccessLocationAsync(
+                User, access.LocationId, CompanyCapability.Post, cancellationToken))
+        {
+            return Forbid();
+        }
+
+        var scope = new StockMutationScope(
+            access.CompanyId,
+            async token => await authorization.CanAccessLocationAsync(
+                    User, access.LocationId, CompanyCapability.Approve, token)
+                && await authorization.CanAccessLocationAsync(
+                    User, access.LocationId, CompanyCapability.Post, token));
+        var line = await stockCounts.PostVarianceAsync(
+            countId,
+            lineId,
+            request.Reason,
+            request.ApprovedUnitCost,
             scope,
             cancellationToken);
 

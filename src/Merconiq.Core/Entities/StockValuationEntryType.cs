@@ -8,5 +8,6 @@ public enum StockValuationEntryType
     Return,
     TransferOut,
     TransferIn,
-    TransferReturn
+    TransferReturn,
+    CountAdjustment
 }

@@ -14,4 +14,5 @@ public sealed class StockCountLine : AuditableEntity
     public DateTime? ExpiryDate { get; set; }
     public int SnapshotQuantity { get; set; }
     public StockCountObservation? Observation { get; set; }
+    public StockCountVariance? Variance { get; set; }
 }

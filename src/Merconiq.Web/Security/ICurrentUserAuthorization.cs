@@ -11,7 +11,10 @@ public interface ICurrentUserAuthorization
     Task<bool> CanEditOrganizationAsync(ClaimsPrincipal principal);
     Task<bool> HasCompanyCapabilityAsync(ClaimsPrincipal principal, CompanyCapability capability);
     Task<bool> CanAccessCompanyAsync(ClaimsPrincipal principal, int companyId, CompanyCapability capability);
-    Task<IReadOnlySet<int>> GetAccessibleCompanyIdsAsync(ClaimsPrincipal principal, CompanyCapability capability);
+    Task<IReadOnlySet<int>> GetAccessibleCompanyIdsAsync(
+        ClaimsPrincipal principal,
+        CompanyCapability capability,
+        CancellationToken cancellationToken = default);
     Task<bool> CanAccessBranchAsync(ClaimsPrincipal principal, int branchId, CompanyCapability capability);
     Task<bool> CanAccessLocationAsync(
         ClaimsPrincipal principal,

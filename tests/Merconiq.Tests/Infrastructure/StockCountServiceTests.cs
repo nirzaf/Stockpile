@@ -198,6 +198,100 @@ public sealed class StockCountServiceTests
     }
 
     [Fact]
+    public async Task Reconciliation_filters_by_item_and_lot_and_compares_quantity_and_valuation_ledgers()
+    {
+        var tenantId = $"stock-reconciliation-{Guid.NewGuid():N}";
+        await using var context = CreateContext(Guid.NewGuid().ToString("N"), tenantId);
+        var valuedItem = new Item
+        {
+            ItemCode = $"RECON-{Guid.NewGuid():N}",
+            Description = "Valued reconciliation item",
+            ReorderLevel = 0
+        };
+        var lotItem = new Item
+        {
+            ItemCode = $"RECON-{Guid.NewGuid():N}",
+            Description = "Lot reconciliation item",
+            ReorderLevel = 0
+        };
+        var location = new Location { Name = $"Reconciliation location {Guid.NewGuid():N}" };
+        var transitDestination = new Location { Name = $"Transit destination {Guid.NewGuid():N}" };
+        context.Items.AddRange(valuedItem, lotItem);
+        context.Locations.AddRange(location, transitDestination);
+        await context.SaveChangesAsync();
+
+        var valuedMovement = CreateMovement(valuedItem.Id, location.Id, 10, null);
+        context.StockInHand.Add(new StockInHand
+        {
+            ItemId = valuedItem.Id,
+            LocationId = location.Id,
+            Quantity = 10
+        });
+        context.StockTransactions.Add(valuedMovement);
+        context.StockValuationBuckets.Add(new StockValuationBucket
+        {
+            ItemId = valuedItem.Id,
+            LocationId = location.Id,
+            Quantity = 10,
+            Value = 100m
+        });
+        context.StockValuationEntries.Add(new StockValuationEntry
+        {
+            StockTransaction = valuedMovement,
+            ItemId = valuedItem.Id,
+            LocationId = location.Id,
+            EntryType = StockValuationEntryType.Receipt,
+            Quantity = 10,
+            UnitCost = 10m,
+            TotalValue = 100m
+        });
+        context.StockTransactions.Add(new StockTransaction
+        {
+            ItemId = valuedItem.Id,
+            FromLocationId = location.Id,
+            ToLocationId = transitDestination.Id,
+            Quantity = 2,
+            TransactionType = TransactionType.TransferReturn,
+            TransactionDate = DateTime.UtcNow
+        });
+        context.StockInHand.Add(new StockInHand
+        {
+            ItemId = lotItem.Id,
+            LocationId = location.Id,
+            Quantity = 4,
+            BatchNumber = "LOT-B"
+        });
+        context.StockTransactions.Add(CreateMovement(lotItem.Id, location.Id, 4, "LOT-B"));
+        await context.SaveChangesAsync();
+
+        var service = new StockCountService(context, new UnitOfWork(context));
+        var valuedReport = await service.GetReconciliationAsync(
+            new StockCountReconciliationRequest(location.Id, ItemId: valuedItem.Id));
+        valuedReport.Should().NotBeNull();
+        var valuedPosition = valuedReport!.Positions.Should().ContainSingle().Subject;
+        valuedPosition.LedgerQuantity.Should().Be(10);
+        valuedPosition.QuantityDifference.Should().Be(0);
+        valuedPosition.ValuationTracked.Should().BeTrue();
+        valuedPosition.ValuationBucketValue.Should().Be(100m);
+        valuedPosition.ValuationLedgerValue.Should().Be(100m);
+        valuedPosition.ValuationQuantityDifference.Should().Be(0);
+        valuedPosition.ValuationLedgerQuantityDifference.Should().Be(0);
+        valuedPosition.ValuationValueDifference.Should().Be(0m);
+        valuedPosition.Ledger.Should().HaveCount(2);
+
+        var lotReport = await service.GetReconciliationAsync(
+            new StockCountReconciliationRequest(location.Id, BatchNumber: "LOT-B"));
+        lotReport.Should().NotBeNull();
+        lotReport!.Positions.Should().ContainSingle();
+        lotReport.Positions[0].ItemId.Should().Be(lotItem.Id);
+        lotReport.Positions[0].LedgerQuantity.Should().Be(4);
+        lotReport.Positions[0].ValuationTracked.Should().BeFalse();
+
+        (await service.GetReconciliationAsync(
+            new StockCountReconciliationRequest(location.Id), [42])).Should().BeNull();
+    }
+
+    [Fact]
     public async Task Start_rejects_ambiguous_duplicate_item_lot_buckets_without_persisting_a_count()
     {
         var tenantId = $"stock-count-duplicate-{Guid.NewGuid():N}";

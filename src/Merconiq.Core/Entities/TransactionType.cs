@@ -33,5 +33,8 @@ public enum TransactionType
     TransferReceipt,
 
     /// <summary>Undelivered dispatched stock returned to the source location.</summary>
-    TransferReturn
+    TransferReturn,
+
+    /// <summary>Authorized physical-count variance posted against its immutable count line.</summary>
+    CountAdjustment
 }
