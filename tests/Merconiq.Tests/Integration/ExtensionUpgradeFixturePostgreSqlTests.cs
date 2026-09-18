@@ -30,7 +30,6 @@ namespace Merconiq.Tests.Integration;
 public sealed class ExtensionUpgradeFixturePostgreSqlTests(PostgreSqlIntegrationFixture fixture)
 {
     private const string PredecessorMigration = "20260918183139_EnforceAuditLogAppendOnly";
-    private const string TargetMigration = "20260918200446_AddCompanyScopedCustomers";
 
     [PostgreSqlFact]
     public async Task Compiled_command_adapter_runs_after_upgrade_without_bypassing_auth_audit_or_other_ledgers()
@@ -60,6 +59,7 @@ public sealed class ExtensionUpgradeFixturePostgreSqlTests(PostgreSqlIntegration
             await using (var predecessor = new InventoryDbContext(options, new TestTenantContext(tenantId)))
             {
                 await predecessor.Database.MigrateAsync(PredecessorMigration);
+                (await predecessor.Database.GetAppliedMigrationsAsync()).Last().Should().Be(PredecessorMigration);
                 var existingItem = new Item
                 {
                     ItemCode = $"PRE-{suffix[..12]}",
@@ -74,7 +74,8 @@ public sealed class ExtensionUpgradeFixturePostgreSqlTests(PostgreSqlIntegration
             await using (var upgraded = new InventoryDbContext(options, new TestTenantContext(tenantId)))
             {
                 await upgraded.Database.MigrateAsync();
-                (await upgraded.Database.GetAppliedMigrationsAsync()).Last().Should().Be(TargetMigration);
+                (await upgraded.Database.GetAppliedMigrationsAsync())
+                    .Should().Equal(upgraded.Database.GetMigrations());
                 (await upgraded.Items.SingleAsync(item => item.Id == existingItemId))
                     .Description.Should().Be("Synthetic item created before the upgrade");
             }
@@ -203,16 +204,11 @@ internal sealed class ExtensionUpgradeApiFactory(
     {
         builder.UseEnvironment("Testing");
         builder.UseSetting("JwtSettings:Secret", TestJwtSecret);
+        builder.UseSetting("Tenancy:HostTenants:localhost", tenantId);
         builder.ConfigureTestServices(services =>
         {
             services.RemoveAll<IHostedService>();
             services.AddDbContext<InventoryDbContext>(options => options.UseNpgsql(connectionString));
-            services.AddScoped<TenantContext>(_ =>
-            {
-                var context = new TenantContext();
-                context.SetTenant(tenantId);
-                return context;
-            });
             services.AddSingleton(adapterProbe);
             services.AddTransient<IPipelineBehavior<CreateItemCommand, Item>, ItemCommandAuditAdapter>();
         });
@@ -241,6 +237,7 @@ internal sealed class ExtensionUpgradeApiFactory(
     private async Task<ApplicationUser> EnsureRoleUserAsync(string role)
     {
         using var scope = Services.CreateScope();
+        scope.ServiceProvider.GetRequiredService<TenantContext>().SetTenant(tenantId);
         var userManager = scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
         var roleManager = scope.ServiceProvider.GetRequiredService<RoleManager<IdentityRole>>();
         var userId = $"extension-{role.ToLowerInvariant()}-{suffix}";
