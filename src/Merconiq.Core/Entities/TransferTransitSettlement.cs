@@ -6,6 +6,11 @@ namespace Merconiq.Core.Entities;
 public sealed class TransferTransitSettlement : AuditableEntity
 {
     public int Id { get; set; }
+    /// <summary>Numbered document identity assigned to settlements created after identity cutover.</summary>
+    public DocumentIdentityId? DocumentId { get; set; }
+    public DocumentIdentity? DocumentIdentity { get; set; }
+    public DocumentLineIdentityId? DocumentLineId { get; set; }
+    public DocumentLineIdentity? DocumentLineIdentity { get; set; }
     public int TransferTransitEntryId { get; set; }
     public int TransferOrderId { get; set; }
     public int TransferOrderLineId { get; set; }

@@ -56,6 +56,9 @@ public sealed record TransferDispatchView(
 
 public sealed record TransferTransitSettlementView(
     int Id,
+    Guid? DocumentId,
+    string? DocumentNumber,
+    Guid? DocumentLineId,
     int TransferTransitEntryId,
     int TransferOrderId,
     int TransferOrderLineId,

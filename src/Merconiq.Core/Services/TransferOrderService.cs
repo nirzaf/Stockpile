@@ -31,6 +31,10 @@ public sealed class TransferOrderService(
     private const string DocumentType = "TransferOrder";
     private const string RequestScope = "TransferOrder.Create";
     private const string NumberPrefix = "TO-";
+    private const string SettlementDocumentType = "TransferTransitSettlement";
+    private const string SettlementLineType = "TransferTransitSettlementLine";
+    private const string SettlementRequestScope = "TransferTransitSettlement.Resolve";
+    private const string SettlementNumberPrefix = "TRS-";
     private const int RecentOrderLimit = 100;
     private static readonly DateTimeOffset ReservationUntilResolution =
         new(9999, 12, 31, 0, 0, 0, TimeSpan.Zero);
@@ -620,7 +624,7 @@ public sealed class TransferOrderService(
                 if (mutationScope.CompanyId != previous.CompanyId ||
                     mutationScope.Reauthorize is not null && !await mutationScope.Reauthorize(cancellationToken))
                     throw new UnauthorizedAccessException("Company posting access is required to replay this settlement.");
-                result = ToSettlementView(previous);
+                result = await ToSettlementViewAsync(previous, cancellationToken);
                 return;
             }
 
@@ -672,6 +676,33 @@ public sealed class TransferOrderService(
                     Round(entry.TotalValue * normalizedRequest.Quantity / entry.Quantity),
                     remainingValue);
             var settlementUnitCost = Round(settlementValue / normalizedRequest.Quantity);
+            var settledAt = NormalizeDatabaseTimestamp(DateTimeOffset.UtcNow);
+            var settlementIdentity = await documentIdentityService.CreateNumberedAsync(
+                entry.CompanyId,
+                SettlementDocumentType,
+                settledAt.Year,
+                SettlementNumberPrefix,
+                $"{SettlementRequestScope}:{id}:{transitEntryId}",
+                idempotencyKey,
+                requestHash,
+                cancellationToken);
+            settlementIdentity.TransitionTo(DocumentLifecycleStatus.Active);
+            var settlementLineIdentity = DocumentLineIdentity.Create(
+                DocumentLineIdentityId.New(),
+                settlementIdentity.Id,
+                tenantContext.TenantId,
+                entry.CompanyId,
+                SettlementLineType);
+            await lineIdentityRepository.AddAsync(settlementLineIdentity);
+            // Persist the new target line inside the caller-owned transaction before the
+            // lineage service validates both endpoint identities from PostgreSQL.
+            await unitOfWork.SaveChangesAsync(cancellationToken);
+            await documentIdentityService.LinkLinesAsync(
+                line.DocumentLineId,
+                settlementLineIdentity.Id,
+                DocumentLineRelationshipType.Successor,
+                cancellationToken);
+
             var movement = await stockService.PostTransferTransitMovementAsync(
                 new TransferTransitStockMovementRequest(
                     entry.ItemId,
@@ -693,6 +724,10 @@ public sealed class TransferOrderService(
 
             var settlement = new TransferTransitSettlement
             {
+                DocumentId = settlementIdentity.Id,
+                DocumentIdentity = settlementIdentity,
+                DocumentLineId = settlementLineIdentity.Id,
+                DocumentLineIdentity = settlementLineIdentity,
                 TransferTransitEntryId = entry.Id,
                 TransferOrderId = entry.TransferOrderId,
                 TransferOrderLineId = entry.TransferOrderLineId,
@@ -711,7 +746,7 @@ public sealed class TransferOrderService(
                 IdempotencyKey = idempotencyKey,
                 RequestHash = requestHash,
                 SettledBy = settledBy.Trim(),
-                SettledAt = NormalizeDatabaseTimestamp(DateTimeOffset.UtcNow),
+                SettledAt = settledAt,
                 Reason = normalizedRequest.Reason,
                 TenantId = tenantContext.TenantId
             };
@@ -745,7 +780,7 @@ public sealed class TransferOrderService(
                     settlement.Reason
                 }), cancellationToken);
             await unitOfWork.SaveChangesAsync(cancellationToken);
-            result = ToSettlementView(settlement);
+            result = await ToSettlementViewAsync(settlement, cancellationToken);
         }, cancellationToken, async () =>
         {
             var committed = (await _settlementRepositoryOrThrow().FindAsync(settlement =>
@@ -826,9 +861,25 @@ public sealed class TransferOrderService(
         _settlementRepository ?? throw new InvalidOperationException(
             "Transfer transit settlement persistence is not configured.");
 
-    private static TransferTransitSettlementView ToSettlementView(TransferTransitSettlement settlement) =>
-        new(
+    private async Task<TransferTransitSettlementView> ToSettlementViewAsync(
+        TransferTransitSettlement settlement,
+        CancellationToken cancellationToken)
+    {
+        DocumentIdentity? identity = null;
+        if (settlement.DocumentId is DocumentIdentityId documentId)
+        {
+            identity = (await documentRepository.FindAsync(
+                    document => document.Id == documentId,
+                    cancellationToken))
+                .SingleOrDefault()
+                ?? throw new InvalidOperationException("Transfer settlement document identity not found.");
+        }
+
+        return new TransferTransitSettlementView(
             settlement.Id,
+            settlement.DocumentId?.Value,
+            identity?.HumanNumber,
+            settlement.DocumentLineId?.Value,
             settlement.TransferTransitEntryId,
             settlement.TransferOrderId,
             settlement.TransferOrderLineId,
@@ -848,6 +899,7 @@ public sealed class TransferOrderService(
             settlement.SettledBy,
             settlement.SettledAt,
             settlement.Reason);
+    }
 
     private void ValidateHeader(int companyId, int fromLocationId, int toLocationId)
     {

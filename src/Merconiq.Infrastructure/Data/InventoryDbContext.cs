@@ -852,9 +852,24 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
             {
                 table.HasCheckConstraint("CK_TransferTransitSettlements_PositiveQuantity", "\"Quantity\" > 0");
                 table.HasCheckConstraint("CK_TransferTransitSettlements_NonNegativeValue", "\"UnitCost\" >= 0 AND \"TotalValue\" >= 0");
+                table.HasCheckConstraint(
+                    "CK_TransferTransitSettlements_DocumentIdentityPair",
+                    "(\"DocumentId\" IS NULL AND \"DocumentLineId\" IS NULL) OR (\"DocumentId\" IS NOT NULL AND \"DocumentLineId\" IS NOT NULL)");
             });
             entity.HasQueryFilter(e => e.TenantId == CurrentTenantId);
             entity.Property(e => e.TenantId).HasMaxLength(64).IsRequired();
+            entity.Property(e => e.DocumentId)
+                .HasConversion(
+                    id => id.HasValue ? id.Value.Value : (Guid?)null,
+                    value => value.HasValue ? new DocumentIdentityId(value.Value) : (DocumentIdentityId?)null)
+                .ValueGeneratedNever();
+            entity.Property(e => e.DocumentId).Metadata.SetAfterSaveBehavior(PropertySaveBehavior.Throw);
+            entity.Property(e => e.DocumentLineId)
+                .HasConversion(
+                    id => id.HasValue ? id.Value.Value : (Guid?)null,
+                    value => value.HasValue ? new DocumentLineIdentityId(value.Value) : (DocumentLineIdentityId?)null)
+                .ValueGeneratedNever();
+            entity.Property(e => e.DocumentLineId).Metadata.SetAfterSaveBehavior(PropertySaveBehavior.Throw);
             entity.Property(e => e.SourceDocumentLineId)
                 .HasConversion(id => id.Value, value => new DocumentLineIdentityId(value))
                 .ValueGeneratedNever();
@@ -867,8 +882,24 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
             entity.Property(e => e.RequestHash).HasMaxLength(64).IsRequired();
             entity.Property(e => e.SettledBy).HasMaxLength(256).IsRequired();
             entity.Property(e => e.Reason).HasMaxLength(500);
+            entity.HasIndex(e => new { e.TenantId, e.DocumentId })
+                .IsUnique()
+                .HasFilter("\"DocumentId\" IS NOT NULL");
+            entity.HasIndex(e => new { e.TenantId, e.DocumentLineId })
+                .IsUnique()
+                .HasFilter("\"DocumentLineId\" IS NOT NULL");
             entity.HasIndex(e => new { e.TenantId, e.TransferTransitEntryId, e.IdempotencyKey }).IsUnique();
             entity.HasIndex(e => new { e.TenantId, e.TransferOrderId, e.SettledAt });
+            entity.HasOne(e => e.DocumentIdentity)
+                .WithOne()
+                .HasForeignKey<TransferTransitSettlement>(e => new { e.DocumentId, e.TenantId })
+                .HasPrincipalKey<DocumentIdentity>(e => new { e.Id, e.TenantId })
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(e => e.DocumentLineIdentity)
+                .WithOne()
+                .HasForeignKey<TransferTransitSettlement>(e => new { e.DocumentId, e.DocumentLineId, e.TenantId })
+                .HasPrincipalKey<DocumentLineIdentity>(e => new { e.DocumentId, e.Id, e.TenantId })
+                .OnDelete(DeleteBehavior.Restrict);
             entity.HasOne<TransferTransitEntry>()
                 .WithMany()
                 .HasForeignKey(e => new { e.TransferTransitEntryId, e.TenantId })
