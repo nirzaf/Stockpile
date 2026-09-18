@@ -150,7 +150,9 @@ ID because their original source ID is unknown—are omitted.
         "isWholeUnitOnly": true
       }
     ]
-  }
+  },
+  "errorMessage": null,
+  "errors": null
 }
 ```
 
