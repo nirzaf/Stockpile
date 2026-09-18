@@ -73,6 +73,22 @@ namespace Merconiq.Infrastructure.Migrations
         /// <inheritdoc />
         protected override void Down(MigrationBuilder migrationBuilder)
         {
+            // This lock is held by the migration transaction through the preflight and DROP TABLE,
+            // so concurrent account writes cannot slip between the check and the destructive DDL.
+            migrationBuilder.Sql("LOCK TABLE \"ChartOfAccounts\" IN ACCESS EXCLUSIVE MODE;");
+            migrationBuilder.Sql(
+                """
+                DO $chart_of_accounts_downgrade$
+                BEGIN
+                    IF EXISTS (SELECT 1 FROM "ChartOfAccounts") THEN
+                        RAISE EXCEPTION USING
+                            ERRCODE = 'P0001',
+                            MESSAGE = 'Cannot downgrade company chart of accounts while account rows exist.';
+                    END IF;
+                END;
+                $chart_of_accounts_downgrade$;
+                """);
+
             migrationBuilder.DropTable(
                 name: "ChartOfAccounts");
         }
