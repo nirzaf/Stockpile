@@ -189,14 +189,43 @@ public sealed class WebhookDeliveryLeasesPostgreSqlIntegrationTests(PostgreSqlIn
             delivery.LeaseUntil.Should().BeNull();
 
             var commands = commandCapture.Commands.ToArray();
-            var claimProjection = commands.Single(command =>
-                command.Contains("PayloadByteLength", StringComparison.Ordinal));
-            claimProjection.Should().Contain("octet_length(convert_to(\"Payload\", 'UTF8'))");
-            Regex.IsMatch(
-                claimProjection,
-                "(?:\\bSELECT|,)\\s*(?:[\\w\\\".]+\\.)?\\\"Payload\\\"(?:\\s|,)",
-                RegexOptions.IgnoreCase)
-                .Should().BeFalse("the metadata projection must not return the Payload column");
+            var deliveryReads = commands
+                .Where(command => command.Contains("WebhookDeliveries", StringComparison.OrdinalIgnoreCase) &&
+                    Regex.IsMatch(command, @"\bSELECT\b", RegexOptions.IgnoreCase))
+                .ToArray();
+            deliveryReads.Should().NotBeEmpty("the worker must read deliveries through SQL projections");
+
+            var claimProjections = deliveryReads
+                .Where(command => command.Contains("PayloadByteLength", StringComparison.Ordinal))
+                .ToArray();
+            claimProjections.Should().NotBeEmpty("the worker must inspect the payload size before loading it");
+            foreach (var deliveryRead in deliveryReads)
+            {
+                var selectProjections = Regex.Matches(
+                    deliveryRead,
+                    @"\bSELECT\s+(?<projection>.*?)\s+FROM\s+(?:[\w"".]+\.)?""?WebhookDeliveries""?",
+                    RegexOptions.IgnoreCase | RegexOptions.Singleline);
+                selectProjections.Should().NotBeEmpty("every delivery SELECT must be inspected");
+
+                foreach (Match selectProjection in selectProjections)
+                {
+                    var projection = selectProjection.Groups["projection"].Value;
+                    projection.Should().NotContain("*",
+                        "delivery reads must use an explicit bounded projection, including DISTINCT/ALL queries");
+
+                    var projectionWithoutPayloadLength = Regex.Replace(
+                        projection,
+                        @"octet_length\s*\(\s*convert_to\s*\(\s*""Payload""\s*,\s*'UTF8'\s*\)\s*\)\s+AS\s+""PayloadByteLength""",
+                        string.Empty,
+                        RegexOptions.IgnoreCase | RegexOptions.Singleline);
+                    projectionWithoutPayloadLength.Should().NotContain("\"Payload\"",
+                        "payload may be referenced only to calculate its bounded UTF-8 size");
+                }
+            }
+
+            claimProjections.Should().OnlyContain(command =>
+                command.Contains("octet_length(convert_to(\"Payload\", 'UTF8'))", StringComparison.Ordinal),
+                "the bounded claim projection must derive UTF-8 payload length in PostgreSQL");
 
             var deadLetterUpdate = commands.Single(command =>
                 command.Contains("UPDATE \"WebhookDeliveries\"", StringComparison.Ordinal) &&
