@@ -38,3 +38,22 @@ public sealed record UnitOfMeasureExportRecord(
     string Name,
     int DecimalPlaces,
     bool IsWholeUnitOnly);
+
+public sealed record ItemMasterExportResponse(
+    int PageSize,
+    bool HasMore,
+    string? NextCursor,
+    IReadOnlyList<ItemMasterExportRecord> Items);
+
+public sealed record ItemMasterExportRecord(
+    string ExternalId,
+    string ItemCode,
+    string Description,
+    string? BaseUnitExternalId,
+    string? PurchaseUnitExternalId,
+    string? SalesUnitExternalId,
+    decimal PurchaseToBaseFactor,
+    decimal SalesToBaseFactor,
+    int QuantityPrecision,
+    bool WholeUnitOnly,
+    bool IsActive);
