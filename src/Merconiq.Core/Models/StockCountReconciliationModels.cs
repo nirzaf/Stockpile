@@ -4,10 +4,10 @@ using Merconiq.Core.Entities;
 namespace Merconiq.Core.Models;
 
 public sealed record StockCountReconciliationRequest(
-    [property: Range(1, int.MaxValue)] int LocationId,
-    [property: Range(1, int.MaxValue)] int? CompanyId = null,
-    [property: Range(1, int.MaxValue)] int? ItemId = null,
-    [property: StringLength(100)] string? BatchNumber = null,
+    [param: Range(1, int.MaxValue)] int LocationId,
+    [param: Range(1, int.MaxValue)] int? CompanyId = null,
+    [param: Range(1, int.MaxValue)] int? ItemId = null,
+    [param: StringLength(100)] string? BatchNumber = null,
     DateTime? ExpiryDate = null);
 
 public sealed record StockCountReconciliationMovementView(
