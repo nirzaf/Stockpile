@@ -108,6 +108,180 @@ public sealed class TransferOrderServiceTests
     }
 
     [Fact]
+    public async Task Amend_adds_and_removes_lines_and_invalidates_approved_order()
+    {
+        var tenant = new TestTenantContext("transfer-order-amend-lines-test");
+        var options = new DbContextOptionsBuilder<InventoryDbContext>()
+            .UseInMemoryDatabase($"transfer-order-amend-{Guid.NewGuid():N}")
+            .Options;
+        await using var context = new InventoryDbContext(options, tenant);
+
+        var company = new Company { Code = "TO-AMEND", LegalName = "Transfer Amendment Company" };
+        context.Companies.Add(company);
+        await context.SaveChangesAsync();
+        var sourceBranch = new Branch { CompanyId = company.Id, Code = "A", Name = "A" };
+        var destinationBranch = new Branch { CompanyId = company.Id, Code = "B", Name = "B" };
+        context.Branches.AddRange(sourceBranch, destinationBranch);
+        await context.SaveChangesAsync();
+        var source = new Location { BranchId = sourceBranch.Id, Name = "Source" };
+        var destination = new Location { BranchId = destinationBranch.Id, Name = "Destination" };
+        var item = new Item { ItemCode = "TO-AMEND-ITEM", Description = "Transfer amendment item" };
+        context.Locations.AddRange(source, destination);
+        context.Items.Add(item);
+        await context.SaveChangesAsync();
+
+        var unitOfWork = new UnitOfWork(context);
+        var stockService = new Mock<IStockService>();
+        stockService.Setup(stock => stock.ReleaseReservationAsync(
+                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<StockMutationScope?>()))
+            .Returns(Task.CompletedTask);
+        var service = new TransferOrderService(
+            new Repository<TransferOrder>(context),
+            new Repository<TransferOrderLine>(context),
+            new Repository<TransferTransitEntry>(context),
+            new Repository<DocumentIdentity>(context),
+            new Repository<DocumentLineIdentity>(context),
+            new Repository<Company>(context),
+            new Repository<Branch>(context),
+            new Repository<Location>(context),
+            new Repository<Item>(context),
+            unitOfWork,
+            new DocumentIdentityService(context, unitOfWork, new DocumentNumberService(context, unitOfWork)),
+            stockService.Object,
+            tenant,
+            new Mock<IWebhookDispatcher>().Object,
+            NullLogger<TransferOrderService>.Instance);
+
+        var created = await service.CreateAsync(new CreateTransferOrderRequest(
+            company.Id,
+            source.Id,
+            destination.Id,
+            [new TransferOrderLineRequest(item.Id, 4), new TransferOrderLineRequest(item.Id, 6)]), "amend-lines-create");
+        var originalLines = created.Lines.OrderBy(line => line.Id).ToArray();
+        var originalOrder = await context.TransferOrders.SingleAsync(order => order.Id == created.Id);
+        originalOrder.Status = TransferOrderStatus.Approved;
+        await context.SaveChangesAsync();
+        var trackedRemovedLine = context.ChangeTracker.Entries<TransferOrderLine>()
+            .Single(entry => entry.Entity.Id == originalLines[1].Id).Entity;
+        var detachedRemovedLine = await new Repository<TransferOrderLine>(context).Query()
+            .SingleAsync(line => line.Id == originalLines[1].Id);
+        detachedRemovedLine.Should().NotBeSameAs(trackedRemovedLine);
+
+        await service.AmendAsync(created.Id, new CreateTransferOrderRequest(
+            company.Id,
+            source.Id,
+            destination.Id,
+            [
+                new TransferOrderLineRequest(item.Id, 4, LineId: originalLines[0].Id),
+                new TransferOrderLineRequest(item.Id, 2)
+            ]), new StockMutationScope(company.Id));
+
+        (await context.TransferOrders.SingleAsync(order => order.Id == created.Id)).Status
+            .Should().Be(TransferOrderStatus.Draft);
+        var persistedLines = await context.TransferOrderLines
+            .Where(line => line.TransferOrderId == created.Id)
+            .OrderBy(line => line.Id)
+            .ToListAsync();
+        persistedLines.Should().HaveCount(2);
+        var retainedLine = persistedLines.Should().ContainSingle(line => line.Id == originalLines[0].Id).Subject;
+        retainedLine.DocumentLineId.Value.Should().Be(originalLines[0].DocumentLineId);
+        retainedLine.Quantity.Should().Be(4);
+        persistedLines.Should().NotContain(line => line.Id == originalLines[1].Id);
+        var addedLine = persistedLines.Single(line => line.Id != originalLines[0].Id);
+        addedLine.DocumentLineId.Value.Should().NotBe(originalLines[0].DocumentLineId);
+        addedLine.Quantity.Should().Be(2);
+
+        var documentLineIdentities = await context.DocumentLineIdentities
+            .Where(identity => identity.DocumentId == new DocumentIdentityId(created.DocumentId))
+            .ToListAsync();
+        documentLineIdentities.Should().HaveCount(3);
+        documentLineIdentities.Should().ContainSingle(identity => identity.Id.Value == addedLine.DocumentLineId.Value);
+        documentLineIdentities.Should().ContainSingle(identity => identity.Id.Value == originalLines[1].DocumentLineId);
+
+        foreach (var originalLine in originalLines)
+        {
+            stockService.Verify(stock => stock.ReleaseReservationAsync(
+                originalLine.ReservationSourceLineReference,
+                "Transfer order amended; approval invalidated.",
+                It.IsAny<StockMutationScope?>()), Times.Once);
+        }
+    }
+
+    [Fact]
+    public async Task Amend_uses_persisted_status_after_another_context_cancels_a_tracked_order()
+    {
+        var tenant = new TestTenantContext($"transfer-order-amend-stale-{Guid.NewGuid():N}");
+        var options = new DbContextOptionsBuilder<InventoryDbContext>()
+            .UseInMemoryDatabase($"transfer-order-amend-stale-{Guid.NewGuid():N}")
+            .Options;
+        TransferOrderView created;
+        int companyId;
+        int sourceLocationId;
+        int destinationLocationId;
+        int itemId;
+
+        await using (var setup = new InventoryDbContext(options, tenant))
+        {
+            var company = new Company { Code = "TO-STALE", LegalName = "Stale Order Company" };
+            setup.Companies.Add(company);
+            await setup.SaveChangesAsync();
+            var sourceBranch = new Branch { CompanyId = company.Id, Code = "S", Name = "Source" };
+            var destinationBranch = new Branch { CompanyId = company.Id, Code = "D", Name = "Destination" };
+            setup.Branches.AddRange(sourceBranch, destinationBranch);
+            await setup.SaveChangesAsync();
+            var source = new Location { BranchId = sourceBranch.Id, Name = "Source" };
+            var destination = new Location { BranchId = destinationBranch.Id, Name = "Destination" };
+            var item = new Item { ItemCode = "TO-STALE-ITEM", Description = "Stale order item" };
+            setup.Locations.AddRange(source, destination);
+            setup.Items.Add(item);
+            await setup.SaveChangesAsync();
+
+            companyId = company.Id;
+            sourceLocationId = source.Id;
+            destinationLocationId = destination.Id;
+            itemId = item.Id;
+            created = await CreateService(setup, tenant).CreateAsync(
+                new CreateTransferOrderRequest(
+                    companyId,
+                    sourceLocationId,
+                    destinationLocationId,
+                    [new TransferOrderLineRequest(itemId, 2)]),
+                "stale-order-create");
+        }
+
+        await using var amendmentContext = new InventoryDbContext(options, tenant);
+        var staleOrder = await new Repository<TransferOrder>(amendmentContext).GetByIdAsync(created.Id);
+        staleOrder.Should().NotBeNull();
+        staleOrder!.Status.Should().Be(TransferOrderStatus.Draft);
+
+        await using (var cancellationContext = new InventoryDbContext(options, tenant))
+        {
+            await CreateService(cancellationContext, tenant)
+                .CancelAsync(created.Id, new StockMutationScope(companyId));
+        }
+
+        var amendmentService = CreateService(amendmentContext, tenant);
+        await FluentAssertions.FluentActions.Invoking(() => amendmentService.AmendAsync(
+                created.Id,
+                new CreateTransferOrderRequest(
+                    companyId,
+                    sourceLocationId,
+                    destinationLocationId,
+                    [new TransferOrderLineRequest(itemId, 3, LineId: created.Lines.Single().Id)],
+                    "do not revive cancellation"),
+                new StockMutationScope(companyId)))
+            .Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("Cancelled transfer orders cannot be amended.");
+
+        await using var verify = new InventoryDbContext(options, tenant);
+        var persistedOrder = await verify.TransferOrders.SingleAsync(order => order.Id == created.Id);
+        persistedOrder.Status.Should().Be(TransferOrderStatus.Cancelled);
+        persistedOrder.Notes.Should().BeNull();
+        (await verify.TransferOrderLines.SingleAsync(line => line.TransferOrderId == created.Id))
+            .Quantity.Should().Be(2);
+    }
+
+    [Fact]
     public async Task Create_rejects_an_empty_line_collection_before_persistence()
     {
         var unitOfWork = new Mock<IUnitOfWork>();
@@ -130,6 +304,39 @@ public sealed class TransferOrderServiceTests
 
         var action = () => service.CreateAsync(new CreateTransferOrderRequest(
             1, 10, 20, []), "create-1");
+
+        await action.Should().ThrowAsync<ArgumentException>()
+            .WithMessage("A transfer order must contain at least one line.*");
+        unitOfWork.Verify(uow => uow.ExecuteInTransactionAsync(
+            It.IsAny<Func<Task>>(), It.IsAny<CancellationToken>(), It.IsAny<Func<Task<bool>>?>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task Amend_rejects_an_empty_line_collection_before_persistence()
+    {
+        var unitOfWork = new Mock<IUnitOfWork>();
+        var service = new TransferOrderService(
+            new Mock<IRepository<TransferOrder>>().Object,
+            new Mock<IRepository<TransferOrderLine>>().Object,
+            new Mock<IRepository<TransferTransitEntry>>().Object,
+            new Mock<IRepository<DocumentIdentity>>().Object,
+            new Mock<IRepository<DocumentLineIdentity>>().Object,
+            new Mock<IRepository<Company>>().Object,
+            new Mock<IRepository<Branch>>().Object,
+            new Mock<IRepository<Location>>().Object,
+            new Mock<IRepository<Item>>().Object,
+            unitOfWork.Object,
+            new Mock<IDocumentIdentityService>().Object,
+            new Mock<IStockService>().Object,
+            new TestTenantContext("transfer-order-empty-amend-test"),
+            new Mock<IWebhookDispatcher>().Object,
+            NullLogger<TransferOrderService>.Instance);
+
+        var action = () => service.AmendAsync(
+            1,
+            new CreateTransferOrderRequest(1, 10, 20, []),
+            new StockMutationScope(1));
 
         await action.Should().ThrowAsync<ArgumentException>()
             .WithMessage("A transfer order must contain at least one line.*");
@@ -235,5 +442,26 @@ public sealed class TransferOrderServiceTests
         await act.Should().ThrowAsync<InvalidOperationException>()
             .WithMessage("An active company in the current tenant is required.");
         events.Should().Equal("organization", "locations", "validation");
+    }
+
+    private static TransferOrderService CreateService(InventoryDbContext context, ITenantContext tenant)
+    {
+        var unitOfWork = new UnitOfWork(context);
+        return new TransferOrderService(
+            new Repository<TransferOrder>(context),
+            new Repository<TransferOrderLine>(context),
+            new Repository<TransferTransitEntry>(context),
+            new Repository<DocumentIdentity>(context),
+            new Repository<DocumentLineIdentity>(context),
+            new Repository<Company>(context),
+            new Repository<Branch>(context),
+            new Repository<Location>(context),
+            new Repository<Item>(context),
+            unitOfWork,
+            new DocumentIdentityService(context, unitOfWork, new DocumentNumberService(context, unitOfWork)),
+            new Mock<IStockService>().Object,
+            tenant,
+            new Mock<IWebhookDispatcher>().Object,
+            NullLogger<TransferOrderService>.Instance);
     }
 }

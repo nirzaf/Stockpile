@@ -195,7 +195,7 @@ else
                 <MudPaper @key="line" Outlined="true" Class="pa-3">
                     <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween" Class="mb-2">
                         <MudText Typo="Typo.subtitle1">Line @(index + 1)</MudText>
-                        @if (!_editingOrderId.HasValue && _lines.Count > 1)
+                        @if (_lines.Count > 1)
                         {
                             <MudButton Variant="Variant.Text" Color="Color.Error" Disabled="@_saving"
                                        OnClick="@(() => RemoveLine(line))">
@@ -227,13 +227,10 @@ else
             }
         </MudStack>
 
-        @if (!_editingOrderId.HasValue)
-        {
-            <MudButton Variant="Variant.Outlined" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Add"
-                       Class="mt-3" Disabled="@_saving" OnClick="AddLine">
-                Add line
-            </MudButton>
-        }
+        <MudButton Variant="Variant.Outlined" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Add"
+                   Class="mt-3" Disabled="@(_saving || _lines.Count >= 100)" OnClick="AddLine">
+            Add line
+        </MudButton>
 
         <MudTextField T="string" @bind-Value="_notes" Label="Notes (optional)" Lines="2" Class="mt-4" Disabled="@_saving" />
         <MudStack Row="true" Spacing="2" Class="mt-4" Wrap="Wrap.Wrap">
@@ -560,7 +557,7 @@ else
     }
 
     private bool CanEditOrder(TransferOrderView order) =>
-        order.Status != TransferOrderStatus.Cancelled &&
+        (order.Status is TransferOrderStatus.Draft or TransferOrderStatus.Approved) &&
         _editableCompanyIds.Contains(order.CompanyId) && _postableCompanyIds.Contains(order.CompanyId);
 
     private bool CanApproveOrder(TransferOrderView order) => _approvableCompanyIds.Contains(order.CompanyId);
@@ -568,9 +565,17 @@ else
     private bool CanCancelOrder(TransferOrderView order) =>
         _editableCompanyIds.Contains(order.CompanyId) && _postableCompanyIds.Contains(order.CompanyId);
 
-    private void AddLine() => _lines.Add(new TransferOrderLineDraft());
+    private void AddLine()
+    {
+        if (_lines.Count < 100)
+            _lines.Add(new TransferOrderLineDraft());
+    }
 
-    private void RemoveLine(TransferOrderLineDraft line) => _lines.Remove(line);
+    private void RemoveLine(TransferOrderLineDraft line)
+    {
+        if (_lines.Count > 1)
+            _lines.Remove(line);
+    }
 
     private void CloseEditor()
     {
