@@ -97,6 +97,78 @@ public sealed class TransferOrderPostgreSqlIntegrationTests(PostgreSqlIntegratio
     }
 
     [PostgreSqlFact]
+    public async Task Amendment_replaces_lines_preserves_retained_identity_and_releases_approved_reservations()
+    {
+        fixture.EnsureEnabled();
+        var tenantId = $"transfer-amend-lines-{Guid.NewGuid():N}";
+        var seeded = await CreateApprovedTransferAsync(tenantId, 50, unitCost: 10m);
+
+        await using var operation = fixture.CreateContext(tenantId);
+        var orders = CreateService(operation, tenantId);
+        var scope = new StockMutationScope(seeded.CompanyId, () => Task.FromResult(true));
+        var original = (await orders.GetByIdAsync(seeded.OrderId))!;
+        var retainedLine = original.Lines.Single();
+
+        await orders.AmendAsync(seeded.OrderId, new CreateTransferOrderRequest(
+            seeded.CompanyId,
+            seeded.SourceLocationId,
+            seeded.DestinationLocationId,
+            [
+                new TransferOrderLineRequest(seeded.ItemId, 50, LineId: retainedLine.Id),
+                new TransferOrderLineRequest(seeded.ItemId, 10)
+            ]), scope);
+
+        var draftWithAddedLine = (await orders.GetByIdAsync(seeded.OrderId))!;
+        draftWithAddedLine.Status.Should().Be(TransferOrderStatus.Draft);
+        var lineToRemove = draftWithAddedLine.Lines.Single(line => line.Id != retainedLine.Id);
+        lineToRemove.DocumentLineId.Should().NotBe(seeded.DocumentLineId);
+
+        await orders.ApproveAsync(seeded.OrderId, scope);
+        var approved = (await orders.GetByIdAsync(seeded.OrderId))!;
+        approved.Status.Should().Be(TransferOrderStatus.Approved);
+
+        await orders.AmendAsync(seeded.OrderId, new CreateTransferOrderRequest(
+            seeded.CompanyId,
+            seeded.SourceLocationId,
+            seeded.DestinationLocationId,
+            [
+                new TransferOrderLineRequest(seeded.ItemId, 45, LineId: retainedLine.Id),
+                new TransferOrderLineRequest(seeded.ItemId, 5)
+            ]), scope);
+
+        var amended = (await orders.GetByIdAsync(seeded.OrderId))!;
+        amended.Status.Should().Be(TransferOrderStatus.Draft);
+        amended.DocumentId.Should().Be(original.DocumentId);
+        amended.Number.Should().Be(original.Number);
+        amended.Lines.Should().HaveCount(2);
+        var retainedAfterAmendment = amended.Lines.Single(line => line.Id == retainedLine.Id);
+        retainedAfterAmendment.DocumentLineId.Should().Be(seeded.DocumentLineId);
+        retainedAfterAmendment.Quantity.Should().Be(45);
+        amended.Lines.Should().NotContain(line => line.Id == lineToRemove.Id);
+        var newlyAddedLine = amended.Lines.Single(line => line.Id != retainedLine.Id);
+        newlyAddedLine.DocumentLineId.Should().NotBe(seeded.DocumentLineId);
+        newlyAddedLine.DocumentLineId.Should().NotBe(lineToRemove.DocumentLineId);
+        newlyAddedLine.Quantity.Should().Be(5);
+
+        var documentId = new DocumentIdentityId(original.DocumentId);
+        var lineIdentities = await operation.DocumentLineIdentities
+            .Where(identity => identity.DocumentId == documentId)
+            .ToListAsync();
+        lineIdentities.Should().HaveCount(2);
+        lineIdentities.Should().ContainSingle(identity => identity.Id.Value == seeded.DocumentLineId);
+        lineIdentities.Should().ContainSingle(identity => identity.Id.Value == newlyAddedLine.DocumentLineId);
+        lineIdentities.Should().NotContain(identity => identity.Id.Value == lineToRemove.DocumentLineId);
+
+        (await operation.StockReservations.ToListAsync()).Should().NotBeEmpty()
+            .And.OnlyContain(reservation => reservation.Status == StockReservationStatus.Released);
+        (await operation.StockInHand.SingleAsync(stock =>
+                stock.ItemId == seeded.ItemId && stock.LocationId == seeded.SourceLocationId))
+            .ReservedQuantity.Should().Be(0);
+        (await operation.StockTransactions.CountAsync(transaction =>
+            transaction.TransactionType == TransactionType.TransferDispatch)).Should().Be(0);
+    }
+
+    [PostgreSqlFact]
     public async Task Failed_dispatch_outbox_enqueue_rolls_back_stock_reservation_valuation_and_transit()
     {
         fixture.EnsureEnabled();

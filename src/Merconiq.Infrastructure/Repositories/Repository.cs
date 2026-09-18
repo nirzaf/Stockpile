@@ -138,7 +138,17 @@ public class Repository<T> : IRepository<T> where T : class
     /// <inheritdoc />
     public virtual Task DeleteAsync(T entity)
     {
-        _dbSet.Remove(entity);
+        var entityType = _context.Model.FindEntityType(typeof(T));
+        var key = entityType?.FindPrimaryKey();
+        var incoming = _context.Entry(entity);
+        var tracked = key is null
+            ? null
+            : _context.ChangeTracker.Entries<T>().FirstOrDefault(entry =>
+                !ReferenceEquals(entry.Entity, entity) &&
+                key.Properties.All(property =>
+                    Equals(entry.Property(property.Name).CurrentValue,
+                        incoming.Property(property.Name).CurrentValue)));
+        _dbSet.Remove(tracked?.Entity ?? entity);
         return Task.CompletedTask;
     }
 

@@ -180,6 +180,7 @@ public sealed class TransferOrderService(
         ArgumentNullException.ThrowIfNull(request);
         ValidateHeader(request.CompanyId, request.FromLocationId, request.ToLocationId);
         var lines = ValidateLines(request.Lines);
+        var originalLineIds = Array.Empty<int>();
 
         await unitOfWork.ExecuteInTransactionAsync(async () =>
         {
@@ -203,16 +204,27 @@ public sealed class TransferOrderService(
                 .ToArray();
             if (currentLines.Any(line => line.DispatchedQuantity > 0))
                 throw new InvalidOperationException("A transfer order cannot be amended after any quantity is dispatched.");
+            if (order.Status is not (TransferOrderStatus.Draft or TransferOrderStatus.Approved))
+                throw new InvalidOperationException("Only draft or approved transfer orders can be amended.");
 
             var existingLines = currentLines.ToList();
-            if (existingLines.Count != lines.Count || lines.Any(line => !line.LineId.HasValue))
-                throw new InvalidOperationException("An amendment must retain every existing transfer-order line identity.");
-            var requestedIds = lines.Select(line => line.LineId!.Value).OrderBy(lineId => lineId).ToArray();
-            if (!requestedIds.SequenceEqual(existingLines.Select(line => line.Id).OrderBy(lineId => lineId)))
-                throw new InvalidOperationException("An amendment must retain every existing transfer-order line identity.");
+            originalLineIds = existingLines.Select(line => line.Id).ToArray();
+            var requestedExistingIds = lines
+                .Where(line => line.LineId.HasValue)
+                .Select(line => line.LineId!.Value)
+                .ToArray();
+            if (requestedExistingIds.Distinct().Count() != requestedExistingIds.Length)
+                throw new InvalidOperationException("An amendment cannot include the same transfer-order line more than once.");
+
+            var existingLinesById = existingLines.ToDictionary(line => line.Id);
+            if (requestedExistingIds.Any(lineId => !existingLinesById.ContainsKey(lineId)))
+                throw new InvalidOperationException("An amendment can only retain lines that belong to this transfer order.");
+
             if (AmendmentMatches(order, existingLines, request, lines))
                 return;
 
+            var retainedLineIds = requestedExistingIds.ToHashSet();
+            var removedLines = existingLines.Where(line => !retainedLineIds.Contains(line.Id)).ToArray();
             if (order.Status == TransferOrderStatus.Approved)
             {
                 var controlledScope = mutationScope with { AllowControlledTransferReservation = true };
@@ -227,9 +239,51 @@ public sealed class TransferOrderService(
                 order.Status = TransferOrderStatus.Draft;
             }
 
+            if (removedLines.Length > 0)
+            {
+                var removedDocumentLineIds = removedLines.Select(line => line.DocumentLineId).ToHashSet();
+                var documentLineIdentities = (await lineIdentityRepository.FindAsync(identity =>
+                        identity.DocumentId == order.DocumentId && identity.LineType == "TransferOrderLine"))
+                    .Where(identity => removedDocumentLineIds.Contains(identity.Id))
+                    .ToDictionary(identity => identity.Id);
+
+                if (documentLineIdentities.Count != removedLines.Length)
+                    throw new InvalidOperationException("A transfer-order line is missing its document-line identity.");
+
+                foreach (var removedLine in removedLines)
+                {
+                    await lineRepository.DeleteAsync(removedLine);
+                    await lineIdentityRepository.DeleteAsync(documentLineIdentities[removedLine.DocumentLineId]);
+                }
+            }
+
             foreach (var input in lines)
             {
-                var line = existingLines.Single(existing => existing.Id == input.LineId);
+                if (input.LineId is not int lineId)
+                {
+                    var newLine = new TransferOrderLine
+                    {
+                        TenantId = tenantContext.TenantId,
+                        TransferOrderId = order.Id,
+                        TransferOrder = order,
+                        ItemId = input.ItemId,
+                        Quantity = input.Quantity,
+                        BatchNumber = NormalizeBatchNumber(input.BatchNumber),
+                        ExpiryDate = StockLotExpiryDate.Normalize(input.ExpiryDate)
+                    };
+                    var lineIdentity = DocumentLineIdentity.Create(
+                        newLine.DocumentLineId,
+                        order.DocumentId,
+                        tenantContext.TenantId,
+                        order.CompanyId,
+                        "TransferOrderLine");
+                    newLine.DocumentLineIdentity = lineIdentity;
+                    await lineIdentityRepository.AddAsync(lineIdentity);
+                    await lineRepository.AddAsync(newLine);
+                    continue;
+                }
+
+                var line = existingLinesById[lineId];
                 line.ItemId = input.ItemId;
                 line.Quantity = input.Quantity;
                 line.BatchNumber = NormalizeBatchNumber(input.BatchNumber);
@@ -244,7 +298,7 @@ public sealed class TransferOrderService(
                 "TransferOrder.Amended",
                 new { TransferOrderId = order.Id, order.DocumentId, order.Status }));
             await unitOfWork.SaveChangesAsync(cancellationToken);
-        }, cancellationToken, () => VerifyAmendmentAsync(id, request, lines));
+        }, cancellationToken, () => VerifyAmendmentAsync(id, request, lines, originalLineIds));
     }
 
     public async Task ApproveAsync(
@@ -875,15 +929,44 @@ public sealed class TransferOrderService(
     private async Task<bool> VerifyAmendmentAsync(
         int id,
         CreateTransferOrderRequest request,
-        IReadOnlyCollection<TransferOrderLineRequest> lines)
+        IReadOnlyCollection<TransferOrderLineRequest> lines,
+        IReadOnlyCollection<int> originalLineIds)
     {
         var order = (await orderRepository.FindAsync(order => order.Id == id)).SingleOrDefault();
-        if (order is null || order.Status != TransferOrderStatus.Draft)
+        if (order is null || order.Status != TransferOrderStatus.Draft ||
+            order.CompanyId != request.CompanyId || order.FromLocationId != request.FromLocationId ||
+            order.ToLocationId != request.ToLocationId || order.Notes != NormalizeNotes(request.Notes))
             return false;
 
         var persistedLines = (await lineRepository.FindAsync(line => line.TransferOrderId == id))
             .ToDictionary(line => line.Id);
-        return AmendmentMatches(order, persistedLines.Values, request, lines);
+        if (persistedLines.Count != lines.Count)
+            return false;
+
+        var originalIds = originalLineIds.ToHashSet();
+        var requestedExistingLines = lines
+            .Where(line => line.LineId.HasValue)
+            .ToDictionary(line => line.LineId!.Value);
+        if (requestedExistingLines.Keys.Any(lineId => !originalIds.Contains(lineId)) ||
+            originalIds.Except(requestedExistingLines.Keys).Any(persistedLines.ContainsKey))
+            return false;
+
+        foreach (var (lineId, input) in requestedExistingLines)
+        {
+            if (!persistedLines.TryGetValue(lineId, out var persistedLine) || !LineMatches(persistedLine, input))
+                return false;
+        }
+
+        var unmatchedNewInputs = lines.Where(line => !line.LineId.HasValue).ToList();
+        foreach (var newLine in persistedLines.Values.Where(line => !originalIds.Contains(line.Id)))
+        {
+            var matchIndex = unmatchedNewInputs.FindIndex(input => LineMatches(newLine, input));
+            if (matchIndex < 0)
+                return false;
+            unmatchedNewInputs.RemoveAt(matchIndex);
+        }
+
+        return unmatchedNewInputs.Count == 0;
     }
 
     private static bool AmendmentMatches(
@@ -894,9 +977,12 @@ public sealed class TransferOrderService(
         order.Notes == NormalizeNotes(request.Notes) &&
         lines.Count == existingLines.Count && lines.All(input =>
             input.LineId is int lineId && existingLines.Any(line =>
-                line.Id == lineId && line.ItemId == input.ItemId && line.Quantity == input.Quantity &&
-                line.BatchNumber == NormalizeBatchNumber(input.BatchNumber) &&
-                line.ExpiryDate == StockLotExpiryDate.Normalize(input.ExpiryDate)));
+                line.Id == lineId && LineMatches(line, input)));
+
+    private static bool LineMatches(TransferOrderLine line, TransferOrderLineRequest input) =>
+        line.ItemId == input.ItemId && line.Quantity == input.Quantity &&
+        line.BatchNumber == NormalizeBatchNumber(input.BatchNumber) &&
+        line.ExpiryDate == StockLotExpiryDate.Normalize(input.ExpiryDate);
 
     private static string HashRequest(CreateTransferOrderRequest request, IEnumerable<TransferOrderLineRequest> lines)
     {
