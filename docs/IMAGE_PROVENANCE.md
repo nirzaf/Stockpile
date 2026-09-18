@@ -39,7 +39,7 @@ These commands read registry metadata and do not build or publish anything:
 ```bash
 docker buildx imagetools inspect "$IMAGE_REF"
 docker buildx imagetools inspect --raw "$IMAGE_REF" > manifest.json
-oras discover "$IMAGE_REF" --format go-template='{{json .}}' > referrers.json
+oras discover "$IMAGE_REF" --format json > referrers.json
 ```
 
 The manifest inspection must show both configured platform subjects. A configured

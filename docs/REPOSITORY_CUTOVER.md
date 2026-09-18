@@ -1,18 +1,18 @@
 # Repository and artifact cutover guide
 
-**Status:** Partial, repository-local guidance for issue [#267](https://github.com/nirzaf/merconiq/issues/267). This document records the selected identities and current repository configuration; it is not authorization to rename settings, publish artifacts, change DNS, or deploy.
+**Status:** The release owner selected GitHub Pages as the canonical documentation host and authorized removing the `dotnetevangelist.net` mapping from GitHub Pages. On 2026-09-18, the Pages API for `nirzaf/nirzaf.github.io` was updated to `cname=null`; no `CNAME` file was present and DNS was not changed. This does not authorize a repository rename, legacy-package action, or deployment-volume change.
 
-**Verified against:** `nirzaf/merconiq` at `b18295deae288137b70de0c06fd694dfcbf034e4`, 2026-09-18. Live URL checks below were made at 2026-09-18 06:26 UTC. Recheck every live value before an owner-approved cutover.
+**Verified against:** `nirzaf/merconiq` master at `a72a90597f06ddc01fe03a29010158a23c889685`, 2026-09-18. Live URL checks below were made at 2026-09-18 09:51 UTC, after the profile-site custom-domain mapping was removed and before the Jekyll build was deployed.
 
 ## Canonical identities and current status
 
 | Surface | Selected/canonical reference | Verified status |
 |---|---|---|
 | Source repository | <https://github.com/nirzaf/merconiq> | GitHub repository metadata reports this name, URL, and `master` as the default branch. |
-| GitHub Pages documentation | <https://nirzaf.github.io/merconiq/> | Selected by the release owner and configured as the repository homepage, but **not reachable at verification time**: it returned HTTP 301 to `https://dotnetevangelist.net/merconiq/`, which returned HTTP 404. Do not describe this URL as a working live site until the owner-controlled Pages configuration is repaired and it is rechecked. |
+| GitHub Pages documentation | <https://nirzaf.github.io/merconiq/> | Selected by the release owner and configured as the repository homepage. The profile-site Pages API now reports `cname=null` and `html_url=https://nirzaf.github.io/`; the Merconiq project-site API also reports `cname=null`. At 09:51 UTC the canonical URL returned HTTP 404 without an external-domain redirect because the deployed artifact had no rendered `index.html`. The updated Jekyll workflow in this change is not yet deployed; recheck the URL and nested assets after it runs on `master`. |
 | GHCR image name | `ghcr.io/nirzaf/merconiq` | Configured by the Docker and Release workflows. This source configuration alone does not prove that the package exists, is public, or has a currently pullable artifact. |
 
-The Pages workflow in [`.github/workflows/pages.yml`](https://github.com/nirzaf/merconiq/blob/master/.github/workflows/pages.yml) uploads the repository's `docs/` directory using GitHub Actions Pages deployment. It contains no explicit Markdown/site-generator build step. The repository source therefore does not establish that `index.md` is rendered into a navigable `index.html` or that all page links and assets work in the deployed artifact. A successful workflow run proves that an artifact was deployed, not that the artifact is rendered correctly or the selected URL resolves: the current redirect is controlled outside this repository. This guide and the workflow do not change either condition.
+The Pages workflow in [`.github/workflows/pages.yml`](https://github.com/nirzaf/merconiq/blob/master/.github/workflows/pages.yml) now builds the repository's `docs/` source with Jekyll, enables relative Markdown links, sets the `/merconiq` project base path, checks for rendered HTML and the theme stylesheet, then uploads `_site`. The profile-site custom-domain mapping was removed through the Pages API; the DNS zone was left unchanged. A green Pages run alone is not live-site proof, so verify the canonical URL, stylesheet, and navigation after deployment.
 
 ## Clone the canonical repository
 
@@ -34,12 +34,12 @@ The checkout directory name is local and does not change the remote repository i
 
 ## GitHub Pages base path and assets
 
-This is a project site, so its path prefix is `/merconiq/`, not the domain root. The intended base URL is `https://nirzaf.github.io/merconiq/`. The repository workflow publishes files from `docs/`; it does not run a separate static-site generator or add custom URL rewriting.
+This is a project site, so its path prefix is `/merconiq/`, not the domain root. The intended base URL is `https://nirzaf.github.io/merconiq/`. The Pages workflow builds Markdown in `docs/` into `_site` with Jekyll and uses the relative-links plugin for generated HTML destinations.
 
-- Keep links between documentation pages relative to the Markdown file, for example `[User Guide](USER_GUIDE.md)` from `docs/index.md`.
-- Keep images, stylesheets, and other site assets inside `docs/` and reference them with a path relative to the page that uses them. Do not use root-relative paths such as `/assets/site.css`, which omit the `/merconiq/` project prefix.
-- Configure and test the actual generated artifact with base URL `/merconiq/`; inspect that it contains a rendered entry point and that nested CSS, scripts, images, and navigation links resolve before treating Pages as usable.
-- Until the owner repairs the external redirect, use the source documents in this repository (or their GitHub file views) as the reliable documentation access path. Do not claim the Pages URL works based solely on a green Pages workflow.
+- Keep links between documentation pages relative to the Markdown file, for example `[User Guide](USER_GUIDE.md)` from `docs/index.md`; the Jekyll relative-links plugin converts them to generated HTML destinations.
+- Keep images and other site assets inside `docs/`; use the Jekyll `relative_url` filter for root-based assets so the `/merconiq/` project prefix is included.
+- The build config sets `baseurl: /merconiq`, and the workflow checks the generated entry point, User Guide page, theme stylesheet, and project-prefixed links before upload.
+- After deployment, request the canonical URL and the stylesheet/guide links and verify they return usable content. A successful workflow alone is not public-site evidence.
 
 ## GHCR image references and publication evidence
 
@@ -98,7 +98,7 @@ The table describes repository defaults, not a production inventory. Actual host
 |---|---|---|
 | Stockpile / InventoryManagementSystem product and repository names, including the former `nirzaf/stockpile` source URL | Historical names remain valid in genuine repository history and rebrand records; use `nirzaf/merconiq` in new links, clone commands, labels, and release instructions. Do not rely on an old URL redirect without checking it. | No GitHub repository setting, redirect, issue history, namespace, or local operator checkout was changed by this guide. |
 | `ghcr.io/nirzaf/inventorymanagementsystem` | Retired from current pull instructions. New maintained image references use the workflow-configured `ghcr.io/nirzaf/merconiq`. | The old package's existence, access, retention, consumers, and any deletion/deprecation action were not verified or changed. Do not delete it, publish an alias, or dual-publish without separate owner approval and an operator-impact review. |
-| `https://dotnetevangelist.net/merconiq/` | Not a canonical documentation URL; the direct destination returned HTTP 404 during the check recorded above. | Its DNS, domain, user-site repository, and Pages configuration are outside this repository and untouched. |
+| `https://dotnetevangelist.net/merconiq/` | Retired as a Merconiq documentation URL. The `nirzaf/nirzaf.github.io` Pages API mapping to `dotnetevangelist.net` was removed on 2026-09-18. | DNS was not changed. Other hosting or DNS behavior for the domain was not tested; this repository does not claim the domain itself was retired. |
 
 Historical commits, tags, issues, package metadata, and documentation may still contain old product identifiers. Treat them as provenance, not as current installation instructions. Update maintained references as they are encountered; do not rewrite shared history to erase them.
 
@@ -106,12 +106,12 @@ Historical commits, tags, issues, package metadata, and documentation may still 
 
 Issue #267 remains open. Repository-local documentation cannot complete these external or operational checks:
 
-- Repair the inherited Pages redirect in the owner-controlled configuration, after assessing its effect on the user site and other Pages projects. Ensure the workflow artifact contains rendered HTML (including an entry point) and correct `/merconiq/`-prefixed assets; then request the selected URL and its nested CSS, scripts, images, and internal links. Require the canonical URL to return expected content rather than accepting a successful workflow alone.
+- After this Pages workflow is merged and runs, verify the canonical URL returns the rendered entry page, the generated stylesheet and User Guide load under `/merconiq/`, and internal navigation no longer leaves GitHub Pages. Record the final response codes and commit SHA; the current live endpoint has not yet passed these checks.
 - Verify GHCR package access with an actual pull and record the exact source SHA, workflow run, top-level digest, platform manifests, and provenance/SBOM subjects. Record any unsupported platform or missing attestation explicitly.
 - Have the release owner decide and record the old package's consumer notice, retention/deprecation schedule, and whether any one-time migration aid is necessary. Do not assume or promise automatic package redirects.
 - At each affected deployment, identify and preserve its actual PostgreSQL/Data Protection volumes and secrets; record a successful backup/restore or migration check before any operator changes project identity.
 
-This pull request updates repository documentation and the CI/Docker workflow contract for candidate-derived image tags. It does not rename the repository, alter GitHub or Pages settings, change DNS/CNAME, manually publish a release, or add a legacy image alias. A normal merge to `master` triggers the existing Pages and Docker workflows; verify their results separately.
+This change builds and validates the rendered Pages artifact. The owner-authorized Pages API update removed the profile site's `dotnetevangelist.net` custom-domain mapping; DNS was not changed. It does not rename the repository, alter GHCR publication policy, manually publish a release, or add a legacy image alias. A normal merge to `master` triggers the existing Pages and Docker workflows; verify their results separately.
 
 ## Source of current facts
 

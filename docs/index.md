@@ -13,7 +13,7 @@ description: End-user guide and documentation for the Merconiq.
 
 Welcome to the documentation site for **Merconiq** — a modern inventory management web app for tracking items, stock levels, purchase orders, suppliers, and locations.
 
-> The selected Pages URL currently redirects to a destination returning 404. The repository also uploads `docs/` without an explicit Markdown rendering step. Check [repository and artifact cutover status](REPOSITORY_CUTOVER.md); use the source files here until the rendered site and URL are verified.
+> The canonical documentation URL is [GitHub Pages](https://nirzaf.github.io/merconiq/). The Pages workflow renders these Markdown files with Jekyll; see [repository and artifact cutover status](REPOSITORY_CUTOVER.md) for deployment evidence and any remaining verification gates.
 
 ---
 
@@ -83,16 +83,13 @@ startup does not seed users or sample data.
 
 ## 🛠 Publishing status
 
-The repository's [Pages workflow](https://github.com/nirzaf/merconiq/blob/master/.github/workflows/pages.yml) uploads the
-`docs/` directory when matching changes reach `master`; a repository owner must
-enable **Settings → Pages → Source: GitHub Actions**. The workflow currently has
-no explicit Markdown/site-generator build step, so verify that the uploaded
-artifact contains rendered HTML and assets before treating it as a usable site.
-The selected URL is `https://nirzaf.github.io/merconiq/`, but it currently
-redirects to a destination returning 404. See the [cutover guide](REPOSITORY_CUTOVER.md)
-for verified facts and owner-pending actions. A fork must configure and verify
-its own Pages build and base path; do not assume this repository's selected URL
-or settings apply to it.
+The repository's [Pages workflow](https://github.com/nirzaf/merconiq/blob/master/.github/workflows/pages.yml)
+builds the Markdown files in `docs/` into a Jekyll site, verifies the rendered
+entry point, guide, stylesheet, and `/merconiq/` base path, then deploys the
+generated `_site` artifact. See the [cutover guide](REPOSITORY_CUTOVER.md) for
+the latest live URL and asset checks. A fork must configure and verify its own
+Pages source and project base path; do not assume this repository's settings
+apply to it.
 
 ---
 

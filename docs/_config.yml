@@ -1,0 +1,20 @@
+title: Merconiq Documentation
+description: Product, operator, API, architecture, and security documentation for Merconiq.
+url: https://nirzaf.github.io
+baseurl: /merconiq
+theme: jekyll-theme-primer
+markdown: kramdown
+
+plugins:
+  - jekyll-relative-links
+
+relative_links:
+  enabled: true
+  collections: false
+
+defaults:
+  - scope:
+      path: ""
+      type: pages
+    values:
+      layout: default
