@@ -175,14 +175,16 @@ public sealed class TransferAgingReconciliationService(InventoryDbContext db)
                 posting.ItemId,
                 posting.LocationId
             })
-            .Select(group => new ValuationPosting(
+            .Select(group => new
+            {
                 group.Key.StockTransactionId,
                 group.Key.EntryType,
                 group.Key.ItemId,
                 group.Key.LocationId,
-                group.Count(),
-                group.Sum(posting => posting.Quantity),
-                group.Sum(posting => posting.TotalValue)));
+                Count = group.Count(),
+                Quantity = group.Sum(posting => posting.Quantity),
+                TotalValue = group.Sum(posting => posting.TotalValue)
+            });
 
         var dispatchValuationVariances = await (
                 from entry in dispatchEntries
@@ -415,15 +417,6 @@ public sealed class TransferAgingReconciliationService(InventoryDbContext db)
     }
 
     private sealed record QuantityVariance(int TransferOrderLineId, int Difference);
-
-    private sealed record ValuationPosting(
-        int StockTransactionId,
-        StockValuationEntryType EntryType,
-        int ItemId,
-        int LocationId,
-        int Count,
-        int Quantity,
-        decimal TotalValue);
 
     private sealed record ValuationVariance(
         int TransferOrderLineId,
