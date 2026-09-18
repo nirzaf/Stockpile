@@ -36,6 +36,26 @@ public class RateLimitPartitionKeyTests
     }
 
     [Fact]
+    public void Anonymous_callers_cannot_rotate_api_partitions_with_untrusted_claims_or_headers()
+    {
+        var first = CreateAnonymousApiContext("tenant-a", "203.0.113.10", "spoofed-user-a", "spoofed-client-a");
+        var second = CreateAnonymousApiContext("tenant-a", "203.0.113.10", "spoofed-user-b", "spoofed-client-b");
+        var otherAddress = CreateAnonymousApiContext("tenant-a", "203.0.113.11", "spoofed-user-a", "spoofed-client-a");
+
+        RateLimitPartitionKey.ForApi(first).Should().Be(RateLimitPartitionKey.ForApi(second));
+        RateLimitPartitionKey.ForApi(first).Should().NotBe(RateLimitPartitionKey.ForApi(otherAddress));
+    }
+
+    [Fact]
+    public void Ignores_rate_limit_claims_from_unauthenticated_identities()
+    {
+        var first = CreateApiContextWithMixedIdentities("tenant-a", "203.0.113.10", "spoofed-user-a");
+        var second = CreateApiContextWithMixedIdentities("tenant-a", "203.0.113.10", "spoofed-user-b");
+
+        RateLimitPartitionKey.ForApi(first).Should().Be(RateLimitPartitionKey.ForApi(second));
+    }
+
+    [Fact]
     public void Login_partition_is_tenant_scoped_and_uses_remote_ip()
     {
         var tenantA = CreateLoginContext("tenant-a", "203.0.113.10");
@@ -63,6 +83,45 @@ public class RateLimitPartitionKeyTests
         {
             Connection = { RemoteIpAddress = IPAddress.Parse(remoteIp) }
         };
+        context.RequestServices = new ServiceCollection()
+            .AddScoped<ITenantContext>(_ => new StubTenantContext(tenant))
+            .BuildServiceProvider();
+        return context;
+    }
+
+    private static DefaultHttpContext CreateAnonymousApiContext(
+        string tenant,
+        string remoteIp,
+        string untrustedUserId,
+        string untrustedClientId)
+    {
+        var context = new DefaultHttpContext
+        {
+            Connection = { RemoteIpAddress = IPAddress.Parse(remoteIp) }
+        };
+        context.User = new ClaimsPrincipal(new ClaimsIdentity([
+            new Claim(ClaimTypes.NameIdentifier, untrustedUserId)
+        ]));
+        context.Request.Headers["X-Client-Id"] = untrustedClientId;
+        context.RequestServices = new ServiceCollection()
+            .AddScoped<ITenantContext>(_ => new StubTenantContext(tenant))
+            .BuildServiceProvider();
+        return context;
+    }
+
+    private static DefaultHttpContext CreateApiContextWithMixedIdentities(
+        string tenant,
+        string remoteIp,
+        string untrustedUserId)
+    {
+        var context = new DefaultHttpContext
+        {
+            Connection = { RemoteIpAddress = IPAddress.Parse(remoteIp) }
+        };
+        context.User = new ClaimsPrincipal([
+            new ClaimsIdentity([], "authenticated-scheme"),
+            new ClaimsIdentity([new Claim(ClaimTypes.NameIdentifier, untrustedUserId)])
+        ]);
         context.RequestServices = new ServiceCollection()
             .AddScoped<ITenantContext>(_ => new StubTenantContext(tenant))
             .BuildServiceProvider();

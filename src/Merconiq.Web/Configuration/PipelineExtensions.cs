@@ -60,8 +60,9 @@ public static class PipelineExtensions
         app.UseTenantContext();
         app.UseRouting();
         app.UseCors("Default");
-        app.UseRateLimiter();
         app.UseAuthentication();
+        // API rate-limit partitions use authenticated client claims when available.
+        app.UseRateLimiter();
         app.UseAuthorization();
         app.UseAntiforgery();
 
