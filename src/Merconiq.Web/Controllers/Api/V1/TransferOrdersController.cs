@@ -310,6 +310,21 @@ public sealed class TransferOrdersController(
                 cancellationToken),
             cancellationToken);
 
+        if (result is null)
+        {
+            // A completed durable API idempotency claim skips the callback, so recover the
+            // immutable domain settlement through its own key and capability check.
+            result = await transferOrders.ResolveTransitAsync(
+                id,
+                lineId,
+                transitEntryId,
+                resolvedRequest,
+                idempotencyKey,
+                settledBy.Trim(),
+                scope,
+                cancellationToken);
+        }
+
         return result is null
             ? StatusCode(StatusCodes.Status500InternalServerError,
                 ApiResponse<object>.CreateFailure("The transit settlement result could not be recovered."))
