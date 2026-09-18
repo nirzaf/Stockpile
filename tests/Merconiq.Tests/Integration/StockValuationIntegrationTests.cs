@@ -85,21 +85,39 @@ public sealed class StockValuationIntegrationTests
     }
 
     [Fact]
-    public async Task Costed_receipt_rejects_lot_scope_without_writing()
+    public async Task Costed_lot_receipts_feed_the_shared_item_location_moving_average_bucket()
     {
-        var tenantId = $"valuation-reject-{Guid.NewGuid():N}";
-        await using var context = CreateInMemoryContext(Guid.NewGuid().ToString(), tenantId);
+        var tenantId = $"valuation-lots-{Guid.NewGuid():N}";
+        var databaseName = Guid.NewGuid().ToString();
+        await using var context = CreateInMemoryContext(databaseName, tenantId);
         var (itemId, locationId) = await SeedItemAndLocationAsync(context);
         var service = CreateService(context, tenantId);
+        var firstExpiry = DateTime.UtcNow.Date.AddMonths(6);
+        var secondExpiry = DateTime.UtcNow.Date.AddYears(1);
 
-        var act = () => service.ReceiveStockAsync(
-            itemId, locationId, 2, null, "LOT-1", unitCost: 10m);
+        await service.ReceiveStockAsync(
+            itemId, locationId, 10, null, "LOT-1", firstExpiry, unitCost: 10m);
+        await service.ReceiveStockAsync(
+            itemId, locationId, 10, null, "LOT-2", secondExpiry, unitCost: 20m);
 
-        await act.Should().ThrowAsync<InvalidOperationException>()
-            .WithMessage("Valuation is scoped to unbatched stock.");
-        (await context.StockInHand.CountAsync()).Should().Be(0);
-        (await context.StockTransactions.CountAsync()).Should().Be(0);
-        (await context.StockValuationBuckets.CountAsync()).Should().Be(0);
+        var bucket = await context.StockValuationBuckets.SingleAsync();
+        bucket.Quantity.Should().Be(20);
+        bucket.Value.Should().Be(300m);
+        var lots = await context.StockInHand.OrderBy(stock => stock.BatchNumber).ToListAsync();
+        lots.Should().HaveCount(2);
+        lots[0].Should().Match<StockInHand>(stock =>
+            stock.BatchNumber == "LOT-1" && stock.Quantity == 10 && stock.ExpiryDate == firstExpiry);
+        lots[1].Should().Match<StockInHand>(stock =>
+            stock.BatchNumber == "LOT-2" && stock.Quantity == 10 && stock.ExpiryDate == secondExpiry);
+        var entries = await context.StockValuationEntries
+            .Include(entry => entry.StockTransaction)
+            .OrderBy(entry => entry.Id)
+            .ToListAsync();
+        entries.Should().HaveCount(2);
+        entries[0].TotalValue.Should().Be(100m);
+        entries[0].StockTransaction.BatchNumber.Should().Be("LOT-1");
+        entries[1].TotalValue.Should().Be(200m);
+        entries[1].StockTransaction.BatchNumber.Should().Be("LOT-2");
     }
 
     [Fact]
