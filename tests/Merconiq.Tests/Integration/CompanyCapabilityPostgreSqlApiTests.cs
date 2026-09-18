@@ -255,6 +255,71 @@ public sealed class CompanyCapabilityPostgreSqlApiTests(PostgreSqlIntegrationFix
     }
 
     [PostgreSqlFact]
+    public async Task Company_admin_can_manage_memberships_only_for_a_granted_company()
+    {
+        fixture.EnsureEnabled();
+        var suffix = Guid.NewGuid().ToString("N");
+        var tenant = await SeedCompanyStockAsync(fixture, suffix);
+        var targetUser = await _factory.EnsurePersonaUserAsync("RestrictedAuditor", suffix);
+
+        await using (var seed = fixture.CreateContext(tenant.TenantId))
+        {
+            seed.CompanyMemberships.AddRange(
+                new CompanyMembership
+                {
+                    CompanyId = tenant.CompanyAId,
+                    UserId = targetUser.Id,
+                    Capabilities = CompanyCapability.View,
+                    IsActive = true
+                },
+                new CompanyMembership
+                {
+                    CompanyId = tenant.CompanyBId,
+                    UserId = targetUser.Id,
+                    Capabilities = CompanyCapability.View,
+                    IsActive = true
+                });
+            await seed.SaveChangesAsync();
+        }
+
+        var companyAdmin = await CreatePersonaAsync(
+            "CompanyAdmin",
+            CompanyCapability.View | CompanyCapability.Edit | CompanyCapability.Administer,
+            suffix,
+            tenant.CompanyAId);
+        using var client = companyAdmin.Client;
+
+        using var allowedUpdate = await client.PutAsJsonAsync(
+            $"/api/v1/organization/companies/{tenant.CompanyAId}/memberships/{targetUser.Id}",
+            new { Capabilities = CompanyCapability.View | CompanyCapability.Edit });
+        allowedUpdate.StatusCode.Should().Be(HttpStatusCode.NoContent);
+
+        using var deniedUpdate = await client.PutAsJsonAsync(
+            $"/api/v1/organization/companies/{tenant.CompanyBId}/memberships/{targetUser.Id}",
+            new { Capabilities = CompanyCapability.View | CompanyCapability.Administer });
+        deniedUpdate.StatusCode.Should().Be(HttpStatusCode.Forbidden,
+            "an administrator in company A must not grant capabilities in company B");
+
+        using var deniedDelete = await client.DeleteAsync(
+            $"/api/v1/organization/companies/{tenant.CompanyBId}/memberships/{targetUser.Id}");
+        deniedDelete.StatusCode.Should().Be(HttpStatusCode.Forbidden,
+            "an administrator in company A must not remove memberships in company B");
+
+        await using var verification = fixture.CreateContext(tenant.TenantId);
+        var grants = await verification.CompanyMemberships.AsNoTracking()
+            .Where(membership => membership.UserId == targetUser.Id &&
+                (membership.CompanyId == tenant.CompanyAId || membership.CompanyId == tenant.CompanyBId))
+            .ToListAsync();
+        grants.Should().HaveCount(2);
+        grants.Single(membership => membership.CompanyId == tenant.CompanyAId).Capabilities
+            .Should().Be(CompanyCapability.View | CompanyCapability.Edit);
+        grants.Single(membership => membership.CompanyId == tenant.CompanyAId).IsActive.Should().BeTrue();
+        grants.Single(membership => membership.CompanyId == tenant.CompanyBId).Capabilities
+            .Should().Be(CompanyCapability.View);
+        grants.Single(membership => membership.CompanyId == tenant.CompanyBId).IsActive.Should().BeTrue();
+    }
+
+    [PostgreSqlFact]
     public async Task Real_jwt_item_reads_recheck_active_company_membership_after_revocation()
     {
         fixture.EnsureEnabled();
