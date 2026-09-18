@@ -181,6 +181,80 @@ public sealed class CompanyCapabilityPostgreSqlApiTests(PostgreSqlIntegrationFix
     }
 
     [PostgreSqlFact]
+    public async Task Company_admin_cannot_assign_a_location_to_another_company_branch()
+    {
+        fixture.EnsureEnabled();
+        var suffix = Guid.NewGuid().ToString("N");
+        var tenant = await SeedCompanyStockAsync(fixture, suffix);
+        int originalBranchId;
+        int sameCompanyTargetBranchId;
+        int restrictedBranchId;
+        int locationId;
+
+        await using (var seed = fixture.CreateContext(tenant.TenantId))
+        {
+            var originalBranch = await seed.Branches.SingleAsync(branch =>
+                branch.CompanyId == tenant.CompanyAId);
+            var restrictedBranch = await seed.Branches.SingleAsync(branch =>
+                branch.CompanyId == tenant.CompanyBId);
+            var sameCompanyTargetBranch = new Branch
+            {
+                CompanyId = tenant.CompanyAId,
+                Code = $"AUTH-A2-{suffix[..8]}",
+                Name = "Synthetic same-company destination"
+            };
+            var location = new Location
+            {
+                ExternalId = $"reassign-{suffix[..10]}",
+                BranchId = originalBranch.Id,
+                Name = "Synthetic reassignable location"
+            };
+            seed.AddRange(sameCompanyTargetBranch, location);
+            await seed.SaveChangesAsync();
+            originalBranchId = originalBranch.Id;
+            sameCompanyTargetBranchId = sameCompanyTargetBranch.Id;
+            restrictedBranchId = restrictedBranch.Id;
+            locationId = location.Id;
+        }
+
+        var companyAdmin = await CreatePersonaAsync(
+            "CompanyAdmin",
+            CompanyCapability.View | CompanyCapability.Edit | CompanyCapability.Administer,
+            suffix,
+            tenant.CompanyAId);
+        using var client = companyAdmin.Client;
+
+        using var allowedResponse = await client.PutAsJsonAsync(
+            $"/api/v1/organization/locations/{locationId}/branch",
+            new { BranchId = sameCompanyTargetBranchId });
+        allowedResponse.StatusCode.Should().Be(HttpStatusCode.NoContent,
+            "a company administrator may reassign a synthetic location within its own company");
+
+        using var deniedResponse = await client.PutAsJsonAsync(
+            $"/api/v1/organization/locations/{locationId}/branch",
+            new { BranchId = restrictedBranchId });
+        deniedResponse.StatusCode.Should().Be(HttpStatusCode.Forbidden,
+            "a grant for company A must not authorize assigning its location to company B");
+
+        await using var verification = fixture.CreateContext(tenant.TenantId);
+        var persistedLocation = await verification.Locations.SingleAsync(location => location.Id == locationId);
+        persistedLocation.BranchId.Should().Be(sameCompanyTargetBranchId,
+            "the denied cross-company request must preserve the successful same-company assignment");
+        (await verification.Branches.SingleAsync(branch => branch.Id == originalBranchId)).CompanyId
+            .Should().Be(tenant.CompanyAId);
+        (await verification.Branches.SingleAsync(branch => branch.Id == sameCompanyTargetBranchId)).CompanyId
+            .Should().Be(tenant.CompanyAId);
+        (await verification.Branches.SingleAsync(branch => branch.Id == restrictedBranchId)).CompanyId
+            .Should().Be(tenant.CompanyBId);
+        (await verification.StockInHand.CountAsync(stock => stock.LocationId == locationId)).Should().Be(0);
+
+        var existingStock = await verification.StockInHand.SingleAsync(stock =>
+            stock.ItemId == tenant.ItemId && stock.LocationId == tenant.LocationAId);
+        existingStock.Quantity.Should().Be(10);
+        existingStock.ReservedQuantity.Should().Be(0);
+    }
+
+    [PostgreSqlFact]
     public async Task Real_jwt_item_reads_recheck_active_company_membership_after_revocation()
     {
         fixture.EnsureEnabled();
