@@ -516,7 +516,7 @@ public sealed class MasterDataImportPostgreSqlIntegrationTests(PostgreSqlIntegra
     {
         fixture.EnsureEnabled();
         var tenantId = $"company-import-concurrent-{Guid.NewGuid():N}";
-        var suffix = Guid.NewGuid().ToString("N");
+        var suffix = Guid.NewGuid().ToString("N")[..12];
         var externalId = $"company-{suffix}";
         var csv = "external_id,code,legal_name,trading_name,registration_number,tax_identifier,base_currency,country_code,currency_scale,is_active\n"
             + $"{externalId},C-{suffix},Synthetic Company,Synthetic Trading,REG-{suffix},TAX-{suffix},QAR,QA,2,true";
