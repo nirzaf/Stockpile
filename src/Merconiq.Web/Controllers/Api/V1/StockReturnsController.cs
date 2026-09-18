@@ -28,11 +28,11 @@ public sealed class StockReturnsController(
         [FromServices] IIdempotencyKeyStore idempotencyKeyStore,
         [FromServices] ITenantContext tenantContext)
     {
-        var original = await stock.GetTransactionAsync(request.OriginalTransactionId);
+        var cancellationToken = HttpContext.RequestAborted;
+        var original = await stock.GetTransactionAsync(request.OriginalTransactionId, cancellationToken);
         if (original is null)
             return NotFound(ApiResponse<object>.CreateFailure("Original stock transaction not found."));
 
-        var cancellationToken = HttpContext.RequestAborted;
         if (!await authorization.CanAccessLocationAsync(
                 User, original.FromLocationId, CompanyCapability.Post, cancellationToken))
         {
@@ -49,15 +49,20 @@ public sealed class StockReturnsController(
             token => authorization.CanAccessLocationAsync(
                 User, original.FromLocationId, CompanyCapability.Post, token));
 
-        return await RunMutationAsync(request, idempotencyKeyStore, tenantContext,
-            () => stock.ReturnStockAsync(request, mutationScope));
+        return await RunMutationAsync(
+            request,
+            idempotencyKeyStore,
+            tenantContext,
+            cancellationToken,
+            token => stock.ReturnStockAsync(request, mutationScope, token));
     }
 
     private async Task<IActionResult> RunMutationAsync<T>(
         T request,
         IIdempotencyKeyStore idempotencyKeyStore,
         ITenantContext tenantContext,
-        Func<Task> operation)
+        CancellationToken cancellationToken,
+        Func<CancellationToken, Task> operation)
     {
         var idempotencyKey = Request.Headers["Idempotency-Key"].ToString();
         if (idempotencyKey.Length > 200)
@@ -65,7 +70,7 @@ public sealed class StockReturnsController(
 
         if (string.IsNullOrWhiteSpace(idempotencyKey))
         {
-            await operation();
+            await operation(cancellationToken);
         }
         else
         {
@@ -74,8 +79,8 @@ public sealed class StockReturnsController(
                 scope,
                 idempotencyKey,
                 IdempotencyRequestHasher.Compute(request),
-                operation,
-                HttpContext.RequestAborted);
+                () => operation(cancellationToken),
+                cancellationToken);
         }
 
         return NoContent();

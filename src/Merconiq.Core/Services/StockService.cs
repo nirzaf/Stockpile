@@ -187,12 +187,17 @@ public class StockService : IStockService
     }
 
     /// <inheritdoc />
-    public async Task<StockTransaction?> GetTransactionAsync(int transactionId)
+    public async Task<StockTransaction?> GetTransactionAsync(
+        int transactionId,
+        CancellationToken cancellationToken = default)
     {
         if (transactionId <= 0)
             throw new ArgumentOutOfRangeException(nameof(transactionId));
 
-        return (await _txRepo.FindAsync(transaction => transaction.Id == transactionId)).FirstOrDefault();
+        var transactions = cancellationToken.CanBeCanceled
+            ? await _txRepo.FindAsync(transaction => transaction.Id == transactionId, cancellationToken)
+            : await _txRepo.FindAsync(transaction => transaction.Id == transactionId);
+        return transactions.FirstOrDefault();
     }
 
     private async Task ExecuteWithRetryAsync(
@@ -1039,8 +1044,10 @@ public class StockService : IStockService
     /// <inheritdoc />
     public async Task ReturnStockAsync(
         CreateStockReturnRequest request,
-        StockMutationScope? mutationScope = null)
+        StockMutationScope? mutationScope = null,
+        CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         ArgumentNullException.ThrowIfNull(request);
         if (request.OriginalTransactionId <= 0)
             throw new ArgumentOutOfRangeException(nameof(request.OriginalTransactionId));
@@ -1053,7 +1060,7 @@ public class StockService : IStockService
         EnsureReservationFields(null, request.Notes);
         var sourceLineReference = request.SourceLineReference.Trim();
         var notes = string.IsNullOrWhiteSpace(request.Notes) ? null : request.Notes.Trim();
-        var initialOriginal = await GetTransactionAsync(request.OriginalTransactionId)
+        var initialOriginal = await GetTransactionAsync(request.OriginalTransactionId, cancellationToken)
             ?? throw new KeyNotFoundException("Original stock transaction not found.");
         if (initialOriginal.TransactionType != TransactionType.Sell)
             throw new InvalidOperationException("Only sale transactions can be returned.");
@@ -1061,18 +1068,19 @@ public class StockService : IStockService
         StockTransaction? returnTransaction = null;
         await ExecuteWithRetryAsync(initialOriginal.ItemId, async () =>
         {
-            await _unitOfWork.AcquireLocationLocksAsync([initialOriginal.FromLocationId]);
-            var original = await GetTransactionAsync(request.OriginalTransactionId)
+            await _unitOfWork.AcquireLocationLocksAsync([initialOriginal.FromLocationId], cancellationToken);
+            var original = await GetTransactionAsync(request.OriginalTransactionId, cancellationToken)
                 ?? throw new KeyNotFoundException("Original stock transaction not found.");
             if (original.TransactionType != TransactionType.Sell)
                 throw new InvalidOperationException("Only sale transactions can be returned.");
 
-            var location = await EnsureLocationUsableAsync(original.FromLocationId);
-            await EnsureAuthorizedCompanyScopeAsync(location, mutationScope);
+            var location = await EnsureLocationUsableAsync(original.FromLocationId, cancellationToken);
+            await EnsureAuthorizedCompanyScopeAsync(location, mutationScope, cancellationToken);
 
             var existingReturn = (await _txRepo.FindAsync(transaction =>
                 transaction.TransactionType == TransactionType.Return &&
-                transaction.SourceLineReference == sourceLineReference)).FirstOrDefault();
+                transaction.SourceLineReference == sourceLineReference,
+                cancellationToken)).FirstOrDefault();
             if (existingReturn is not null)
             {
                 if (existingReturn.OriginalTransactionId == original.Id &&
@@ -1089,7 +1097,8 @@ public class StockService : IStockService
 
             var priorReturns = await _txRepo.FindAsync(transaction =>
                 transaction.TransactionType == TransactionType.Return &&
-                transaction.OriginalTransactionId == original.Id);
+                transaction.OriginalTransactionId == original.Id,
+                cancellationToken);
             var eligibleQuantity = original.Quantity - priorReturns.Sum(transaction => transaction.Quantity);
             if (request.Quantity > eligibleQuantity)
                 throw new StockAvailabilityConflictException(
@@ -1099,7 +1108,11 @@ public class StockService : IStockService
                 EnsureLotNotExpired(original.ExpiryDate);
 
             var stock = await GetByItemAndLocationAsync(
-                original.ItemId, original.FromLocationId, original.BatchNumber, original.ExpiryDate);
+                original.ItemId,
+                original.FromLocationId,
+                original.BatchNumber,
+                original.ExpiryDate,
+                cancellationToken);
             if (stock is null)
             {
                 stock = new StockInHand
@@ -1119,7 +1132,8 @@ public class StockService : IStockService
             await _stockRepo.UpdateAsync(stock);
 
             var originalValuation = (await _valuationEntryRepo.FindAsync(entry =>
-                entry.StockTransactionId == original.Id && entry.EntryType == StockValuationEntryType.Sale))
+                entry.StockTransactionId == original.Id && entry.EntryType == StockValuationEntryType.Sale,
+                cancellationToken))
                 .SingleOrDefault();
             var unitCost = originalValuation?.UnitCost;
             returnTransaction = new StockTransaction
@@ -1142,7 +1156,12 @@ public class StockService : IStockService
 
             if (unitCost is decimal returnedUnitCost)
                 await ApplyReturnValuationAsync(
-                    original.ItemId, original.FromLocationId, request.Quantity, returnedUnitCost, returnTransaction);
+                    original.ItemId,
+                    original.FromLocationId,
+                    request.Quantity,
+                    returnedUnitCost,
+                    returnTransaction,
+                    cancellationToken);
 
             await _webhookDispatcher.EnqueueAsync(WebhookEventFactory.Create(_tenantContext, "Stock.Returned",
                 new
@@ -1157,9 +1176,9 @@ public class StockService : IStockService
                     Notes = notes,
                     original.BatchNumber,
                     original.ExpiryDate
-                }));
-            await _unitOfWork.SaveChangesAsync();
-        }, () => VerifyTransactionCommitAsync(returnTransaction));
+                }), cancellationToken);
+            await _unitOfWork.SaveChangesAsync(cancellationToken);
+        }, () => VerifyTransactionCommitAsync(returnTransaction), cancellationToken: cancellationToken);
 
         _logger.LogInformation("Returned {Qty} of item {ItemId} against sale {TransactionId}",
             request.Quantity, initialOriginal.ItemId, initialOriginal.Id);
@@ -2177,10 +2196,12 @@ public class StockService : IStockService
         int locationId,
         int quantity,
         decimal unitCost,
-        StockTransaction source)
+        StockTransaction source,
+        CancellationToken cancellationToken)
     {
         var existing = (await _valuationBucketRepo.FindAsync(bucket =>
-            bucket.ItemId == itemId && bucket.LocationId == locationId)).FirstOrDefault();
+            bucket.ItemId == itemId && bucket.LocationId == locationId,
+            cancellationToken)).FirstOrDefault();
         var totalValue = Round(quantity * unitCost);
 
         if (existing is null)
@@ -2195,7 +2216,7 @@ public class StockService : IStockService
         }
         else
         {
-            var bucket = await _valuationBucketRepo.GetByIdAsync(existing.Id)
+            var bucket = await _valuationBucketRepo.GetByIdAsync(existing.Id, cancellationToken)
                 ?? throw new InvalidOperationException("Valuation bucket disappeared during posting.");
             bucket.Quantity = checked(bucket.Quantity + quantity);
             bucket.Value = Round(bucket.Value + totalValue);

@@ -174,6 +174,12 @@ public sealed class StockReturnCompanyAuthorizationPostgreSqlApiTests(
             "an inaccessible non-sale movement must not reveal its type through the return validation response");
         missingResponse.StatusCode.Should().Be(HttpStatusCode.NotFound);
 
+        var missingBody = await missingResponse.Content.ReadAsStringAsync();
+        (await foreignResponse.Content.ReadAsStringAsync()).Should().Be(missingBody,
+            "an inaccessible sale must have the same response body as a missing movement");
+        (await foreignNonSaleResponse.Content.ReadAsStringAsync()).Should().Be(missingBody,
+            "an inaccessible non-sale movement must have the same response body as a missing movement");
+
         await using var verify = fixture.CreateContext("test-tenant");
         (await verify.StockTransactions.CountAsync(transaction =>
             transaction.TransactionType == TransactionType.Return &&

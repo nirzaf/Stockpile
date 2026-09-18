@@ -51,7 +51,9 @@ public interface IStockService
         IReadOnlyCollection<int> companyIds);
 
     /// <summary>Gets one tenant-scoped stock movement by identifier.</summary>
-    Task<StockTransaction?> GetTransactionAsync(int transactionId);
+    Task<StockTransaction?> GetTransactionAsync(
+        int transactionId,
+        CancellationToken cancellationToken = default);
 
     /// <summary>Receives stock into a location, increasing on-hand quantity.</summary>
     /// <param name="itemId">The item identifier.</param>
@@ -122,7 +124,10 @@ public interface IStockService
         string? expiryExceptionReason = null);
 
     /// <summary>Posts an atomic, source-linked return against an original sale.</summary>
-    Task ReturnStockAsync(CreateStockReturnRequest request, StockMutationScope? mutationScope = null);
+    Task ReturnStockAsync(
+        CreateStockReturnRequest request,
+        StockMutationScope? mutationScope = null,
+        CancellationToken cancellationToken = default);
 
     /// <summary>Posts one count variance through the normal atomic, source-linked stock ledger.</summary>
     Task<StockCountMovementResult> PostStockCountAdjustmentAsync(
