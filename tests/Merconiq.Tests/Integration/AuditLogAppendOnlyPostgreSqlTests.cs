@@ -36,25 +36,29 @@ public sealed class AuditLogAppendOnlyPostgreSqlTests(PostgreSqlIntegrationFixtu
         {
             var act = () => update.AuditLogs.ExecuteUpdateAsync(
                 rows => rows.SetProperty(row => row.Username, "forged-actor"));
-            var failure = await act.Should().ThrowAsync<PostgresException>();
-            failure.Which.SqlState.Should().Be("55000");
+            await AssertDatabaseRejection(act);
         }
 
         await using (var delete = fixture.CreateContext(tenantId))
         {
             var act = () => delete.AuditLogs.ExecuteDeleteAsync();
-            var failure = await act.Should().ThrowAsync<PostgresException>();
-            failure.Which.SqlState.Should().Be("55000");
+            await AssertDatabaseRejection(act);
         }
 
         await using (var truncate = fixture.CreateContext(tenantId))
         {
             var act = () => truncate.Database.ExecuteSqlRawAsync("TRUNCATE TABLE \"AuditLogs\"");
-            var failure = await act.Should().ThrowAsync<PostgresException>();
-            failure.Which.SqlState.Should().Be("55000");
+            await AssertDatabaseRejection(act);
         }
 
         await using var verify = fixture.CreateContext(tenantId);
         (await verify.AuditLogs.CountAsync()).Should().Be(1);
+    }
+
+    private static async Task AssertDatabaseRejection(Func<Task> operation)
+    {
+        var failure = await operation.Should().ThrowAsync<Exception>();
+        failure.Which.GetBaseException().Should().BeOfType<PostgresException>()
+            .Which.SqlState.Should().Be("55000");
     }
 }
