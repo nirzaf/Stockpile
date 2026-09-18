@@ -107,6 +107,51 @@ public sealed class DocumentIdentityPostgreSqlIntegrationTests(PostgreSqlIntegra
     }
 
     [PostgreSqlFact]
+    public async Task Concurrent_distinct_documents_receive_unique_sequential_human_numbers()
+    {
+        fixture.EnsureEnabled();
+        var tenantId = $"document-number-allocation-race-{Guid.NewGuid():N}";
+        int companyId;
+        await using (var setup = fixture.CreateContext(tenantId))
+        {
+            var company = new Company { Code = $"DN-{Guid.NewGuid():N}"[..15], LegalName = "Number race test company" };
+            setup.Companies.Add(company);
+            await setup.SaveChangesAsync();
+            companyId = company.Id;
+        }
+
+        const int documentCount = 16;
+        var startGate = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var allocations = Enumerable.Range(0, documentCount).Select(async index =>
+        {
+            await startGate.Task;
+            await using var context = fixture.CreateContext(tenantId);
+            var unitOfWork = new UnitOfWork(context);
+            var service = new DocumentIdentityService(context, unitOfWork, new DocumentNumberService(context, unitOfWork));
+            var requestKey = Guid.NewGuid().ToString("N");
+            return await service.CreateNumberedAsync(
+                companyId,
+                "PurchaseInvoice",
+                2026,
+                "PINV-",
+                "PurchaseInvoice.Create",
+                requestKey,
+                Hash($"independent invoice request {index}"));
+        }).ToArray();
+
+        startGate.SetResult(true);
+        var identities = await Task.WhenAll(allocations);
+        identities.Select(identity => identity.Id).Distinct().Should().HaveCount(documentCount);
+        identities.Select(identity => identity.HumanNumber).Distinct().Should().HaveCount(documentCount);
+        identities.Select(identity => identity.HumanNumber).Should().BeEquivalentTo(
+            Enumerable.Range(1, documentCount).Select(number => $"PINV-2026-{number:000000}"));
+
+        await using var verify = fixture.CreateContext(tenantId);
+        (await verify.DocumentIdentities.CountAsync()).Should().Be(documentCount);
+        (await verify.DocumentNumberSequences.SingleAsync()).NextNumber.Should().Be(documentCount + 1);
+    }
+
+    [PostgreSqlFact]
     public async Task Company_scoped_human_number_uniqueness_includes_the_period()
     {
         fixture.EnsureEnabled();
