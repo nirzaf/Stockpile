@@ -450,16 +450,48 @@ public sealed class StockValuationPostgreSqlIntegrationTests
         var legacyExpiry = DateTime.SpecifyKind(expiryDay.AddHours(16), DateTimeKind.Utc);
         const string batchNumber = "LOT-LEGACY-VALUED";
 
-        await using (var initialReceipt = _fixture.CreateContext(tenantId))
+        await using (var legacyBaseline = _fixture.CreateContext(tenantId))
         {
-            await CreateService(initialReceipt, tenantId).ReceiveStockAsync(
-                itemId, locationId, 10, "initial valued lot", batchNumber, expiryDay, unitCost: 10m);
-        }
-
-        await using (var legacyWriter = _fixture.CreateContext(tenantId))
-        {
-            await legacyWriter.Database.ExecuteSqlInterpolatedAsync(
-                $"UPDATE \"StockTransactions\" SET \"ExpiryDate\" = {legacyExpiry} WHERE \"ItemId\" = {itemId} AND \"BatchNumber\" = {batchNumber}");
+            var legacyReceipt = new StockTransaction
+            {
+                ItemId = itemId,
+                FromLocationId = locationId,
+                Quantity = 10,
+                TransactionType = TransactionType.Receive,
+                TransactionDate = DateTime.UtcNow,
+                BatchNumber = batchNumber,
+                ExpiryDate = legacyExpiry,
+                UnitCost = 10m,
+                Notes = "Legacy receipt expiry retained its time component"
+            };
+            legacyBaseline.StockInHand.Add(new StockInHand
+            {
+                ItemId = itemId,
+                LocationId = locationId,
+                Quantity = 10,
+                BatchNumber = batchNumber,
+                ExpiryDate = expiryDay
+            });
+            legacyBaseline.StockTransactions.Add(legacyReceipt);
+            legacyBaseline.StockValuationBuckets.Add(new StockValuationBucket
+            {
+                ItemId = itemId,
+                LocationId = locationId,
+                Quantity = 10,
+                Value = 100m
+            });
+            await legacyBaseline.SaveChangesAsync();
+            legacyBaseline.StockValuationEntries.Add(new StockValuationEntry
+            {
+                StockTransactionId = legacyReceipt.Id,
+                ItemId = itemId,
+                LocationId = locationId,
+                EntryType = StockValuationEntryType.Receipt,
+                Quantity = 10,
+                UnitCost = 10m,
+                TotalValue = 100m
+            });
+            await legacyBaseline.SaveChangesAsync();
         }
 
         await using (var followupReceipt = _fixture.CreateContext(tenantId))
