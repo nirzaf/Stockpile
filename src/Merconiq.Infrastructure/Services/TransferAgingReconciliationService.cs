@@ -260,31 +260,42 @@ public sealed class TransferAgingReconciliationService(InventoryDbContext db)
                 .First())
             .ToListAsync(cancellationToken);
 
-        var dispatchActions = dispatchEntries.Select(entry => new TransitAction(
+        var dispatchActions = dispatchEntries.Select(entry => new
+        {
             entry.TransferOrderLineId,
-            entry.DispatchedAt,
-            0,
+            At = entry.DispatchedAt,
+            Priority = 0,
             entry.Id,
-            "Dispatched",
-            entry.DispatchedBy));
-        var settlementActions = settlementEntries.Select(settlement => new TransitAction(
+            Name = "Dispatched",
+            Actor = entry.DispatchedBy
+        });
+        var settlementActions = settlementEntries.Select(settlement => new
+        {
             settlement.TransferOrderLineId,
-            settlement.SettledAt,
-            1,
+            At = settlement.SettledAt,
+            Priority = 1,
             settlement.Id,
-            settlement.SettlementType == TransferTransitSettlementType.Received
+            Name = settlement.SettlementType == TransferTransitSettlementType.Received
                 ? "Received"
                 : settlement.SettlementType == TransferTransitSettlementType.Quarantined
                     ? "Quarantined"
                     : "Returned",
-            settlement.SettledBy));
-        var latestActions = await dispatchActions.Concat(settlementActions)
+            Actor = settlement.SettledBy
+        });
+        var latestActionRows = await dispatchActions.Concat(settlementActions)
             .GroupBy(action => action.TransferOrderLineId)
             .Select(group => group.OrderByDescending(action => action.At)
                 .ThenByDescending(action => action.Priority)
                 .ThenByDescending(action => action.Id)
                 .First())
             .ToListAsync(cancellationToken);
+        var latestActions = latestActionRows.Select(action => new TransitAction(
+            action.TransferOrderLineId,
+            action.At,
+            action.Priority,
+            action.Id,
+            action.Name,
+            action.Actor)).ToArray();
 
         var reservationByKey = reservations.ToDictionary(
             reservation => (reservation.SourceLineReference, reservation.ItemId, reservation.LocationId),
