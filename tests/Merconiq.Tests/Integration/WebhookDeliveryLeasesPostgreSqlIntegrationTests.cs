@@ -306,7 +306,7 @@ public sealed class WebhookDeliveryLeasesPostgreSqlIntegrationTests(PostgreSqlIn
         using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(secret));
         var expectedSignature = Convert.ToHexString(hmac.ComputeHash(Encoding.UTF8.GetBytes(payload))).ToLowerInvariant();
         requests.Should().OnlyContain(request => request.Signature == expectedSignature);
-        receiver.ProcessedEventCount.Should().Be(1, "the synthetic receiver deduplicates by stable event ID");
+        receiver.BusinessEffectCount.Should().Be(1, "the synthetic receiver applies the business effect only for a new event ID");
         delivered.AttemptCount.Should().Be(2);
         delivered.DeliveredAt.Should().NotBeNull();
         delivered.LastStatusCode.Should().Be((int)HttpStatusCode.OK);
@@ -419,9 +419,10 @@ public sealed class WebhookDeliveryLeasesPostgreSqlIntegrationTests(PostgreSqlIn
         private readonly ConcurrentQueue<ReceivedWebhook> _requests = new();
         private readonly ConcurrentDictionary<Guid, byte> _processedEvents = new();
         private int _requestCount;
+        private int _businessEffectCount;
 
         public IReadOnlyCollection<ReceivedWebhook> Requests => _requests.ToArray();
-        public int ProcessedEventCount => _processedEvents.Count;
+        public int BusinessEffectCount => Volatile.Read(ref _businessEffectCount);
 
         protected override async Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request,
@@ -431,7 +432,10 @@ public sealed class WebhookDeliveryLeasesPostgreSqlIntegrationTests(PostgreSqlIn
             var payload = await request.Content!.ReadAsStringAsync(cancellationToken);
             var signature = request.Headers.GetValues("X-Inventory-Signature").Single();
             _requests.Enqueue(new ReceivedWebhook(eventId, payload, signature));
-            _processedEvents.TryAdd(eventId, 0);
+            if (_processedEvents.TryAdd(eventId, 0))
+            {
+                Interlocked.Increment(ref _businessEffectCount);
+            }
 
             if (Interlocked.Increment(ref _requestCount) == 1)
             {
