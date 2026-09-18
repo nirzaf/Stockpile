@@ -78,10 +78,63 @@ public class WebhookDispatcherTests
     }
 
     [Fact]
-    public async Task DispatchAsync_rejects_an_oversized_envelope_before_contacting_subscriptions()
+    public async Task EnqueueAsync_does_not_serialize_an_event_when_no_subscription_matches()
+    {
+        const string tenantId = "tenant-payload-limit";
+        var databaseName = Guid.NewGuid().ToString("N");
+        await using var context = CreateContext(databaseName, tenantId);
+        var unrelatedSubscription = NewSubscription(tenantId, "https://hooks.example.test/unrelated");
+        unrelatedSubscription.EventType = "Stock.Low";
+        context.WebhookSubscriptions.Add(unrelatedSubscription);
+        await context.SaveChangesAsync();
+
+        var webhookEvent = CreateEventAtSerializedSize(WebhookPayloadPolicy.MaximumSerializedEnvelopeBytes + 1);
+        using var serviceProvider = new ServiceCollection().BuildServiceProvider();
+        var dispatcher = new WebhookDispatcher(
+            serviceProvider,
+            Mock.Of<IHttpClientFactory>(),
+            NullLogger<WebhookDispatcher>.Instance,
+            context);
+
+        await dispatcher.EnqueueAsync(webhookEvent);
+        await context.SaveChangesAsync();
+
+        (await context.WebhookDeliveries.CountAsync()).Should().Be(0);
+    }
+
+    [Fact]
+    public async Task DispatchAsync_does_not_serialize_an_event_when_no_subscription_matches()
     {
         var repository = new Mock<IRepository<WebhookSubscription>>();
-        repository.Setup(repo => repo.FindAsync(It.IsAny<Expression<Func<WebhookSubscription, bool>>>()));
+        repository.Setup(repo => repo.FindAsync(It.IsAny<Expression<Func<WebhookSubscription, bool>>>()))
+            .ReturnsAsync(Array.Empty<WebhookSubscription>());
+
+        var services = new ServiceCollection();
+        services.AddScoped<IRepository<WebhookSubscription>>(_ => repository.Object);
+        services.AddScoped<ITenantContext, TenantContext>();
+        using var serviceProvider = services.BuildServiceProvider();
+        var handler = new CountingHandler();
+        var httpClientFactory = new Mock<IHttpClientFactory>();
+        httpClientFactory.Setup(factory => factory.CreateClient("Webhooks"))
+            .Returns(new HttpClient(handler));
+        var dispatcher = new WebhookDispatcher(
+            serviceProvider,
+            httpClientFactory.Object,
+            NullLogger<WebhookDispatcher>.Instance);
+        var webhookEvent = CreateEventAtSerializedSize(WebhookPayloadPolicy.MaximumSerializedEnvelopeBytes + 1);
+
+        await dispatcher.DispatchAsync(webhookEvent);
+
+        handler.SendCount.Should().Be(0);
+        repository.Verify(repo => repo.FindAsync(It.IsAny<Expression<Func<WebhookSubscription, bool>>>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task DispatchAsync_rejects_an_oversized_envelope_after_finding_a_matching_subscription()
+    {
+        var repository = new Mock<IRepository<WebhookSubscription>>();
+        repository.Setup(repo => repo.FindAsync(It.IsAny<Expression<Func<WebhookSubscription, bool>>>()))
+            .ReturnsAsync([new WebhookSubscription { Url = "https://hooks.example.test/inventory", EventType = "Stock.Received" }]);
 
         var services = new ServiceCollection();
         services.AddScoped<IRepository<WebhookSubscription>>(_ => repository.Object);
@@ -101,8 +154,8 @@ public class WebhookDispatcherTests
         var exception = await dispatch.Should().ThrowAsync<WebhookPayloadTooLargeException>();
 
         exception.Which.Message.Should().Be(WebhookPayloadPolicy.OversizedEnvelopeDiagnostic);
+        repository.Verify(repo => repo.FindAsync(It.IsAny<Expression<Func<WebhookSubscription, bool>>>()), Times.Once);
         handler.SendCount.Should().Be(0);
-        repository.Verify(repo => repo.FindAsync(It.IsAny<Expression<Func<WebhookSubscription, bool>>>()), Times.Never);
     }
 
     [Fact]

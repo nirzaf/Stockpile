@@ -41,7 +41,6 @@ public class WebhookDispatcher : IWebhookDispatcher
             throw new InvalidOperationException("Webhook event tenant does not match the current database context.");
         }
 
-        var payload = WebhookPayloadPolicy.Serialize(webhookEvent);
         var subscriptions = await _context.WebhookSubscriptions
             .AsNoTracking()
             .Where(subscription => subscription.IsActive &&
@@ -53,6 +52,7 @@ public class WebhookDispatcher : IWebhookDispatcher
             return;
         }
 
+        var payload = WebhookPayloadPolicy.Serialize(webhookEvent);
         var now = DateTimeOffset.UtcNow;
         foreach (var subscription in subscriptions)
         {
@@ -71,21 +71,31 @@ public class WebhookDispatcher : IWebhookDispatcher
 
     public async Task DispatchAsync<T>(WebhookEvent<T> webhookEvent)
     {
-        var jsonPayload = WebhookPayloadPolicy.Serialize(webhookEvent);
+        List<WebhookSubscription> subscriptions;
         try
         {
             using var scope = _serviceProvider.CreateScope();
             var tenantContext = scope.ServiceProvider.GetRequiredService<ITenantContext>();
             tenantContext.SetTenant(webhookEvent.TenantId);
             var repo = scope.ServiceProvider.GetRequiredService<IRepository<WebhookSubscription>>();
-            var subscriptions = await repo.FindAsync(s => s.IsActive &&
-                (s.EventType == webhookEvent.EventType || s.EventType == "*"));
+            subscriptions = (await repo.FindAsync(s => s.IsActive &&
+                (s.EventType == webhookEvent.EventType || s.EventType == "*"))).ToList();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to dispatch webhook event {EventId} for tenant {TenantId}",
+                webhookEvent.EventId, webhookEvent.TenantId);
+            return;
+        }
 
-            if (!subscriptions.Any())
-            {
-                return;
-            }
+        if (subscriptions.Count == 0)
+        {
+            return;
+        }
 
+        var jsonPayload = WebhookPayloadPolicy.Serialize(webhookEvent);
+        try
+        {
             var client = _httpClientFactory.CreateClient("Webhooks");
 
             var deliveries = subscriptions.Select(subscription =>

@@ -1,4 +1,6 @@
+using System.Text;
 using Merconiq.Core.Entities;
+using Merconiq.Core.Models;
 using Merconiq.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 
@@ -9,7 +11,7 @@ internal static class WebhookDeliveryLeaseStore
 {
     private const string PostgreSqlProviderName = "Npgsql.EntityFrameworkCore.PostgreSQL";
 
-    internal static async Task<WebhookDelivery?> ClaimNextAsync(
+    internal static async Task<WebhookDeliveryClaim?> ClaimNextAsync(
         InventoryDbContext db,
         DateTimeOffset now,
         TimeSpan leaseDuration,
@@ -23,11 +25,7 @@ internal static class WebhookDeliveryLeaseStore
             return await ClaimUsingTrackedEntitiesAsync(db, now, leaseUntil, leaseToken, cancellationToken);
         }
 
-        if (!string.Equals(db.Database.ProviderName, PostgreSqlProviderName, StringComparison.Ordinal))
-        {
-            throw new NotSupportedException(
-                $"Atomic webhook delivery claims require PostgreSQL; provider '{db.Database.ProviderName}' is not supported.");
-        }
+        EnsurePostgreSqlProvider(db);
 
         await db.Database.ExecuteSqlInterpolatedAsync($"""
             WITH candidate AS (
@@ -53,9 +51,22 @@ internal static class WebhookDeliveryLeaseStore
             WHERE delivery."Id" = candidate."Id"
             """, cancellationToken);
 
-        return await db.WebhookDeliveries
-            .IgnoreQueryFilters()
-            .SingleOrDefaultAsync(delivery => delivery.LeaseToken == leaseToken, cancellationToken);
+        return await db.Database.SqlQuery<WebhookDeliveryClaim>($"""
+                SELECT "Id",
+                       "TenantId",
+                       "EventId",
+                       "SubscriptionId",
+                       "EventType",
+                       "Status",
+                       "AttemptCount",
+                       "LeaseUntil",
+                       "LeaseToken",
+                       octet_length(convert_to("Payload", 'UTF8')) AS "PayloadByteLength"
+                FROM "WebhookDeliveries"
+                WHERE "LeaseToken" = {leaseToken}
+                  AND "Status" = 'InProgress'
+                """)
+            .SingleOrDefaultAsync(cancellationToken);
     }
 
     internal static Task<WebhookDelivery?> FindOwnedAsync(
@@ -73,10 +84,109 @@ internal static class WebhookDeliveryLeaseStore
                 delivery.LeaseToken == leaseToken,
                 cancellationToken);
 
+    internal static async Task<WebhookDelivery?> FindOwnedWithinPayloadLimitAsync(
+        InventoryDbContext db,
+        long deliveryId,
+        string tenantId,
+        Guid leaseToken,
+        int maximumPayloadBytes,
+        CancellationToken cancellationToken)
+    {
+        if (!db.Database.IsRelational())
+        {
+            var delivery = await FindOwnedAsync(db, deliveryId, tenantId, leaseToken, cancellationToken);
+            return delivery is not null &&
+                Encoding.UTF8.GetByteCount(delivery.Payload) <= maximumPayloadBytes
+                    ? delivery
+                    : null;
+        }
+
+        EnsurePostgreSqlProvider(db);
+        return await db.WebhookDeliveries
+            .FromSqlInterpolated($"""
+                SELECT *
+                FROM "WebhookDeliveries"
+                WHERE "Id" = {deliveryId}
+                  AND "TenantId" = {tenantId}
+                  AND "Status" = 'InProgress'
+                  AND "LeaseToken" = {leaseToken}
+                  AND octet_length(convert_to("Payload", 'UTF8')) <= {maximumPayloadBytes}
+                """)
+            .IgnoreQueryFilters()
+            .SingleOrDefaultAsync(cancellationToken);
+    }
+
+    internal static async Task<bool> TryDeadLetterOversizedAsync(
+        InventoryDbContext db,
+        WebhookDeliveryClaim claim,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        if (!claim.LeaseToken.HasValue ||
+            claim.PayloadByteLength <= WebhookPayloadPolicy.MaximumSerializedEnvelopeBytes)
+        {
+            return false;
+        }
+
+        if (!db.Database.IsRelational())
+        {
+            var delivery = await FindOwnedAsync(
+                db,
+                claim.Id,
+                claim.TenantId,
+                claim.LeaseToken.Value,
+                cancellationToken);
+            if (delivery is null)
+            {
+                return false;
+            }
+
+            delivery.Status = WebhookDeliveryStatus.DeadLetter;
+            delivery.LastError = WebhookPayloadPolicy.OversizedEnvelopeDiagnostic;
+            delivery.LastResponse = null;
+            delivery.LastStatusCode = null;
+            delivery.LastAttemptAt = now;
+            delivery.LeaseUntil = null;
+            delivery.LeaseToken = null;
+
+            try
+            {
+                await db.SaveChangesAsync(cancellationToken);
+                return true;
+            }
+            catch (DbUpdateConcurrencyException)
+            {
+                return false;
+            }
+        }
+
+        EnsurePostgreSqlProvider(db);
+        var affectedRows = await db.Database.ExecuteSqlInterpolatedAsync($"""
+            UPDATE "WebhookDeliveries"
+            SET "Status" = 'DeadLetter',
+                "LastError" = {WebhookPayloadPolicy.OversizedEnvelopeDiagnostic},
+                "LastResponse" = NULL,
+                "LastStatusCode" = NULL,
+                "LastAttemptAt" = {now},
+                "LeaseUntil" = NULL,
+                "LeaseToken" = NULL
+            WHERE "Id" = {claim.Id}
+              AND "TenantId" = {claim.TenantId}
+              AND "Status" = 'InProgress'
+              AND "LeaseToken" = {claim.LeaseToken}
+            """, cancellationToken);
+        return affectedRows == 1;
+    }
+
     internal static bool IsOwnedBy(WebhookDelivery delivery, Guid leaseToken) =>
         delivery.Status == WebhookDeliveryStatus.InProgress && delivery.LeaseToken == leaseToken;
 
-    private static async Task<WebhookDelivery?> ClaimUsingTrackedEntitiesAsync(
+    internal static bool IsOwnedBy(WebhookDeliveryClaim claim, Guid leaseToken) =>
+        claim.Status == nameof(WebhookDeliveryStatus.InProgress) &&
+        claim.LeaseToken == leaseToken &&
+        leaseToken != Guid.Empty;
+
+    private static async Task<WebhookDeliveryClaim?> ClaimUsingTrackedEntitiesAsync(
         InventoryDbContext db,
         DateTimeOffset now,
         DateTimeOffset leaseUntil,
@@ -105,6 +215,42 @@ internal static class WebhookDeliveryLeaseStore
         delivery.LeaseUntil = leaseUntil;
         delivery.LeaseToken = leaseToken;
         await db.SaveChangesAsync(cancellationToken);
-        return delivery;
+        return new WebhookDeliveryClaim
+        {
+            Id = delivery.Id,
+            TenantId = delivery.TenantId,
+            EventId = delivery.EventId,
+            SubscriptionId = delivery.SubscriptionId,
+            EventType = delivery.EventType,
+            Status = delivery.Status.ToString(),
+            AttemptCount = delivery.AttemptCount,
+            LeaseUntil = delivery.LeaseUntil,
+            LeaseToken = delivery.LeaseToken,
+            PayloadByteLength = Encoding.UTF8.GetByteCount(delivery.Payload)
+        };
     }
+
+    private static void EnsurePostgreSqlProvider(InventoryDbContext db)
+    {
+        if (!string.Equals(db.Database.ProviderName, PostgreSqlProviderName, StringComparison.Ordinal))
+        {
+            throw new NotSupportedException(
+                $"Atomic webhook delivery claims require PostgreSQL; provider '{db.Database.ProviderName}' is not supported.");
+        }
+    }
+}
+
+/// <summary>Bounded metadata returned when a delivery is claimed; it intentionally excludes the payload.</summary>
+internal sealed class WebhookDeliveryClaim
+{
+    public long Id { get; set; }
+    public string TenantId { get; set; } = null!;
+    public Guid EventId { get; set; }
+    public int SubscriptionId { get; set; }
+    public string EventType { get; set; } = null!;
+    public string Status { get; set; } = null!;
+    public int AttemptCount { get; set; }
+    public DateTimeOffset? LeaseUntil { get; set; }
+    public Guid? LeaseToken { get; set; }
+    public int PayloadByteLength { get; set; }
 }

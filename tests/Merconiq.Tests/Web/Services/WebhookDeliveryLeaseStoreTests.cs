@@ -31,10 +31,11 @@ public sealed class WebhookDeliveryLeaseStoreTests
 
         claim.Should().NotBeNull();
         claim!.Id.Should().Be(deliveryId);
-        claim.Status.Should().Be(WebhookDeliveryStatus.InProgress);
+        claim.Status.Should().Be(nameof(WebhookDeliveryStatus.InProgress));
         claim.AttemptCount.Should().Be(1);
         claim.LeaseUntil.Should().Be(now.AddMinutes(2));
         claim.LeaseToken.Should().NotBeNull();
+        claim.PayloadByteLength.Should().Be(2);
         WebhookDeliveryLeaseStore.IsOwnedBy(claim, claim.LeaseToken!.Value).Should().BeTrue();
 
         await using var secondWorker = CreateContext(databaseName, tenantId);
@@ -71,6 +72,7 @@ public sealed class WebhookDeliveryLeaseStoreTests
 
         recovered.Should().NotBeNull();
         recovered!.Id.Should().Be(deliveryId);
+        recovered.Status.Should().Be(nameof(WebhookDeliveryStatus.InProgress));
         recovered.AttemptCount.Should().Be(2);
         recovered.LeaseToken.Should().NotBeNull().And.NotBe(oldToken);
         WebhookDeliveryLeaseStore.IsOwnedBy(recovered, oldToken).Should().BeFalse();
