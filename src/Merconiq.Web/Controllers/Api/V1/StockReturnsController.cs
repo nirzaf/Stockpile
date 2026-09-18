@@ -28,27 +28,41 @@ public sealed class StockReturnsController(
         [FromServices] IIdempotencyKeyStore idempotencyKeyStore,
         [FromServices] ITenantContext tenantContext)
     {
-        var original = await stock.GetTransactionAsync(request.OriginalTransactionId);
+        var cancellationToken = HttpContext.RequestAborted;
+        var original = await stock.GetTransactionAsync(request.OriginalTransactionId, cancellationToken);
         if (original is null)
             return NotFound(ApiResponse<object>.CreateFailure("Original stock transaction not found."));
+
+        if (!await authorization.CanAccessLocationAsync(
+                User, original.FromLocationId, CompanyCapability.Post, cancellationToken))
+        {
+            // Returning a type-specific validation result before this check reveals whether
+            // a movement exists in a company the caller cannot access.
+            return NotFound(ApiResponse<object>.CreateFailure("Original stock transaction not found."));
+        }
+
         if (original.TransactionType != TransactionType.Sell)
             return BadRequest(ApiResponse<object>.CreateFailure("Only sale transactions can be returned."));
 
         var mutationScope = new StockMutationScope(
-            await authorization.GetLocationCompanyIdAsync(User, original.FromLocationId),
-            () => authorization.CanAccessLocationAsync(User, original.FromLocationId, CompanyCapability.Post));
-        if (!await authorization.CanAccessLocationAsync(User, original.FromLocationId, CompanyCapability.Post))
-            return Forbid();
+            await authorization.GetLocationCompanyIdAsync(User, original.FromLocationId, cancellationToken),
+            token => authorization.CanAccessLocationAsync(
+                User, original.FromLocationId, CompanyCapability.Post, token));
 
-        return await RunMutationAsync(request, idempotencyKeyStore, tenantContext,
-            () => stock.ReturnStockAsync(request, mutationScope));
+        return await RunMutationAsync(
+            request,
+            idempotencyKeyStore,
+            tenantContext,
+            cancellationToken,
+            token => stock.ReturnStockAsync(request, mutationScope, token));
     }
 
     private async Task<IActionResult> RunMutationAsync<T>(
         T request,
         IIdempotencyKeyStore idempotencyKeyStore,
         ITenantContext tenantContext,
-        Func<Task> operation)
+        CancellationToken cancellationToken,
+        Func<CancellationToken, Task> operation)
     {
         var idempotencyKey = Request.Headers["Idempotency-Key"].ToString();
         if (idempotencyKey.Length > 200)
@@ -56,7 +70,7 @@ public sealed class StockReturnsController(
 
         if (string.IsNullOrWhiteSpace(idempotencyKey))
         {
-            await operation();
+            await operation(cancellationToken);
         }
         else
         {
@@ -65,8 +79,8 @@ public sealed class StockReturnsController(
                 scope,
                 idempotencyKey,
                 IdempotencyRequestHasher.Compute(request),
-                operation,
-                HttpContext.RequestAborted);
+                () => operation(cancellationToken),
+                cancellationToken);
         }
 
         return NoContent();
