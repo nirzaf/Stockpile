@@ -169,6 +169,120 @@ else
                                             }
                                         </MudGrid>
                                     }
+
+                                    @if (line.TransitEntries.Count > 0)
+                                    {
+                                        <MudDivider Class="my-2" />
+                                        <MudText Typo="Typo.subtitle2">Transit entries</MudText>
+                                        @foreach (var transitEntry in line.TransitEntries)
+                                        {
+                                            var settlementDraft = SettlementDraftFor(transitEntry);
+                                            <MudPaper @key="transitEntry.Id" Outlined="true" Class="pa-3">
+                                                <MudStack Spacing="1">
+                                                    <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Wrap="Wrap.Wrap">
+                                                        <MudText Typo="Typo.subtitle2">Transit entry #@transitEntry.Id</MudText>
+                                                        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined"
+                                                                 Color="@TransitStatusColor(transitEntry)">
+                                                            @TransitStatus(transitEntry)
+                                                        </MudChip>
+                                                    </MudStack>
+                                                    <MudText Typo="Typo.body2">
+                                                        Dispatched @transitEntry.Quantity · received @transitEntry.ReceivedQuantity ·
+                                                        quarantined @transitEntry.QuarantinedQuantity · returned @transitEntry.ReturnedQuantity
+                                                    </MudText>
+                                                    <MudText Typo="Typo.body2" Color="Color.Secondary">
+                                                        Remaining in transit: @transitEntry.RemainingQuantity of @transitEntry.Quantity ·
+                                                        remaining carrying value: @transitEntry.RemainingValue.ToString("0.######")
+                                                    </MudText>
+                                                    <MudText Typo="Typo.body2" Color="Color.Secondary">
+                                                        Source lot
+                                                        @if (string.IsNullOrWhiteSpace(transitEntry.BatchNumber))
+                                                        {
+                                                            <span>not lot-tracked</span>
+                                                        }
+                                                        else
+                                                        {
+                                                            <span>@transitEntry.BatchNumber</span>
+                                                        }
+                                                        @if (transitEntry.ExpiryDate.HasValue)
+                                                        {
+                                                            <span> · expires @transitEntry.ExpiryDate.Value.ToString("d")</span>
+                                                        }
+                                                        · dispatched @transitEntry.DispatchedAt.ToLocalTime().ToString("g")
+                                                    </MudText>
+
+                                                    @if (CanSettleTransit(order, transitEntry, settlementDraft))
+                                                    {
+                                                        <MudGrid Spacing="2" Class="mt-1">
+                                                            <MudItem xs="12" sm="4">
+                                                                <MudSelect T="TransferTransitSettlementType"
+                                                                           @bind-Value="settlementDraft.SettlementType"
+                                                                           Label="Transit action"
+                                                                           Disabled="@(_saving || settlementDraft.IdempotencyKey is not null)">
+                                                                    <MudSelectItem T="TransferTransitSettlementType" Value="TransferTransitSettlementType.Received">
+                                                                        Receive into destination
+                                                                    </MudSelectItem>
+                                                                    <MudSelectItem T="TransferTransitSettlementType" Value="TransferTransitSettlementType.Quarantined">
+                                                                        Quarantine at destination
+                                                                    </MudSelectItem>
+                                                                    <MudSelectItem T="TransferTransitSettlementType" Value="TransferTransitSettlementType.Returned">
+                                                                        Return to source
+                                                                    </MudSelectItem>
+                                                                </MudSelect>
+                                                            </MudItem>
+                                                            <MudItem xs="12" sm="3">
+                                                                <MudNumericField T="int" @bind-Value="settlementDraft.Quantity"
+                                                                                 Label="Quantity to resolve" Min="1"
+                                                                                 Max="@transitEntry.RemainingQuantity" Required="true"
+                                                                                 HelperText="Cannot exceed the current transit balance."
+                                                                                 Disabled="@(_saving || settlementDraft.IdempotencyKey is not null)" />
+                                                            </MudItem>
+                                                            @if (settlementDraft.SettlementType == TransferTransitSettlementType.Quarantined)
+                                                            {
+                                                                <MudItem xs="12" sm="5">
+                                                                    <MudTextField T="string" Value="@settlementDraft.Reason"
+                                                                                  ValueChanged="@((string? value) => UpdateSettlementReason(settlementDraft, value))"
+                                                                                  Label="Quarantine reason (required)" Required="true"
+                                                                                  HelperText="Explain the discrepancy; quarantined stock remains unavailable."
+                                                                                  Error="@string.IsNullOrWhiteSpace(settlementDraft.Reason)"
+                                                                                  ErrorText="A quarantine reason is required."
+                                                                                  MaxLength="500"
+                                                                                  Disabled="@(_saving || settlementDraft.IdempotencyKey is not null)" />
+                                                                </MudItem>
+                                                            }
+                                                            else
+                                                            {
+                                                                <MudItem xs="12" sm="5">
+                                                                    <MudText Typo="Typo.caption" Color="Color.Secondary" Class="mt-3">
+                                                                        Receive and quarantine retain the dispatched source lot and expiry. Return restores stock to the source.
+                                                                    </MudText>
+                                                                </MudItem>
+                                                            }
+                                                            <MudItem xs="12">
+                                                                <MudButton Variant="Variant.Filled"
+                                                                           Color="@SettlementColor(settlementDraft.SettlementType)"
+                                                                           StartIcon="@Icons.Material.Filled.CheckCircle"
+                                                                           Disabled="@(_saving || !CanSubmitSettlement(transitEntry, settlementDraft))"
+                                                                           OnClick="@(() => SettleTransitAsync(order, line, transitEntry, settlementDraft))">
+                                                                    @if (_saving)
+                                                                    {
+                                                                        <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="me-2" />
+                                                                    }
+                                                                    @SettlementActionLabel(settlementDraft.SettlementType)
+                                                                </MudButton>
+                                                                @if (settlementDraft.IdempotencyKey is not null)
+                                                                {
+                                                                    <MudText Typo="Typo.caption" Color="Color.Warning" Class="mt-2" aria-live="polite">
+                                                                        The last attempt may have committed. Retry this same action and quantity to recover it safely.
+                                                                    </MudText>
+                                                                }
+                                                            </MudItem>
+                                                        </MudGrid>
+                                                    }
+                                                </MudStack>
+                                            </MudPaper>
+                                        }
+                                    }
                                 </MudStack>
                             </MudPaper>
                         }
@@ -303,6 +417,7 @@ else
     private readonly Dictionary<int, string> _locationLabels = [];
     private readonly Dictionary<int, string> _itemLabels = [];
     private readonly Dictionary<(int OrderId, int LineId), TransferDispatchDraft> _dispatchDrafts = [];
+    private readonly Dictionary<int, TransitSettlementDraft> _transitSettlementDrafts = [];
     private IReadOnlySet<int> _viewCompanyIds = new HashSet<int>();
     private IReadOnlySet<int> _editableCompanyIds = new HashSet<int>();
     private IReadOnlySet<int> _postableCompanyIds = new HashSet<int>();
@@ -694,6 +809,190 @@ else
         }
     }
 
+    private async Task SettleTransitAsync(
+        TransferOrderView displayedOrder,
+        TransferOrderLineView displayedLine,
+        TransferTransitEntryView displayedEntry,
+        TransitSettlementDraft draft)
+    {
+        if (!CanSubmitSettlement(displayedEntry, draft))
+        {
+            SnackbarError("Enter a quantity within the remaining transit balance and a reason for quarantine.");
+            return;
+        }
+
+        var actionLabel = SettlementActionLabel(draft.SettlementType);
+        var confirmation = $"{draft.Quantity} units: {actionLabel.ToLowerInvariant()} from transit entry #{displayedEntry.Id} for transfer {displayedOrder.Number}?";
+        if (draft.SettlementType == TransferTransitSettlementType.Quarantined)
+            confirmation += $" Reason: {draft.Reason?.Trim()}";
+        if (!await JS.InvokeAsync<bool>("confirm", confirmation))
+            return;
+
+        _saving = true;
+        try
+        {
+            var user = (await AuthenticationStateProvider.GetAuthenticationStateAsync()).User;
+            var current = await TransferOrderService.GetByIdAsync(displayedOrder.Id);
+            var currentLine = current?.Lines.SingleOrDefault(candidate => candidate.Id == displayedLine.Id);
+            var currentEntry = currentLine?.TransitEntries.SingleOrDefault(candidate => candidate.Id == displayedEntry.Id);
+            if (current is null || currentLine is null || currentEntry is null ||
+                !_postableCompanyIds.Contains(current.CompanyId) ||
+                !await CurrentUserAuthorization.CanAccessTransferAsync(
+                    user, current.FromLocationId, current.ToLocationId, CompanyCapability.Post))
+            {
+                SnackbarError("You no longer have posting access to both locations in this company, or this transit entry is unavailable.");
+                return;
+            }
+
+            if (draft.IdempotencyKey is null && !CanSettleOrder(current.Status))
+            {
+                SnackbarError("This transfer order is no longer open for transit settlement.");
+                await LoadAsync();
+                return;
+            }
+
+            if (draft.IdempotencyKey is null && draft.Quantity > currentEntry.RemainingQuantity)
+            {
+                SnackbarError($"Only {currentEntry.RemainingQuantity} units remain in transit. The order has been refreshed.");
+                await LoadAsync();
+                return;
+            }
+
+            var settledBy = user.FindFirstValue(ClaimTypes.NameIdentifier) ??
+                            user.FindFirstValue("sub") ??
+                            user.Identity?.Name;
+            if (string.IsNullOrWhiteSpace(settledBy))
+            {
+                SnackbarError("An authenticated warehouse operator identity is required.");
+                return;
+            }
+
+            var settlementType = draft.SettlementType;
+            var request = new TransferTransitSettlementRequest(
+                draft.Quantity,
+                settlementType,
+                BatchNumber: settlementType is TransferTransitSettlementType.Received or TransferTransitSettlementType.Quarantined
+                    ? currentEntry.BatchNumber
+                    : null,
+                ExpiryDate: settlementType is TransferTransitSettlementType.Received or TransferTransitSettlementType.Quarantined
+                    ? currentEntry.ExpiryDate
+                    : null,
+                Reason: settlementType == TransferTransitSettlementType.Quarantined ? draft.Reason?.Trim() : null);
+            draft.IdempotencyKey ??= Guid.NewGuid().ToString("N");
+
+            var scope = new StockMutationScope(
+                current.CompanyId,
+                cancellationToken => CurrentUserAuthorization.CanAccessTransferAsync(
+                    user,
+                    current.FromLocationId,
+                    current.ToLocationId,
+                    CompanyCapability.Post,
+                    cancellationToken));
+            await TransferOrderService.ResolveTransitAsync(
+                current.Id,
+                currentLine.Id,
+                currentEntry.Id,
+                request,
+                draft.IdempotencyKey,
+                settledBy.Trim(),
+                scope);
+
+            _transitSettlementDrafts.Remove(currentEntry.Id);
+            await LoadAsync();
+            SnackbarSuccess($"{request.Quantity} units were recorded as {actionLabel.ToLowerInvariant()} on transit entry #{currentEntry.Id}. The order now shows the remaining balance.");
+        }
+        catch (Exception exception)
+        {
+            Logger.LogWarning(exception,
+                "Unable to settle transfer transit entry {TransitEntryId} for order {TransferOrderId}.",
+                displayedEntry.Id,
+                displayedOrder.Id);
+            SnackbarError("The settlement could not be confirmed. Retry the same action and quantity; a committed request will be safely recovered.");
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private TransitSettlementDraft SettlementDraftFor(TransferTransitEntryView transitEntry)
+    {
+        if (!_transitSettlementDrafts.TryGetValue(transitEntry.Id, out var draft))
+        {
+            draft = new TransitSettlementDraft
+            {
+                Quantity = Math.Max(1, transitEntry.RemainingQuantity),
+                SettlementType = TransferTransitSettlementType.Received
+            };
+            _transitSettlementDrafts.Add(transitEntry.Id, draft);
+        }
+        else if (draft.IdempotencyKey is null && transitEntry.RemainingQuantity > 0 &&
+                 draft.Quantity > transitEntry.RemainingQuantity)
+        {
+            draft.Quantity = transitEntry.RemainingQuantity;
+        }
+
+        return draft;
+    }
+
+    private static void UpdateSettlementReason(TransitSettlementDraft draft, string? reason)
+    {
+        draft.Reason = reason;
+    }
+
+    private bool CanSettleTransit(
+        TransferOrderView order,
+        TransferTransitEntryView transitEntry,
+        TransitSettlementDraft draft) =>
+        _postableCompanyIds.Contains(order.CompanyId) &&
+        (draft.IdempotencyKey is not null ||
+         transitEntry.RemainingQuantity > 0 && CanSettleOrder(order.Status));
+
+    private static bool CanSettleOrder(TransferOrderStatus status) =>
+        status is TransferOrderStatus.InTransit or TransferOrderStatus.PartiallyReceived;
+
+    private static bool CanSubmitSettlement(
+        TransferTransitEntryView transitEntry,
+        TransitSettlementDraft draft) =>
+        draft.IdempotencyKey is not null ||
+        draft.Quantity > 0 && draft.Quantity <= transitEntry.RemainingQuantity &&
+        (draft.SettlementType != TransferTransitSettlementType.Quarantined ||
+         !string.IsNullOrWhiteSpace(draft.Reason));
+
+    private static string SettlementActionLabel(TransferTransitSettlementType settlementType) => settlementType switch
+    {
+        TransferTransitSettlementType.Received => "Receive into destination",
+        TransferTransitSettlementType.Quarantined => "Quarantine at destination",
+        TransferTransitSettlementType.Returned => "Return to source",
+        _ => "Resolve transit"
+    };
+
+    private static Color SettlementColor(TransferTransitSettlementType settlementType) => settlementType switch
+    {
+        TransferTransitSettlementType.Received => Color.Success,
+        TransferTransitSettlementType.Quarantined => Color.Warning,
+        TransferTransitSettlementType.Returned => Color.Error,
+        _ => Color.Primary
+    };
+
+    private static string TransitStatus(TransferTransitEntryView transitEntry) =>
+        transitEntry.RemainingQuantity switch
+        {
+            0 => "Resolved",
+            var remaining when remaining == transitEntry.Quantity => "In transit",
+            > 0 => "Partially resolved",
+            _ => "Balance error"
+        };
+
+    private static Color TransitStatusColor(TransferTransitEntryView transitEntry) =>
+        transitEntry.RemainingQuantity switch
+        {
+            0 => Color.Success,
+            var remaining when remaining == transitEntry.Quantity => Color.Warning,
+            > 0 => Color.Info,
+            _ => Color.Error
+        };
+
     private TransferDispatchDraft DispatchDraftFor(
         TransferOrderView order,
         TransferOrderLineView line,
@@ -773,6 +1072,8 @@ else
     {
         TransferOrderStatus.Approved => Color.Success,
         TransferOrderStatus.Cancelled => Color.Error,
+        TransferOrderStatus.Completed => Color.Success,
+        TransferOrderStatus.PartiallyReceived => Color.Info,
         _ => Color.Warning
     };
 
@@ -792,6 +1093,14 @@ else
     private sealed class TransferDispatchDraft
     {
         public int Quantity { get; set; }
+        public string? IdempotencyKey { get; set; }
+    }
+
+    private sealed class TransitSettlementDraft
+    {
+        public int Quantity { get; set; }
+        public TransferTransitSettlementType SettlementType { get; set; }
+        public string? Reason { get; set; }
         public string? IdempotencyKey { get; set; }
     }
 }

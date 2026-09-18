@@ -393,6 +393,19 @@ public sealed class TransferOrderPostgreSqlIntegrationTests(PostgreSqlIntegratio
         received.DocumentLineId.Should().NotBeNull();
         received.SourceDocumentLineId.Should().Be(seeded.DocumentLineId);
 
+        var partialOrder = (await orders.GetByIdAsync(seeded.OrderId))!;
+        partialOrder.Status.Should().Be(TransferOrderStatus.PartiallyReceived);
+        var partialLine = partialOrder.Lines.Should().ContainSingle().Subject;
+        partialLine.DocumentLineId.Should().Be(seeded.DocumentLineId);
+        partialLine.ReceivedQuantity.Should().Be(20);
+        partialLine.TransitEntries.Should().ContainSingle().Which.Should()
+            .Match<TransferTransitEntryView>(entry =>
+                entry.Id == dispatch.Id && entry.SourceDocumentLineId == seeded.DocumentLineId &&
+                entry.Quantity == 30 && entry.ReceivedQuantity == 20 && entry.QuarantinedQuantity == 0 &&
+                entry.ReturnedQuantity == 0 && entry.RemainingQuantity == 10 &&
+                entry.BatchNumber == dispatch.BatchNumber && entry.ExpiryDate == dispatch.ExpiryDate &&
+                entry.UnitCost == 10m && entry.TotalValue == 300m && entry.RemainingValue == 100m);
+
         var replay = await orders.ResolveTransitAsync(
             seeded.OrderId,
             seeded.LineId,
@@ -446,6 +459,10 @@ public sealed class TransferOrderPostgreSqlIntegrationTests(PostgreSqlIntegratio
         var order = await orders.GetByIdAsync(seeded.OrderId);
         order!.Status.Should().Be(TransferOrderStatus.Completed);
         order.Lines.Single().ReceivedQuantity.Should().Be(20);
+        order.Lines.Single().TransitEntries.Should().ContainSingle().Which.Should()
+            .Match<TransferTransitEntryView>(entry =>
+                entry.RemainingQuantity == 0 && entry.ReceivedQuantity == 20 &&
+                entry.ReturnedQuantity == 10 && entry.RemainingValue == 0m);
         (await operation.StockInHand.SingleAsync(stock =>
                 stock.ItemId == seeded.ItemId && stock.LocationId == seeded.SourceLocationId))
             .Should().Match<StockInHand>(stock => stock.Quantity == 80 && stock.ReservedQuantity == 0);
@@ -693,6 +710,11 @@ public sealed class TransferOrderPostgreSqlIntegrationTests(PostgreSqlIntegratio
             .Should().Match<StockInHand>(stock => stock.Quantity == 10 && stock.QuarantinedQuantity == 10);
         (await operation.TransferTransitSettlements.SingleAsync())
             .SettlementType.Should().Be(TransferTransitSettlementType.Quarantined);
+        var quarantinedOrder = (await orders.GetByIdAsync(seeded.OrderId))!;
+        quarantinedOrder.Status.Should().Be(TransferOrderStatus.Completed);
+        quarantinedOrder.Lines.Single().TransitEntries.Should().ContainSingle().Which.Should()
+            .Match<TransferTransitEntryView>(entry =>
+                entry.QuarantinedQuantity == 10 && entry.RemainingQuantity == 0 && entry.RemainingValue == 0m);
     }
 
     private static async Task<bool> WaitForAdvisoryLockWaitersAsync(
