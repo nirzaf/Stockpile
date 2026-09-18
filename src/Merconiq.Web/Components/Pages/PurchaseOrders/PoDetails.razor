@@ -13,7 +13,7 @@
 
 <PageTitle>Purchase Order Details</PageTitle>
 
-<MudText Typo="Typo.h4" Color="Color.Primary" Class="mb-3">Purchase Order Details</MudText>
+<MudText Typo="Typo.h4" HtmlTag="h1" Color="Color.Primary" Class="mb-3">Purchase Order Details</MudText>
 <MudDivider Class="mb-4" />
 
 @if (_statusFeedback is not null)
@@ -91,7 +91,7 @@ else
         </MudGrid>
     </MudPaper>
 
-    <MudText Typo="Typo.h6" Class="mb-3">Line Items</MudText>
+    <MudText Typo="Typo.h6" HtmlTag="h2" Class="mb-3">Line Items</MudText>
 
     <MudTable Items="@_po.OrderDetails" Dense="true" Hover="true" Striped="true" Elevation="1">
         <HeaderContent>
@@ -112,14 +112,14 @@ else
         </RowTemplate>
     </MudTable>
 
-    <MudText Typo="Typo.h6" Class="mt-4 mb-3">@L["Purchase-order status history"]</MudText>
+    <MudText Typo="Typo.h6" HtmlTag="h2" Class="mt-4 mb-3">@L["Purchase-order status history"]</MudText>
     @if (_statusHistory.Count == 0)
     {
         <MudText Color="Color.Secondary">@L["No purchase-order status changes have been recorded."]</MudText>
     }
     else
     {
-        <MudTable Items="@_statusHistory" Dense="true" Hover="true" Striped="true" Elevation="1" aria-label="@L["Purchase-order status history"]">
+        <MudTable Items="@_statusHistory" Dense="true" Hover="true" Striped="true" Elevation="1" Breakpoint="Breakpoint.Xs" aria-label="@L["Purchase-order status history"]">
             <HeaderContent>
                 <MudTh>@L["Previous status"]</MudTh>
                 <MudTh>@L["New status"]</MudTh>
