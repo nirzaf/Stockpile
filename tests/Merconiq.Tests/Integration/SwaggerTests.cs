@@ -40,4 +40,28 @@ public class SwaggerTests : IClassFixture<CustomWebApplicationFactory>
         idempotencyKey.Schema.Should().NotBeNull();
         idempotencyKey.Schema!.MaxLength.Should().Be(200);
     }
+
+    [Theory]
+    [InlineData("/api/v1/stock/transfer")]
+    [InlineData("/api/v1/stock/sell")]
+    [InlineData("/api/v1/stock/quarantine")]
+    [InlineData("/api/v1/stock/quarantine/release")]
+    public void V1_openapi_document_describes_optional_stock_mutation_idempotency_keys(string path)
+    {
+        using var scope = _factory.Services.CreateScope();
+        var swaggerProvider = scope.ServiceProvider.GetRequiredService<ISwaggerProvider>();
+        var document = swaggerProvider.GetSwagger("v1");
+
+        document.Paths.Should().ContainKey(path);
+        var operation = document.Paths[path]!.Operations![HttpMethod.Post];
+        var idempotencyKey = operation.Parameters
+            .Should()
+            .ContainSingle(parameter => parameter.Name == "Idempotency-Key")
+            .Which;
+
+        idempotencyKey.In.Should().Be(ParameterLocation.Header);
+        idempotencyKey.Required.Should().BeFalse();
+        idempotencyKey.Schema.Should().NotBeNull();
+        idempotencyKey.Schema!.MaxLength.Should().Be(200);
+    }
 }

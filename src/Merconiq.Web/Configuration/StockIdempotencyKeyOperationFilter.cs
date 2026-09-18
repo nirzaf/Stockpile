@@ -5,13 +5,23 @@ using Swashbuckle.AspNetCore.SwaggerGen;
 
 namespace Merconiq.Web.Configuration;
 
-internal sealed class StockReceiveIdempotencyKeyOperationFilter : IOperationFilter
+internal sealed class StockIdempotencyKeyOperationFilter : IOperationFilter
 {
     public void Apply(OpenApiOperation operation, OperationFilterContext context)
     {
         if (context.ApiDescription.ActionDescriptor is not ControllerActionDescriptor action ||
-            action.ControllerTypeInfo.AsType() != typeof(StockController) ||
-            action.ActionName != nameof(StockController.Receive))
+            action.ControllerTypeInfo.AsType() != typeof(StockController))
+        {
+            return;
+        }
+
+        var isRequired = action.ActionName == nameof(StockController.Receive);
+        var supportsIdempotencyKey = isRequired ||
+            action.ActionName == nameof(StockController.Transfer) ||
+            action.ActionName == nameof(StockController.Sell) ||
+            action.ActionName == nameof(StockController.Quarantine) ||
+            action.ActionName == nameof(StockController.ReleaseQuarantine);
+        if (!supportsIdempotencyKey)
         {
             return;
         }
@@ -21,7 +31,7 @@ internal sealed class StockReceiveIdempotencyKeyOperationFilter : IOperationFilt
         {
             Name = "Idempotency-Key",
             In = ParameterLocation.Header,
-            Required = true,
+            Required = isRequired,
             Schema = new OpenApiSchema { Type = JsonSchemaType.String, MaxLength = 200 }
         });
     }
