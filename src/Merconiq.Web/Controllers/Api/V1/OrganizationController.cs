@@ -5,6 +5,7 @@ using Merconiq.Core.Models;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
+using Microsoft.EntityFrameworkCore;
 using Merconiq.Web.Security;
 
 namespace Merconiq.Web.Controllers.Api.V1;
@@ -21,6 +22,8 @@ public sealed class OrganizationController(
     ICompanyMembershipService memberships,
     ICurrentUserAuthorization authorization) : ControllerBase
 {
+    private const int MaximumUnitExportPageSize = 100;
+
     [HttpGet("companies")]
     [Authorize(Policy = CapabilityPolicies.View)]
     public async Task<IActionResult> GetCompanies([FromQuery] string? search)
@@ -258,6 +261,66 @@ public sealed class OrganizationController(
         return result.Rejected > 0
             ? UnprocessableEntity(result)
             : Ok(ApiResponse<ImportUnitsResult>.CreateSuccess(result));
+    }
+
+    [HttpGet("units/export")]
+    [Authorize(Policy = CapabilityPolicies.TenantAdministrator)]
+    [ProducesResponseType(typeof(ApiResponse<UnitOfMeasureExportResponse>), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> ExportUnits(
+        [FromServices] IRepository<UnitOfMeasure> units,
+        [FromServices] ITenantContext tenantContext,
+        CancellationToken cancellationToken,
+        [FromQuery] string? afterExternalId = null,
+        [FromQuery] int pageSize = 50)
+    {
+        if (pageSize is < 1 or > MaximumUnitExportPageSize)
+        {
+            return BadRequest(ApiResponse<object>.CreateFailure(
+                $"pageSize must be between 1 and {MaximumUnitExportPageSize}."));
+        }
+
+        if (afterExternalId?.Length > 128)
+        {
+            return BadRequest(ApiResponse<object>.CreateFailure(
+                "afterExternalId must be at most 128 characters."));
+        }
+
+        var legacyPrefix = MasterDataImportConventions.LegacyUnmappedUnitExternalIdPrefix;
+        var query = units.Query()
+            .Where(unit => unit.TenantId == tenantContext.TenantId &&
+                           !unit.IsDeleted &&
+                           unit.ExternalId != string.Empty &&
+                           !unit.ExternalId.StartsWith(legacyPrefix));
+        if (afterExternalId is not null)
+        {
+            query = query.Where(unit => unit.ExternalId.CompareTo(afterExternalId) > 0);
+        }
+
+        var rows = await query
+            .OrderBy(unit => unit.ExternalId)
+            .ThenBy(unit => unit.Id)
+            .Take(pageSize + 1)
+            .Select(unit => new UnitOfMeasureExportRecord(
+                unit.ExternalId,
+                unit.Code,
+                unit.Name,
+                unit.DecimalPlaces,
+                unit.IsWholeUnitOnly))
+            .ToListAsync(cancellationToken);
+
+        var hasMore = rows.Count > pageSize;
+        if (hasMore)
+        {
+            rows.RemoveAt(rows.Count - 1);
+        }
+
+        var response = new UnitOfMeasureExportResponse(
+            pageSize,
+            hasMore,
+            hasMore ? rows[^1].ExternalId : null,
+            rows);
+        return Ok(ApiResponse<UnitOfMeasureExportResponse>.CreateSuccess(response));
     }
 
     [HttpPost("items/import")]

@@ -25,3 +25,16 @@ public sealed record WebhookDeliveryDiagnosticsPageResponse(
     int PageSize,
     bool HasMore,
     IReadOnlyList<WebhookDeliveryDiagnosticResponse> Deliveries);
+
+public sealed record UnitOfMeasureExportResponse(
+    int PageSize,
+    bool HasMore,
+    string? NextCursor,
+    IReadOnlyList<UnitOfMeasureExportRecord> Units);
+
+public sealed record UnitOfMeasureExportRecord(
+    string ExternalId,
+    string Code,
+    string Name,
+    int DecimalPlaces,
+    bool IsWholeUnitOnly);
