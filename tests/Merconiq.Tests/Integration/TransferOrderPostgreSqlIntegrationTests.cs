@@ -301,6 +301,13 @@ public sealed class TransferOrderPostgreSqlIntegrationTests(PostgreSqlIntegratio
             transaction.TransactionType == TransactionType.TransferReceipt)).Should().Be(0);
         (await verify.StockValuationEntries.CountAsync(entry =>
             entry.EntryType == StockValuationEntryType.TransferIn)).Should().Be(0);
+        (await verify.DocumentIdentities.CountAsync(document =>
+            document.DocumentType == "TransferTransitSettlement")).Should().Be(0);
+        (await verify.DocumentNumberSequences.CountAsync(sequence =>
+            sequence.DocumentType == "TransferTransitSettlement")).Should().Be(0);
+        (await verify.DocumentLineIdentities.CountAsync(line =>
+            line.LineType == "TransferTransitSettlementLine")).Should().Be(0);
+        (await verify.DocumentLineLinks.CountAsync()).Should().Be(0);
         (await verify.TransferTransitEntries.SingleAsync(entry => entry.Id == transitEntryId))
             .Should().Match<TransferTransitEntry>(entry => entry.Quantity == 30 && entry.TotalValue == 300m);
         (await verify.TransferOrders.SingleAsync(order => order.Id == seeded.OrderId))
@@ -381,6 +388,10 @@ public sealed class TransferOrderPostgreSqlIntegrationTests(PostgreSqlIntegratio
         received.SettlementType.Should().Be(TransferTransitSettlementType.Received);
         received.Quantity.Should().Be(20);
         received.TotalValue.Should().Be(200m);
+        received.DocumentId.Should().NotBeNull();
+        received.DocumentNumber.Should().Be($"TRS-{received.SettledAt.Year}-000001");
+        received.DocumentLineId.Should().NotBeNull();
+        received.SourceDocumentLineId.Should().Be(seeded.DocumentLineId);
 
         var replay = await orders.ResolveTransitAsync(
             seeded.OrderId,
@@ -424,6 +435,13 @@ public sealed class TransferOrderPostgreSqlIntegrationTests(PostgreSqlIntegratio
             scope);
         returned.SettlementType.Should().Be(TransferTransitSettlementType.Returned);
         returned.TotalValue.Should().Be(100m);
+        returned.DocumentId.Should().NotBeNull();
+        returned.DocumentId!.Value.Should().NotBe(received.DocumentId!.Value);
+        var expectedReturnNumber = returned.SettledAt.Year == received.SettledAt.Year ? 2 : 1;
+        returned.DocumentNumber.Should().Be($"TRS-{returned.SettledAt.Year}-{expectedReturnNumber:000000}");
+        returned.DocumentLineId.Should().NotBeNull();
+        returned.DocumentLineId!.Value.Should().NotBe(received.DocumentLineId!.Value);
+        returned.SourceDocumentLineId.Should().Be(seeded.DocumentLineId);
 
         var order = await orders.GetByIdAsync(seeded.OrderId);
         order!.Status.Should().Be(TransferOrderStatus.Completed);
@@ -435,6 +453,31 @@ public sealed class TransferOrderPostgreSqlIntegrationTests(PostgreSqlIntegratio
                 stock.ItemId == seeded.ItemId && stock.LocationId == seeded.DestinationLocationId))
             .Should().Match<StockInHand>(stock => stock.Quantity == 20 && stock.QuarantinedQuantity == 0);
         (await operation.TransferTransitSettlements.ToListAsync()).Should().HaveCount(2);
+        var settlementDocuments = await operation.DocumentIdentities
+            .Where(document => document.DocumentType == "TransferTransitSettlement")
+            .ToListAsync();
+        settlementDocuments.Should().HaveCount(2)
+            .And.OnlyContain(document => document.CompanyId == seeded.CompanyId &&
+                document.Status == DocumentLifecycleStatus.Active);
+        settlementDocuments.Select(document => document.Id.Value)
+            .Should().BeEquivalentTo([received.DocumentId!.Value, returned.DocumentId!.Value]);
+
+        var settlementLines = await operation.DocumentLineIdentities
+            .Where(line => settlementDocuments.Select(document => document.Id).Contains(line.DocumentId))
+            .ToListAsync();
+        settlementLines.Should().HaveCount(2)
+            .And.OnlyContain(line => line.LineType == "TransferTransitSettlementLine" &&
+                line.CompanyId == seeded.CompanyId);
+        settlementLines.Select(line => line.Id.Value)
+            .Should().BeEquivalentTo([received.DocumentLineId!.Value, returned.DocumentLineId!.Value]);
+
+        var settlementLinks = (await operation.DocumentLineLinks.ToListAsync())
+            .Where(link => settlementLines.Any(line => line.Id == link.TargetLineId))
+            .ToArray();
+        settlementLinks.Should().HaveCount(2)
+            .And.OnlyContain(link => link.SourceLineId.Value == seeded.DocumentLineId &&
+                link.RelationshipType == DocumentLineRelationshipType.Successor &&
+                link.CompanyId == seeded.CompanyId);
         (await operation.StockValuationEntries.Where(entry =>
                 entry.EntryType == StockValuationEntryType.TransferIn ||
                 entry.EntryType == StockValuationEntryType.TransferReturn)
@@ -591,8 +634,16 @@ public sealed class TransferOrderPostgreSqlIntegrationTests(PostgreSqlIntegratio
         bothRequestsWaitedForLock.Should().BeTrue(
             "both settlement requests must be observed waiting on the PostgreSQL advisory lock before it is released");
         results[0].Should().Be(results[1]);
+        results[0].DocumentId.Should().NotBeNull();
+        results[0].DocumentLineId.Should().NotBeNull();
         await using var verify = fixture.CreateContext(tenantId);
         (await verify.TransferTransitSettlements.ToListAsync()).Should().ContainSingle();
+        (await verify.DocumentIdentities.CountAsync(document =>
+            document.DocumentType == "TransferTransitSettlement")).Should().Be(1);
+        (await verify.DocumentLineIdentities.CountAsync(line =>
+            line.LineType == "TransferTransitSettlementLine")).Should().Be(1);
+        (await verify.DocumentLineLinks.CountAsync(link =>
+            link.RelationshipType == DocumentLineRelationshipType.Successor)).Should().Be(1);
         (await verify.StockTransactions.CountAsync(transaction =>
                 transaction.TransactionType == TransactionType.TransferReceipt))
             .Should().Be(1);
