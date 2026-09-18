@@ -441,6 +441,44 @@ public sealed class StockValuationPostgreSqlIntegrationTests
     }
 
     [PostgreSqlFact]
+    public async Task PostgreSQL_legacy_non_midnight_lot_expiry_retains_valuation_coverage()
+    {
+        _fixture.EnsureEnabled();
+        var tenantId = $"valuation-legacy-expiry-{Guid.NewGuid():N}";
+        var (itemId, locationId) = await SeedItemAndLocationAsync(tenantId);
+        var expiryDay = DateTime.UtcNow.Date.AddMonths(6);
+        var legacyExpiry = DateTime.SpecifyKind(expiryDay.AddHours(16), DateTimeKind.Utc);
+        const string batchNumber = "LOT-LEGACY-VALUED";
+
+        await using (var initialReceipt = _fixture.CreateContext(tenantId))
+        {
+            await CreateService(initialReceipt, tenantId).ReceiveStockAsync(
+                itemId, locationId, 10, "initial valued lot", batchNumber, expiryDay, unitCost: 10m);
+        }
+
+        await using (var legacyWriter = _fixture.CreateContext(tenantId))
+        {
+            await legacyWriter.Database.ExecuteSqlInterpolatedAsync(
+                $"UPDATE \"StockTransactions\" SET \"ExpiryDate\" = {legacyExpiry} WHERE \"ItemId\" = {itemId} AND \"BatchNumber\" = {batchNumber}");
+        }
+
+        await using (var followupReceipt = _fixture.CreateContext(tenantId))
+        {
+            await CreateService(followupReceipt, tenantId).ReceiveStockAsync(
+                itemId, locationId, 3, "follow-up valued lot receipt", batchNumber, expiryDay, unitCost: 20m);
+        }
+
+        await using var verify = _fixture.CreateContext(tenantId);
+        var bucket = await verify.StockValuationBuckets.SingleAsync();
+        bucket.Quantity.Should().Be(13);
+        bucket.Value.Should().Be(160m);
+        (await verify.StockInHand.SingleAsync(stock => stock.ItemId == itemId && stock.LocationId == locationId))
+            .Should().Match<StockInHand>(stock => stock.Quantity == 13 && stock.ExpiryDate == expiryDay);
+        (await verify.StockValuationEntries.OrderBy(entry => entry.Id).Select(entry => entry.TotalValue).ToListAsync())
+            .Should().Equal(100m, 60m);
+    }
+
+    [PostgreSqlFact]
     public async Task PostgreSQL_failed_webhook_enqueue_rolls_back_stock_and_valuation_together()
     {
         _fixture.EnsureEnabled();

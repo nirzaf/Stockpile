@@ -2363,12 +2363,30 @@ public class StockService : IStockService
         DateTime? expiryDate,
         CancellationToken cancellationToken = default)
     {
-        var transactions = (await _txRepo.FindAsync(transaction =>
-            transaction.ItemId == itemId &&
-            transaction.BatchNumber == batchNumber &&
-            transaction.ExpiryDate == expiryDate &&
-            (transaction.FromLocationId == locationId || transaction.ToLocationId == locationId),
-            cancellationToken)).ToArray();
+        expiryDate = StockLotExpiryDate.Normalize(expiryDate);
+        IEnumerable<StockTransaction> matchingTransactions;
+        if (expiryDate is DateTime expiryDayStart)
+        {
+            var expiryDayEnd = expiryDayStart.AddDays(1);
+            matchingTransactions = await _txRepo.FindAsync(transaction =>
+                transaction.ItemId == itemId &&
+                transaction.BatchNumber == batchNumber &&
+                transaction.ExpiryDate >= expiryDayStart &&
+                transaction.ExpiryDate < expiryDayEnd &&
+                (transaction.FromLocationId == locationId || transaction.ToLocationId == locationId),
+                cancellationToken);
+        }
+        else
+        {
+            matchingTransactions = await _txRepo.FindAsync(transaction =>
+                transaction.ItemId == itemId &&
+                transaction.BatchNumber == batchNumber &&
+                transaction.ExpiryDate == null &&
+                (transaction.FromLocationId == locationId || transaction.ToLocationId == locationId),
+                cancellationToken);
+        }
+
+        var transactions = matchingTransactions.ToArray();
         if (transactions.Length == 0)
             return 0;
 
