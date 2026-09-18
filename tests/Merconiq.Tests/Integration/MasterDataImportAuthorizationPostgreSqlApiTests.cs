@@ -108,8 +108,9 @@ public sealed class MasterDataImportAuthorizationPostgreSqlApiTests(
 
         var authorizedItemExternalId = $"item-{suffix[..10]}";
         var itemCode = $"SKU-{suffix[..8]}";
+        // The imported unit is whole-unit-only, so the item must not allow fractional quantities.
         var authorizedItemCsv = "external_id,item_code,description,rate,base_unit_external_id,purchase_unit_external_id,sales_unit_external_id,purchase_to_base_factor,sales_to_base_factor,quantity_precision,whole_unit_only\n"
-            + $"{authorizedItemExternalId},{itemCode},Synthetic Item,12.50,{unitExternalId},,,1,1,2,false";
+            + $"{authorizedItemExternalId},{itemCode},Synthetic Item,12.50,{unitExternalId},,,1,1,0,true";
         using (var allowedItemImport = await buyerClient.PostAsJsonAsync(
                    "/api/v1/organization/items/import",
                    new { csv = authorizedItemCsv, dryRun = false, companyId = companyAId }))
@@ -121,7 +122,7 @@ public sealed class MasterDataImportAuthorizationPostgreSqlApiTests(
 
         var deniedItemExternalId = $"item-denied-{suffix[..8]}";
         var deniedItemCsv = "external_id,item_code,description,rate,base_unit_external_id,purchase_unit_external_id,sales_unit_external_id,purchase_to_base_factor,sales_to_base_factor,quantity_precision,whole_unit_only\n"
-            + $"{deniedItemExternalId},DENY-{suffix[..8]},Denied Item,1.00,{unitExternalId},,,1,1,2,false";
+            + $"{deniedItemExternalId},DENY-{suffix[..8]},Denied Item,1.00,{unitExternalId},,,1,1,0,true";
         using (var deniedItemImport = await buyerClient.PostAsJsonAsync(
                    "/api/v1/organization/items/import",
                    new { csv = deniedItemCsv, dryRun = false, companyId = companyBId }))
