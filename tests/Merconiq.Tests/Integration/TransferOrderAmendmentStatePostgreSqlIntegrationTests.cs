@@ -90,9 +90,11 @@ public sealed class TransferOrderAmendmentStatePostgreSqlIntegrationTests(
         reservation!.SourceLineReference.Should().Be(sourceReference);
         reservation.Status.Should().Be(StockReservationStatus.Released);
 
-        var removedIdentity = await verify.DocumentLineIdentities.SingleOrDefaultAsync(identity =>
-            identity.Id.Value == removedLine.DocumentLineId &&
-            identity.DocumentId == new DocumentIdentityId(seeded.Order.DocumentId));
+        var documentLineIdentities = await verify.DocumentLineIdentities
+            .Where(identity => identity.DocumentId == new DocumentIdentityId(seeded.Order.DocumentId))
+            .ToListAsync();
+        var removedIdentity = documentLineIdentities.SingleOrDefault(identity =>
+            identity.Id.Value == removedLine.DocumentLineId);
         removedIdentity.Should().NotBeNull();
         (await verify.TransferOrderLines.AnyAsync(line => line.Id == removedLine.Id)).Should().BeFalse();
     }

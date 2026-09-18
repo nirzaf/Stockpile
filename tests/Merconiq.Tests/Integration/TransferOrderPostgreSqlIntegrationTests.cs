@@ -213,10 +213,10 @@ public sealed class TransferOrderPostgreSqlIntegrationTests(PostgreSqlIntegratio
         var lineIdentities = await operation.DocumentLineIdentities
             .Where(identity => identity.DocumentId == documentId)
             .ToListAsync();
-        lineIdentities.Should().HaveCount(2);
+        lineIdentities.Should().HaveCount(3, "removed transfer lines retain their document-line identity as history");
         lineIdentities.Should().ContainSingle(identity => identity.Id.Value == seeded.DocumentLineId);
         lineIdentities.Should().ContainSingle(identity => identity.Id.Value == newlyAddedLine.DocumentLineId);
-        lineIdentities.Should().NotContain(identity => identity.Id.Value == lineToRemove.DocumentLineId);
+        lineIdentities.Should().ContainSingle(identity => identity.Id.Value == lineToRemove.DocumentLineId);
 
         (await operation.StockReservations.ToListAsync()).Should().NotBeEmpty()
             .And.OnlyContain(reservation => reservation.Status == StockReservationStatus.Released);
