@@ -22,6 +22,7 @@ Welcome to the documentation site for **Merconiq** — a modern inventory manage
 | Guide | Audience | Description |
 |-------|----------|-------------|
 | **[User Guide](USER_GUIDE.md)** | End users (Admin, Manager, Staff) | How to use the app day-to-day: login, items, stock operations, purchase orders, troubleshooting. |
+| **[Stranded transfer transit runbook](TRANSFER_TRANSIT_RUNBOOK.md)** | Inventory operators | Investigate and resolve supported in-transit quantities using the existing API and auditable evidence. |
 | **[README](https://github.com/nirzaf/merconiq/blob/master/README.md)** | Developers & operators | Installation, architecture, API reference, deployment. |
 | **[CHANGELOG](https://github.com/nirzaf/merconiq/blob/master/CHANGELOG.md)** | Everyone | Version history and release notes. |
 | **[Contributing](https://github.com/nirzaf/merconiq/blob/master/CONTRIBUTING.md)** | Contributors | How to file issues, open PRs, and follow the project's coding standards. |

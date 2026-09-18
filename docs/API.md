@@ -674,6 +674,6 @@ approval/cancellation audit history. Source and destination location IDs are
 shown as persisted on the transfer. Branch responsibility is intentionally
 omitted because transfer/transit/settlement rows retain location IDs, not a
 historical branch snapshot; owner-approved legacy location mappings remain
-pending in #268. The current settlement model has received, quarantined and
-returned actions, but no write-off record; quarantine is not treated as a
-write-off. Lot-specific valuation is also outside this report's claims.
+pending in #268. Write-off quantity and value are reported as transit
+dispositions and are not expected to have a physical stock transaction or
+valuation posting. Lot-specific valuation is also outside this report's claims.
