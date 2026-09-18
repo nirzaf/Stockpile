@@ -189,15 +189,21 @@ public sealed class TransferOrderService(
                 [request.FromLocationId, request.ToLocationId],
                 cancellationToken);
             await ValidateReferencesAsync(request);
-            var order = await orderRepository.GetByIdAsync(id)
+            var persistedOrder = (await orderRepository.FindAsync(
+                    order => order.Id == id,
+                    cancellationToken))
+                .SingleOrDefault()
                 ?? throw new KeyNotFoundException("Transfer order not found.");
+            // FindAsync is no-tracking, so this read observes persisted state even if this scoped
+            // DbContext already tracks an older order instance from an earlier request/read.
+            // Merge it into the tracked instance used by the rest of the amendment graph.
+            var order = await orderRepository.GetByIdAsync(id, cancellationToken)
+                ?? throw new KeyNotFoundException("Transfer order not found.");
+            await orderRepository.UpdateAsync(persistedOrder);
             ValidateOwnership(order, request);
             if (order.Status == TransferOrderStatus.Cancelled)
                 throw new InvalidOperationException("Cancelled transfer orders cannot be amended.");
 
-            await unitOfWork.AcquireTenantOperationLockAsync("organization-state", cancellationToken);
-            await unitOfWork.AcquireLocationLocksAsync(
-                [order.FromLocationId, order.ToLocationId], cancellationToken);
             var currentLines = lineRepository.Query()
                 .Where(line => line.TransferOrderId == id)
                 .OrderBy(line => line.Id)
@@ -242,18 +248,20 @@ public sealed class TransferOrderService(
             if (removedLines.Length > 0)
             {
                 var removedDocumentLineIds = removedLines.Select(line => line.DocumentLineId).ToHashSet();
-                var documentLineIdentities = (await lineIdentityRepository.FindAsync(identity =>
+                var documentLineIdentityIds = (await lineIdentityRepository.FindAsync(identity =>
                         identity.DocumentId == order.DocumentId && identity.LineType == "TransferOrderLine"))
                     .Where(identity => removedDocumentLineIds.Contains(identity.Id))
-                    .ToDictionary(identity => identity.Id);
+                    .Select(identity => identity.Id)
+                    .ToHashSet();
 
-                if (documentLineIdentities.Count != removedLines.Length)
+                if (removedLines.Any(line => !documentLineIdentityIds.Contains(line.DocumentLineId)))
                     throw new InvalidOperationException("A transfer-order line is missing its document-line identity.");
 
                 foreach (var removedLine in removedLines)
                 {
                     await lineRepository.DeleteAsync(removedLine);
-                    await lineIdentityRepository.DeleteAsync(documentLineIdentities[removedLine.DocumentLineId]);
+                    // Keep the stable identity: released reservation history still refers to
+                    // its source-line reference after the business line itself is removed.
                 }
             }
 
