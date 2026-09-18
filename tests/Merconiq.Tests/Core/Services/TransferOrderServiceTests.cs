@@ -161,6 +161,11 @@ public sealed class TransferOrderServiceTests
         var originalOrder = await context.TransferOrders.SingleAsync(order => order.Id == created.Id);
         originalOrder.Status = TransferOrderStatus.Approved;
         await context.SaveChangesAsync();
+        var trackedRemovedLine = context.ChangeTracker.Entries<TransferOrderLine>()
+            .Single(entry => entry.Entity.Id == originalLines[1].Id).Entity;
+        var detachedRemovedLine = await new Repository<TransferOrderLine>(context).Query()
+            .SingleAsync(line => line.Id == originalLines[1].Id);
+        detachedRemovedLine.Should().NotBeSameAs(trackedRemovedLine);
 
         await service.AmendAsync(created.Id, new CreateTransferOrderRequest(
             company.Id,
