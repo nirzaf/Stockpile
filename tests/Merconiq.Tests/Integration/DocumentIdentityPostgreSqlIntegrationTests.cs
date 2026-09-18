@@ -176,7 +176,7 @@ public sealed class DocumentIdentityPostgreSqlIntegrationTests(PostgreSqlIntegra
     public async Task Concurrent_lifecycle_transitions_reject_the_stale_writer_and_retain_number()
     {
         fixture.EnsureEnabled();
-        var tenantId = $"document-identity-lifecycle-race-{Guid.NewGuid():N}";
+        var tenantId = $"doc-lifecycle-race-{Guid.NewGuid():N}";
         int companyId;
         var documentId = DocumentIdentityId.New();
 
