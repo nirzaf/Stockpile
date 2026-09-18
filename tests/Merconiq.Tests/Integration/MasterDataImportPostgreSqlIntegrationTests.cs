@@ -115,6 +115,142 @@ public sealed class MasterDataImportPostgreSqlIntegrationTests(PostgreSqlIntegra
     }
 
     [PostgreSqlFact]
+    public async Task Location_import_rejects_cross_company_branch_and_replays_with_redacted_audits()
+    {
+        fixture.EnsureEnabled();
+        var tenantId = $"location-import-scope-{Guid.NewGuid():N}";
+        var suffix = Guid.NewGuid().ToString("N");
+        var localBranchExternalId = $"local-branch-{suffix[..8]}";
+        var foreignBranchExternalId = $"foreign-branch-{suffix[..8]}";
+        var foreignLocationExternalId = $"location-forbidden-{suffix[..8]}";
+        var localLocationExternalId = $"location-local-{suffix[..8]}";
+        int localCompanyId;
+        int localBranchId;
+
+        await using (var setup = fixture.CreateContext(tenantId))
+        {
+            var localCompany = new Company
+            {
+                Code = $"LOCAL-{suffix[..8]}",
+                LegalName = "Synthetic local company",
+                BaseCurrency = "USD",
+                CurrencyScale = 2
+            };
+            var foreignCompany = new Company
+            {
+                Code = $"FOREIGN-{suffix[..8]}",
+                LegalName = "Synthetic foreign company",
+                BaseCurrency = "USD",
+                CurrencyScale = 2
+            };
+            var localBranch = new Branch
+            {
+                Company = localCompany,
+                ExternalId = localBranchExternalId,
+                Code = $"LOCAL-{suffix[..8]}",
+                Name = "Synthetic local branch"
+            };
+            var foreignBranch = new Branch
+            {
+                Company = foreignCompany,
+                ExternalId = foreignBranchExternalId,
+                Code = $"FOREIGN-{suffix[..8]}",
+                Name = "Synthetic foreign branch"
+            };
+            setup.AddRange(localCompany, foreignCompany, localBranch, foreignBranch);
+            await setup.SaveChangesAsync();
+            localCompanyId = localCompany.Id;
+            localBranchId = localBranch.Id;
+        }
+
+        var foreignLocationCsv = "external_id,branch_external_id,name,address\n"
+            + $"{foreignLocationExternalId},{foreignBranchExternalId},Foreign warehouse,Private address";
+        ImportLocationsResult rejected;
+        await using (var rejectedContext = fixture.CreateContext(tenantId))
+        {
+            rejected = await CreateService(rejectedContext).ImportLocationsAsync(
+                new ImportLocationsRequest(foreignLocationCsv, DryRun: false, CompanyId: localCompanyId));
+        }
+
+        rejected.Created.Should().Be(0);
+        rejected.Rejected.Should().Be(1);
+        rejected.Rows.Single().Status.Should().Be("rejected");
+        rejected.Rows.Single().Error.Should().Contain("not found in the company");
+
+        var localLocationCsv = "external_id,branch_external_id,name,address\n"
+            + $"{localLocationExternalId},{localBranchExternalId},Local warehouse,Public address";
+        ImportLocationsResult created;
+        await using (var createContext = fixture.CreateContext(tenantId))
+        {
+            created = await CreateService(createContext).ImportLocationsAsync(
+                new ImportLocationsRequest(localLocationCsv, DryRun: false, CompanyId: localCompanyId));
+        }
+
+        ImportLocationsResult replayed;
+        await using (var replayContext = fixture.CreateContext(tenantId))
+        {
+            replayed = await CreateService(replayContext).ImportLocationsAsync(
+                new ImportLocationsRequest(localLocationCsv, DryRun: false, CompanyId: localCompanyId));
+        }
+
+        created.Created.Should().Be(1);
+        created.Rejected.Should().Be(0);
+        replayed.Created.Should().Be(0);
+        replayed.Unchanged.Should().Be(1);
+        replayed.Rejected.Should().Be(0);
+
+        await using var verification = fixture.CreateContext(tenantId);
+        var locations = await verification.Locations.IgnoreQueryFilters()
+            .Where(location => location.TenantId == tenantId)
+            .AsNoTracking()
+            .ToListAsync();
+        locations.Should().ContainSingle();
+        locations[0].BranchId.Should().Be(localBranchId);
+        locations[0].ExternalId.Should().Be(localLocationExternalId);
+
+        var audits = await verification.AuditLogs.AsNoTracking()
+            .Where(log => log.TenantId == tenantId && log.EntityName == "MasterDataImportBatch")
+            .OrderBy(log => log.Id)
+            .ToListAsync();
+        audits.Should().HaveCount(3);
+        var batchIds = new List<Guid>();
+        var outcomes = new List<(string Outcome, int RowsCreated, int RowsUnchanged, int RowsRejected, bool ChangesApplied)>();
+        foreach (var audit in audits)
+        {
+            audit.Action.Should().Be("ImportBatchCompleted");
+            using var keyValues = JsonDocument.Parse(audit.KeyValues!);
+            keyValues.RootElement.GetProperty("ImportType").GetString().Should().Be(nameof(Location));
+            batchIds.Add(keyValues.RootElement.GetProperty("BatchId").GetGuid());
+
+            using var summary = JsonDocument.Parse(audit.NewValues!);
+            outcomes.Add((
+                summary.RootElement.GetProperty("Outcome").GetString()!,
+                summary.RootElement.GetProperty("RowsCreated").GetInt32(),
+                summary.RootElement.GetProperty("RowsUnchanged").GetInt32(),
+                summary.RootElement.GetProperty("RowsRejected").GetInt32(),
+                summary.RootElement.GetProperty("ChangesApplied").GetBoolean()));
+            audit.KeyValues.Should().NotContain(foreignBranchExternalId)
+                .And.NotContain(localBranchExternalId)
+                .And.NotContain(foreignLocationExternalId)
+                .And.NotContain(localLocationExternalId);
+            audit.NewValues.Should().NotContain(foreignBranchExternalId)
+                .And.NotContain(localBranchExternalId)
+                .And.NotContain(foreignLocationExternalId)
+                .And.NotContain(localLocationExternalId)
+                .And.NotContain("Foreign warehouse")
+                .And.NotContain("Local warehouse")
+                .And.NotContain("Private address")
+                .And.NotContain("Public address");
+        }
+
+        batchIds.Should().OnlyHaveUniqueItems();
+        outcomes.Should().Equal(
+            ("Rejected", 0, 0, 1, false),
+            ("Created", 1, 0, 0, true),
+            ("Unchanged", 0, 1, 0, false));
+    }
+
+    [PostgreSqlFact]
     public async Task Controlled_onboarding_is_idempotent_and_atomic_across_owned_masters()
     {
         fixture.EnsureEnabled();
