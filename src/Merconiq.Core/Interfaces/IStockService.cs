@@ -168,8 +168,14 @@ public interface IStockService
         TransferTransitStockMovementRequest request,
         CancellationToken cancellationToken = default);
 
-    /// <summary>Gets one reservation by its stable source-line reference.</summary>
-    Task<StockReservationView?> GetReservationAsync(string sourceLineReference);
+    /// <summary>
+    /// Gets one reservation by its stable source-line reference, optionally restricted to
+    /// locations owned by the supplied companies.
+    /// </summary>
+    Task<StockReservationView?> GetReservationAsync(
+        string sourceLineReference,
+        IReadOnlyCollection<int>? companyIds = null,
+        CancellationToken cancellationToken = default);
 
     /// <summary>Gets on-hand, reserved, and available stock by lot.</summary>
     Task<IEnumerable<StockAvailabilityView>> GetAvailabilityAsync(

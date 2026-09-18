@@ -38,13 +38,16 @@ public sealed class StockReservationsController(
 
     [HttpGet("reservations/{sourceLineReference}")]
     [Authorize(Policy = CapabilityPolicies.View)]
-    public async Task<IActionResult> GetReservation(string sourceLineReference)
+    public async Task<IActionResult> GetReservation(
+        string sourceLineReference,
+        CancellationToken cancellationToken)
     {
-        var result = await stock.GetReservationAsync(sourceLineReference);
+        var result = await GetAccessibleReservationAsync(
+            sourceLineReference,
+            CompanyCapability.View,
+            cancellationToken);
         if (result is null)
             return NotFound(ApiResponse<object>.CreateFailure("Reservation not found."));
-        if (!await CanViewLocationAsync(result.LocationId))
-            return await LocationAccessFailureAsync();
         return Ok(ApiResponse<StockReservationView>.CreateSuccess(result));
     }
 
@@ -81,14 +84,17 @@ public sealed class StockReservationsController(
         [FromServices] IIdempotencyKeyStore idempotencyKeyStore,
         [FromServices] ITenantContext tenantContext)
     {
-        var reservation = await stock.GetReservationAsync(request.SourceLineReference);
+        var cancellationToken = HttpContext.RequestAborted;
+        var reservation = await GetAccessibleReservationAsync(
+            request.SourceLineReference,
+            CompanyCapability.Post,
+            cancellationToken);
         if (reservation is null)
             return NotFound(ApiResponse<object>.CreateFailure("Reservation not found."));
         var mutationScope = new StockMutationScope(
-            await authorization.GetLocationCompanyIdAsync(User, reservation.LocationId),
-            () => authorization.CanAccessLocationAsync(User, reservation.LocationId, CompanyCapability.Post));
-        if (!await authorization.CanAccessLocationAsync(User, reservation.LocationId, CompanyCapability.Post))
-            return Forbid();
+            await authorization.GetLocationCompanyIdAsync(User, reservation.LocationId, cancellationToken),
+            token => authorization.CanAccessLocationAsync(
+                User, reservation.LocationId, CompanyCapability.Post, token));
         return await RunMutationAsync(request, idempotencyKeyStore, tenantContext,
             () => stock.ReleaseReservationAsync(request.SourceLineReference, request.Reason, mutationScope));
     }
@@ -102,14 +108,17 @@ public sealed class StockReservationsController(
         [FromServices] IIdempotencyKeyStore idempotencyKeyStore,
         [FromServices] ITenantContext tenantContext)
     {
-        var reservation = await stock.GetReservationAsync(request.SourceLineReference);
+        var cancellationToken = HttpContext.RequestAborted;
+        var reservation = await GetAccessibleReservationAsync(
+            request.SourceLineReference,
+            CompanyCapability.Post,
+            cancellationToken);
         if (reservation is null)
             return NotFound(ApiResponse<object>.CreateFailure("Reservation not found."));
         var mutationScope = new StockMutationScope(
-            await authorization.GetLocationCompanyIdAsync(User, reservation.LocationId),
-            () => authorization.CanAccessLocationAsync(User, reservation.LocationId, CompanyCapability.Post));
-        if (!await authorization.CanAccessLocationAsync(User, reservation.LocationId, CompanyCapability.Post))
-            return Forbid();
+            await authorization.GetLocationCompanyIdAsync(User, reservation.LocationId, cancellationToken),
+            token => authorization.CanAccessLocationAsync(
+                User, reservation.LocationId, CompanyCapability.Post, token));
         return await RunMutationAsync(request, idempotencyKeyStore, tenantContext,
             () => stock.CancelReservationAsync(request.SourceLineReference, request.Reason, mutationScope));
     }
@@ -123,15 +132,18 @@ public sealed class StockReservationsController(
         [FromServices] IIdempotencyKeyStore idempotencyKeyStore,
         [FromServices] ITenantContext tenantContext)
     {
-        var reservation = await stock.GetReservationAsync(request.SourceLineReference);
+        var cancellationToken = HttpContext.RequestAborted;
+        var reservation = await GetAccessibleReservationAsync(
+            request.SourceLineReference,
+            CompanyCapability.Post,
+            cancellationToken);
         if (reservation is null)
             return NotFound(ApiResponse<object>.CreateFailure("Reservation not found."));
         var mutationScope = new StockMutationScope(
-            await authorization.GetLocationCompanyIdAsync(User, reservation.LocationId),
-            () => authorization.CanAccessLocationAsync(User, reservation.LocationId, CompanyCapability.Post),
+            await authorization.GetLocationCompanyIdAsync(User, reservation.LocationId, cancellationToken),
+            token => authorization.CanAccessLocationAsync(
+                User, reservation.LocationId, CompanyCapability.Post, token),
             () => authorization.CanOverrideExpiredStockAtLocationAsync(User, reservation.LocationId));
-        if (!await authorization.CanAccessLocationAsync(User, reservation.LocationId, CompanyCapability.Post))
-            return Forbid();
         if (!string.IsNullOrWhiteSpace(request.ExpiryExceptionReason) &&
             !await authorization.CanOverrideExpiredStockAtLocationAsync(User, reservation.LocationId))
             return Forbid();
@@ -169,6 +181,33 @@ public sealed class StockReservationsController(
 
     private async Task<bool> CanViewLocationAsync(int locationId) =>
         await authorization.CanAccessLocationAsync(User, locationId, CompanyCapability.View);
+
+    private async Task<StockReservationView?> GetAccessibleReservationAsync(
+        string sourceLineReference,
+        CompanyCapability capability,
+        CancellationToken cancellationToken)
+    {
+        IReadOnlyCollection<int>? companyIds = null;
+        if (!await authorization.IsTenantAdministratorAsync(User, cancellationToken))
+        {
+            companyIds = (await authorization.GetAccessibleCompanyIdsAsync(
+                User, capability, cancellationToken)).ToArray();
+            if (companyIds.Count == 0)
+                return null;
+        }
+
+        var reservation = await stock.GetReservationAsync(
+            sourceLineReference,
+            companyIds,
+            cancellationToken);
+        if (reservation is null || !await authorization.CanAccessLocationAsync(
+                User, reservation.LocationId, capability, cancellationToken))
+        {
+            return null;
+        }
+
+        return reservation;
+    }
 
     private async Task<IActionResult> LocationAccessFailureAsync()
     {

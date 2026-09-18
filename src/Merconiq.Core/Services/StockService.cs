@@ -1579,12 +1579,34 @@ public class StockService : IStockService
     }
 
     /// <inheritdoc />
-    public async Task<StockReservationView?> GetReservationAsync(string sourceLineReference)
+    public async Task<StockReservationView?> GetReservationAsync(
+        string sourceLineReference,
+        IReadOnlyCollection<int>? companyIds = null,
+        CancellationToken cancellationToken = default)
     {
         EnsureReservationRepository();
         if (string.IsNullOrWhiteSpace(sourceLineReference))
             throw new ArgumentException("Source line reference is required.", nameof(sourceLineReference));
-        var reservation = await FindReservationAsync(sourceLineReference.Trim());
+        var normalizedSourceLineReference = sourceLineReference.Trim();
+        StockReservation? reservation;
+        if (companyIds is null)
+        {
+            reservation = await FindReservationAsync(normalizedSourceLineReference);
+        }
+        else if (companyIds.Count == 0)
+        {
+            return null;
+        }
+        else
+        {
+            reservation = (await _reservationRepo!.FindAsync(row =>
+                    row.SourceLineReference == normalizedSourceLineReference &&
+                    row.Location.Branch != null &&
+                    companyIds.Contains(row.Location.Branch.CompanyId),
+                    cancellationToken))
+                .FirstOrDefault();
+        }
+
         if (reservation is null)
             return null;
         var allocations = await LoadReservationAllocationsAsync(reservation);
