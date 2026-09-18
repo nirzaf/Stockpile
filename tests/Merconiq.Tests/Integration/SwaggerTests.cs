@@ -1,5 +1,6 @@
 using FluentAssertions;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.OpenApi;
 using Swashbuckle.AspNetCore.Swagger;
 
 namespace Merconiq.Tests.Integration;
@@ -24,5 +25,17 @@ public class SwaggerTests : IClassFixture<CustomWebApplicationFactory>
         document.Paths.Should().ContainKey("/api/v1/items");
         document.Components.Should().NotBeNull();
         document.Components!.SecuritySchemes.Should().ContainKey("Bearer");
+
+        document.Paths.Should().ContainKey("/api/v1/stock/receive");
+        var receivePath = document.Paths["/api/v1/stock/receive"]!;
+        receivePath.Operations.Should().NotBeNull();
+        var receiveOperation = receivePath.Operations![HttpMethod.Post];
+        var idempotencyKey = receiveOperation.Parameters
+            .Should()
+            .ContainSingle(parameter => parameter.Name == "Idempotency-Key")
+            .Which;
+
+        idempotencyKey.In.Should().Be(ParameterLocation.Header);
+        idempotencyKey.Required.Should().BeTrue();
     }
 }
