@@ -6,7 +6,7 @@ description: Source-dated, public-safe review of OSS programs and maintainer ben
 
 # Funding and OSS Eligibility Ledger
 
-Reviewed **2026-09-18** against public `nirzaf/merconiq` at `a21cb6ab2bedd6dd3d8968f9f11ab95d6179d177`. This is a public-safe decision ledger for the 26 offerings in the owner-authorized OSS readiness packet. It is a documentary review, not an eligibility calculator, submitted application, award record, or provider endorsement.
+Reviewed **2026-09-18** against public `nirzaf/merconiq` at `1bbcc50600b4e15fbe295717f19e5d67838b6017`. This is a public-safe decision ledger for the 26 offerings in the owner-authorized OSS readiness packet. It is a documentary review, not an eligibility calculator, submitted application, award record, or provider endorsement.
 
 ## How to read this ledger
 
@@ -17,7 +17,7 @@ The gates below are intentionally independent:
 3. **Application status** — preparation state only. No application is submitted by this repository change.
 4. **Provider confirmation** — an explicit provider decision or entitlement. None is recorded here unless linked to a real provider confirmation.
 
-The current repository evidence baseline is `a21cb6ab2bedd6dd3d8968f9f11ab95d6179d177` (`master`, 2026-09-18). The supplied matrix was reviewed on 2026-09-16 against a separate packet snapshot; it is not a claim that every program condition or project metric remains current. Project evidence should be refreshed when the repository or provider terms change. Unknown, unverified, and not-applicable states are preserved deliberately.
+The current repository evidence baseline is `1bbcc50600b4e15fbe295717f19e5d67838b6017` (`master`, 2026-09-18). The supplied matrix was reviewed on 2026-09-16 against a separate packet snapshot; it is not a claim that every program condition or project metric remains current. Project evidence should be refreshed when the repository or provider terms change. Unknown, unverified, and not-applicable states are preserved deliberately.
 
 ### Status vocabulary
 

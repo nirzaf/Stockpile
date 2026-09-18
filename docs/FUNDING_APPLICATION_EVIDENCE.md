@@ -6,7 +6,7 @@ description: Dated public evidence, unknowns, and owner verification for a fundi
 
 # Funding application evidence index
 
-**Evidence date:** 2026-09-18 (UTC). **Repository head:** `a21cb6ab2bedd6dd3d8968f9f11ab95d6179d177` on `master`.
+**Evidence date:** 2026-09-18 (UTC). **Repository head:** `1bbcc50600b4e15fbe295717f19e5d67838b6017` on `master`.
 
 This index supports the unsubmitted [Codex for Open Source application draft](FUNDING_APPLICATION_DRAFT.md). It distinguishes public repository evidence from private applicant eligibility, provider decisions, API billing, and real-world adoption. No application, account change, API call, provider contact, or external commitment was made for this draft.
 
@@ -20,7 +20,7 @@ The separate [Codex Open Source Fund form](https://openai.com/form/codex-open-so
 
 ## Public repository snapshot
 
-Values below came from public GitHub metadata on 2026-09-18 after `master` advanced to `a21cb6ab2bedd6dd3d8968f9f11ab95d6179d177`.
+The [machine-readable repository snapshot](FUNDING_APPLICATION_REPO_SNAPSHOT.json) preserves the point-in-time counts and their source definitions. It was captured from public GitHub between 2026-09-18 05:28:28 and 05:28:33 UTC while `master` was at `1bbcc50600b4e15fbe295717f19e5d67838b6017`.
 
 | Evidence | Observed | Qualification |
 | --- | --- | --- |
@@ -32,9 +32,9 @@ Values below came from public GitHub metadata on 2026-09-18 after `master` advan
 | Production users, downloads, deployments | Not recorded / not verified | Do not imply customers, active users, production operation, or broad adoption. |
 | API-credit spend or attributable API cost | Not recorded | Do not estimate from ChatGPT subscription activity, native Codex reviews, or repository checks. |
 
-The repository's [README at the evidence snapshot](https://github.com/nirzaf/merconiq/blob/a21cb6ab2bedd6dd3d8968f9f11ab95d6179d177/README.md) describes an open-source business-management platform evolving from inventory and procurement toward a modular ERP. The documented implementation includes the inventory/procurement foundation, company-scoped authorization, PostgreSQL-backed tests, and a staged ERP roadmap; this is not evidence that the complete ERPNext feature set is implemented. `ARCHITECTURE.md`, `ORGANIZATION_OWNERSHIP.md`, `INVENTORY_VALUATION.md`, and `USER_GUIDE.md` provide the corresponding source-level/product evidence.
+The repository's [README at the evidence snapshot](https://github.com/nirzaf/merconiq/blob/1bbcc50600b4e15fbe295717f19e5d67838b6017/README.md) describes an open-source business-management platform evolving from inventory and procurement toward a modular ERP. The documented implementation includes the inventory/procurement foundation, company-scoped authorization, PostgreSQL-backed tests, and a staged ERP roadmap; this is not evidence that the complete ERPNext feature set is implemented. `ARCHITECTURE.md`, `ORGANIZATION_OWNERSHIP.md`, `INVENTORY_VALUATION.md`, and `USER_GUIDE.md` provide the corresponding source-level/product evidence.
 
-Recent merged PRs [#476](https://github.com/nirzaf/merconiq/pull/476), [#477](https://github.com/nirzaf/merconiq/pull/477), [#478](https://github.com/nirzaf/merconiq/pull/478), and [#479](https://github.com/nirzaf/merconiq/pull/479) are examples of recent public maintenance and review activity. They are not external-contributor counts, adoption measures, user outcomes, or API-credit invoices. In particular, native Codex review integration is not API-credit expenditure.
+Recent merged PRs [#476](https://github.com/nirzaf/merconiq/pull/476), [#477](https://github.com/nirzaf/merconiq/pull/477), [#478](https://github.com/nirzaf/merconiq/pull/478), [#479](https://github.com/nirzaf/merconiq/pull/479), and [#481](https://github.com/nirzaf/merconiq/pull/481) are examples of recent public maintenance and review activity. They are not external-contributor counts, adoption measures, user outcomes, or API-credit invoices. In particular, native Codex review integration is not API-credit expenditure.
 
 The GitHub repository creation timestamp predates the Merconiq rebrand and is not used as Merconiq product tenure. [`PROVENANCE.md`](PROVENANCE.md) excludes simulated history from longevity, activity, usage, and impact claims; no generated history was used for this draft.
 
@@ -78,5 +78,6 @@ Reusable tests and documentation produced during any supported work should remai
 - [Public repository metadata API](https://api.github.com/repos/nirzaf/merconiq).
 - [Public open-issue filter (excludes pull requests)](https://github.com/nirzaf/merconiq/issues?q=is%3Aissue%20is%3Aopen).
 - [Public releases API](https://api.github.com/repos/nirzaf/merconiq/releases).
+- [Committed point-in-time repository snapshot](FUNDING_APPLICATION_REPO_SNAPSHOT.json), captured 2026-09-18 05:28:28–05:28:33 UTC.
 - Program form and terms: links above; both reviewed 2026-09-18.
 - Repository evidence policy: [`GITHUB_EVIDENCE.md`](GITHUB_EVIDENCE.md), [`CODEX_MAINTENANCE_EVIDENCE.md`](CODEX_MAINTENANCE_EVIDENCE.md), and [`PROVENANCE.md`](PROVENANCE.md).

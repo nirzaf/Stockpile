@@ -6,7 +6,7 @@ description: Public-safe preparation notes for an unsubmitted maintainer applica
 
 # Codex for Open Source application draft
 
-**Status:** Draft only; not submitted. **Last checked:** 2026-09-18. **Repository snapshot:** `a21cb6ab2bedd6dd3d8968f9f11ab95d6179d177`.
+**Status:** Draft only; not submitted. **Last checked:** 2026-09-18. **Repository snapshot:** `1bbcc50600b4e15fbe295717f19e5d67838b6017`.
 
 This is a public-safe writing aid for the current [Codex for Open Source form](https://openai.com/form/codex-for-oss/), not an application or eligibility determination. The owner/applicant must review the current [program terms](https://developers.openai.com/codex/codex-for-oss-terms), confirm every personal or account-specific answer privately, and separately authorize any submission. Do not add a name, email, account identifier, OpenAI Organization ID, payment information, confidential material, or customer data to this repository.
 
