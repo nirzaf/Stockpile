@@ -1111,6 +1111,11 @@ public class InventoryDbContext : IdentityDbContext<ApplicationUser>
             entity.Property(document => document.DocumentType).HasMaxLength(64).IsRequired();
             entity.Property(document => document.HumanNumber).HasMaxLength(50).IsRequired();
             entity.Property(document => document.Status).HasConversion<string>().HasMaxLength(32).IsRequired();
+            entity.Property(document => document.Version)
+                .HasColumnName("xmin")
+                .HasColumnType("xid")
+                .ValueGeneratedOnAddOrUpdate()
+                .IsConcurrencyToken();
             entity.Property(document => document.RequestScope).HasMaxLength(256).IsRequired();
             entity.Property(document => document.RequestKey).HasMaxLength(200);
             entity.Property(document => document.RequestHash).HasMaxLength(64);

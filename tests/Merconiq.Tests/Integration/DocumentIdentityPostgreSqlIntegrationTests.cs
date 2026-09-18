@@ -173,6 +173,61 @@ public sealed class DocumentIdentityPostgreSqlIntegrationTests(PostgreSqlIntegra
     }
 
     [PostgreSqlFact]
+    public async Task Concurrent_lifecycle_transitions_reject_the_stale_writer_and_retain_number()
+    {
+        fixture.EnsureEnabled();
+        var tenantId = $"document-identity-lifecycle-race-{Guid.NewGuid():N}";
+        int companyId;
+        var documentId = DocumentIdentityId.New();
+
+        await using (var setup = fixture.CreateContext(tenantId))
+        {
+            var company = new Company { Code = $"DL-{Guid.NewGuid():N}"[..15], LegalName = "Lifecycle test company" };
+            setup.Companies.Add(company);
+            await setup.SaveChangesAsync();
+            companyId = company.Id;
+            var document = DocumentIdentity.Create(
+                documentId,
+                tenantId,
+                companyId,
+                "TransferOrder",
+                "TR-2026-000001",
+                2026,
+                DocumentLifecycleStatus.Active,
+                "TransferOrder.Create",
+                requestKey: Guid.NewGuid().ToString("N"),
+                requestHash: Hash("transfer order"));
+            setup.DocumentIdentities.Add(document);
+            await setup.SaveChangesAsync();
+        }
+
+        await using var cancelContext = fixture.CreateContext(tenantId);
+        await using var voidContext = fixture.CreateContext(tenantId);
+        var cancelUnitOfWork = new UnitOfWork(cancelContext);
+        var voidUnitOfWork = new UnitOfWork(voidContext);
+        var cancelService = new DocumentIdentityService(
+            cancelContext,
+            cancelUnitOfWork,
+            new DocumentNumberService(cancelContext, cancelUnitOfWork));
+        var voidService = new DocumentIdentityService(
+            voidContext,
+            voidUnitOfWork,
+            new DocumentNumberService(voidContext, voidUnitOfWork));
+
+        await cancelService.TransitionLifecycleAsync(documentId, DocumentLifecycleStatus.Cancelled);
+        await voidService.TransitionLifecycleAsync(documentId, DocumentLifecycleStatus.Voided);
+
+        await cancelContext.SaveChangesAsync();
+        var staleWriter = () => voidContext.SaveChangesAsync();
+        await staleWriter.Should().ThrowAsync<DbUpdateConcurrencyException>();
+
+        await using var verify = fixture.CreateContext(tenantId);
+        var persisted = await verify.DocumentIdentities.SingleAsync(identity => identity.Id == documentId);
+        persisted.Status.Should().Be(DocumentLifecycleStatus.Cancelled);
+        persisted.HumanNumber.Should().Be("TR-2026-000001");
+    }
+
+    [PostgreSqlFact]
     public async Task Purchase_order_retry_returns_the_original_identity_and_preserves_its_number()
     {
         fixture.EnsureEnabled();

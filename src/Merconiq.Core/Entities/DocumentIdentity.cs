@@ -17,6 +17,8 @@ public sealed class DocumentIdentity : AuditableEntity
     public string HumanNumber { get; private set; } = string.Empty;
     public int Period { get; private set; }
     public DocumentLifecycleStatus Status { get; private set; }
+    /// <summary>PostgreSQL row version used to reject concurrent lifecycle transitions.</summary>
+    public uint Version { get; private set; }
     public string RequestScope { get; private set; } = string.Empty;
     public string? RequestKey { get; private set; }
     public string? RequestHash { get; private set; }
