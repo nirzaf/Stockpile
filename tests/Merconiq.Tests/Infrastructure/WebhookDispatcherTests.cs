@@ -52,6 +52,37 @@ public class WebhookDispatcherTests
     }
 
     [Fact]
+    public async Task EnqueueAsync_observes_request_cancellation_before_subscription_lookup()
+    {
+        const string tenantId = "tenant-cancelled-webhook";
+        var databaseName = Guid.NewGuid().ToString("N");
+        await using var context = CreateContext(databaseName, tenantId);
+        context.WebhookSubscriptions.Add(NewSubscription(tenantId, "https://hooks.example.test/cancelled"));
+        await context.SaveChangesAsync();
+
+        using var serviceProvider = new ServiceCollection().BuildServiceProvider();
+        var dispatcher = new WebhookDispatcher(
+            serviceProvider,
+            Mock.Of<IHttpClientFactory>(),
+            NullLogger<WebhookDispatcher>.Instance,
+            context);
+        var webhookEvent = new WebhookEvent<string>(
+            Guid.NewGuid(),
+            tenantId,
+            "Stock.Received",
+            DateTimeOffset.UtcNow,
+            "payload");
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+        Func<Task> enqueue = () => dispatcher.EnqueueAsync(webhookEvent, cancellation.Token);
+
+        await enqueue.Should().ThrowAsync<OperationCanceledException>();
+
+        context.ChangeTracker.Entries<WebhookDelivery>().Should().BeEmpty();
+        (await context.WebhookDeliveries.CountAsync()).Should().Be(0);
+    }
+
+    [Fact]
     public async Task EnqueueAsync_rejects_an_oversized_envelope_before_adding_any_delivery_rows()
     {
         const string tenantId = "tenant-payload-limit";

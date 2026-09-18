@@ -164,7 +164,8 @@ public sealed class TransferOrderService(
             await orderRepository.AddAsync(result);
             await webhookDispatcher.EnqueueAsync(WebhookEventFactory.Create(tenantContext,
                 "TransferOrder.Created",
-                new { result.CompanyId, result.FromLocationId, result.ToLocationId, result.DocumentId }));
+                new { result.CompanyId, result.FromLocationId, result.ToLocationId, result.DocumentId }),
+                cancellationToken);
         }, cancellationToken);
 
         logger.LogInformation("Created transfer order {TransferOrderId}", result!.Id);
@@ -304,7 +305,8 @@ public sealed class TransferOrderService(
             await orderRepository.UpdateAsync(order);
             await webhookDispatcher.EnqueueAsync(WebhookEventFactory.Create(tenantContext,
                 "TransferOrder.Amended",
-                new { TransferOrderId = order.Id, order.DocumentId, order.Status }));
+                new { TransferOrderId = order.Id, order.DocumentId, order.Status }),
+                cancellationToken);
             await unitOfWork.SaveChangesAsync(cancellationToken);
         }, cancellationToken, () => VerifyAmendmentAsync(id, request, lines, originalLineIds));
     }
@@ -363,7 +365,8 @@ public sealed class TransferOrderService(
             await orderRepository.UpdateAsync(order);
             await webhookDispatcher.EnqueueAsync(WebhookEventFactory.Create(tenantContext,
                 "TransferOrder.Approved",
-                new { TransferOrderId = order.Id, order.DocumentId, order.FromLocationId, order.ToLocationId }));
+                new { TransferOrderId = order.Id, order.DocumentId, order.FromLocationId, order.ToLocationId }),
+                cancellationToken);
             await unitOfWork.SaveChangesAsync(cancellationToken);
         }, cancellationToken, () => VerifyStatusAsync(id, TransferOrderStatus.Approved));
     }
@@ -413,7 +416,8 @@ public sealed class TransferOrderService(
             await orderRepository.UpdateAsync(currentOrder);
             await webhookDispatcher.EnqueueAsync(WebhookEventFactory.Create(tenantContext,
                 "TransferOrder.Cancelled",
-                new { TransferOrderId = currentOrder.Id, currentOrder.DocumentId }));
+                new { TransferOrderId = currentOrder.Id, currentOrder.DocumentId }),
+                cancellationToken);
             await unitOfWork.SaveChangesAsync(cancellationToken);
         }, cancellationToken, () => VerifyStatusAsync(id, TransferOrderStatus.Cancelled));
     }
@@ -449,7 +453,7 @@ public sealed class TransferOrderService(
                 if (!string.Equals(previous.RequestHash, requestHash, StringComparison.Ordinal))
                     throw new InvalidOperationException("The dispatch idempotency key was already used with a different request.");
                 if (mutationScope.CompanyId != previous.CompanyId ||
-                    mutationScope.Reauthorize is not null && !await mutationScope.Reauthorize())
+                    mutationScope.Reauthorize is not null && !await mutationScope.Reauthorize(cancellationToken))
                     throw new UnauthorizedAccessException("Company posting access is required to replay this dispatch.");
                 result = ToDispatchView(previous);
                 return;
@@ -470,7 +474,7 @@ public sealed class TransferOrderService(
                 throw new InvalidOperationException("Only an open transfer order can be dispatched.");
             if (mutationScope.CompanyId != order.CompanyId)
                 throw new UnauthorizedAccessException("The dispatch scope does not match the transfer-order company.");
-            if (mutationScope.Reauthorize is not null && !await mutationScope.Reauthorize())
+            if (mutationScope.Reauthorize is not null && !await mutationScope.Reauthorize(cancellationToken))
                 throw new UnauthorizedAccessException("Company posting access changed before dispatch.");
             if (checked(line.DispatchedQuantity + quantity) > line.Quantity)
                 throw new StockAvailabilityConflictException("Dispatch exceeds the transfer-order line quantity.");
@@ -537,7 +541,7 @@ public sealed class TransferOrderService(
                     order.FromLocationId,
                     order.ToLocationId,
                     Quantity = quantity
-                }));
+                }), cancellationToken);
             await unitOfWork.SaveChangesAsync(cancellationToken);
             result = ToDispatchView(entry);
         }, cancellationToken, async () =>
@@ -614,7 +618,7 @@ public sealed class TransferOrderService(
                 if (!string.Equals(previous.RequestHash, requestHash, StringComparison.Ordinal))
                     throw new InvalidOperationException("The transit idempotency key was already used with a different request.");
                 if (mutationScope.CompanyId != previous.CompanyId ||
-                    mutationScope.Reauthorize is not null && !await mutationScope.Reauthorize())
+                    mutationScope.Reauthorize is not null && !await mutationScope.Reauthorize(cancellationToken))
                     throw new UnauthorizedAccessException("Company posting access is required to replay this settlement.");
                 result = ToSettlementView(previous);
                 return;
@@ -627,7 +631,7 @@ public sealed class TransferOrderService(
                 throw new KeyNotFoundException("Transfer transit entry not found.");
             if (mutationScope.CompanyId != entry.CompanyId)
                 throw new UnauthorizedAccessException("The settlement scope does not match the transfer company.");
-            if (mutationScope.Reauthorize is not null && !await mutationScope.Reauthorize())
+            if (mutationScope.Reauthorize is not null && !await mutationScope.Reauthorize(cancellationToken))
                 throw new UnauthorizedAccessException("Company posting access changed before settlement.");
 
             var order = (await orderRepository.FindAsync(candidate => candidate.Id == id, cancellationToken))
@@ -739,7 +743,7 @@ public sealed class TransferOrderService(
                     settlement.Quantity,
                     settlement.TotalValue,
                     settlement.Reason
-                }));
+                }), cancellationToken);
             await unitOfWork.SaveChangesAsync(cancellationToken);
             result = ToSettlementView(settlement);
         }, cancellationToken, async () =>

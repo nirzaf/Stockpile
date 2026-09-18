@@ -883,7 +883,9 @@ public sealed class TransferOrderPostgreSqlIntegrationTests(PostgreSqlIntegratio
 
     private sealed class ThrowingWebhookDispatcher : IWebhookDispatcher
     {
-        public Task EnqueueAsync<T>(WebhookEvent<T> webhookEvent) =>
+        public Task EnqueueAsync<T>(
+            WebhookEvent<T> webhookEvent,
+            CancellationToken cancellationToken = default) =>
             throw new InvalidOperationException("Webhook enqueue failed.");
 
         public Task DispatchAsync<T>(WebhookEvent<T> webhookEvent) => Task.CompletedTask;

@@ -229,7 +229,7 @@ public class StockService : IStockService
                     await action();
                     cancellationToken.ThrowIfCancellationRequested();
                     if (item is not null && checkLowStock)
-                        await CheckLowStockAsync(item);
+                        await CheckLowStockAsync(item, cancellationToken);
                 }, cancellationToken, verifySucceeded);
                 break;
             }
@@ -259,7 +259,7 @@ public class StockService : IStockService
 
                 // 100 ms backoff: sub-second margin so we don't pile on the database
                 // while still being fast enough for interactive UIs.
-                await Task.Delay(100);
+                await Task.Delay(100, cancellationToken);
             }
             catch
             {
@@ -281,7 +281,8 @@ public class StockService : IStockService
         string? batchNumber = null,
         DateTime? expiryDate = null,
         decimal? unitCost = null,
-        StockMutationScope? mutationScope = null)
+        StockMutationScope? mutationScope = null,
+        CancellationToken cancellationToken = default)
     {
         if (quantity <= 0) throw new ArgumentException("Quantity must be positive");
         if (unitCost is < 0) throw new ArgumentException("Unit cost must be non-negative");
@@ -292,10 +293,11 @@ public class StockService : IStockService
         StockTransaction? transaction = null;
         await ExecuteWithRetryAsync(itemId, async () =>
         {
-            await _unitOfWork.AcquireLocationLocksAsync([locationId]);
-            var location = await EnsureLocationUsableAsync(locationId);
-            await EnsureAuthorizedCompanyScopeAsync(location, mutationScope);
-            var existing = await GetByItemAndLocationAsync(itemId, locationId, batchNumber, expiryDate);
+            await _unitOfWork.AcquireLocationLocksAsync([locationId], cancellationToken);
+            var location = await EnsureLocationUsableAsync(locationId, cancellationToken);
+            await EnsureAuthorizedCompanyScopeAsync(location, mutationScope, cancellationToken);
+            var existing = await GetByItemAndLocationAsync(
+                itemId, locationId, batchNumber, expiryDate, cancellationToken);
             if (existing != null)
             {
                 existing.Quantity += quantity;
@@ -329,13 +331,17 @@ public class StockService : IStockService
 
             if (unitCost is decimal incomingCost)
             {
-                await ApplyReceiptValuationAsync(itemId, locationId, quantity, incomingCost, transaction);
+                await ApplyReceiptValuationAsync(
+                    itemId, locationId, quantity, incomingCost, transaction,
+                    cancellationToken: cancellationToken);
             }
 
+            cancellationToken.ThrowIfCancellationRequested();
             await _webhookDispatcher.EnqueueAsync(WebhookEventFactory.Create(_tenantContext, "Stock.Received",
-                new { ItemId = itemId, LocationId = locationId, Quantity = quantity, Notes = notes, BatchNumber = batchNumber, ExpiryDate = expiryDate }));
-            await _unitOfWork.SaveChangesAsync();
-        }, () => VerifyTransactionCommitAsync(transaction));
+                new { ItemId = itemId, LocationId = locationId, Quantity = quantity, Notes = notes, BatchNumber = batchNumber, ExpiryDate = expiryDate }),
+                cancellationToken);
+            await _unitOfWork.SaveChangesAsync(cancellationToken);
+        }, () => VerifyTransactionCommitAsync(transaction), cancellationToken: cancellationToken);
 
         _logger.LogInformation("Received {Qty} of item {ItemId} at location {LocId}", quantity, itemId, locationId);
     }
@@ -484,7 +490,7 @@ public class StockService : IStockService
         {
             await _unitOfWork.AcquireLocationLocksAsync([locationId], cancellationToken);
             var location = await EnsureLocationUsableAsync(locationId, cancellationToken);
-            await EnsureAuthorizedCompanyScopeAsync(location, mutationScope);
+            await EnsureAuthorizedCompanyScopeAsync(location, mutationScope, cancellationToken);
             var initiallySelectedStock = await GetStockForRequestedLotAsync(
                 itemId, locationId, batchNumber, expiryDate);
             if (initiallySelectedStock is null)
@@ -608,7 +614,7 @@ public class StockService : IStockService
                         ExpiryExceptionReason = normalizedExpiryExceptionReason,
                         ReservationSourceLineReference = reservationSourceLineReference?.Trim(),
                         MovementSourceLineReference = transaction.SourceLineReference
-                    }));
+                    }), cancellationToken);
             }
             await _unitOfWork.SaveChangesAsync(cancellationToken);
             if (valuationPosting is not null)
@@ -658,8 +664,8 @@ public class StockService : IStockService
         var source = await EnsureLocationUsableAsync(initialReservation.LocationId, cancellationToken);
         var destination = await EnsureLocationUsableAsync(destinationLocationId, cancellationToken);
         await EnsureSameCompanyTransferAsync(source, destination);
-        await EnsureAuthorizedCompanyScopeAsync(source, mutationScope);
-        await EnsureAuthorizedCompanyScopeAsync(destination, mutationScope);
+        await EnsureAuthorizedCompanyScopeAsync(source, mutationScope, cancellationToken);
+        await EnsureAuthorizedCompanyScopeAsync(destination, mutationScope, cancellationToken);
 
         var reservation = await FindReservationAsync(normalizedSourceLine)
             ?? throw new KeyNotFoundException("Transfer reservation not found.");
@@ -746,8 +752,8 @@ public class StockService : IStockService
             var source = await EnsureLocationUsableAsync(request.FromLocationId, cancellationToken);
             var destination = await EnsureLocationUsableAsync(request.ToLocationId, cancellationToken);
             await EnsureSameCompanyTransferAsync(source, destination);
-            await EnsureAuthorizedCompanyScopeAsync(source, request.MutationScope);
-            await EnsureAuthorizedCompanyScopeAsync(destination, request.MutationScope);
+            await EnsureAuthorizedCompanyScopeAsync(source, request.MutationScope, cancellationToken);
+            await EnsureAuthorizedCompanyScopeAsync(destination, request.MutationScope, cancellationToken);
             if (IsExpiredStockLot(expiryDate))
                 await EnsureExpiredLotExceptionAsync(
                     expiryDate, request.MutationScope is { ReauthorizeExpiredStockOverride: not null }
@@ -821,7 +827,7 @@ public class StockService : IStockService
                     SourceLineReference = sourceLineReference,
                     QuarantineReason = quarantineReason,
                     Notes = notes
-                }));
+                }), cancellationToken);
             await _unitOfWork.SaveChangesAsync(cancellationToken);
             movement = new TransferStockDispatchMovement(
                 transaction.Id,
@@ -1009,7 +1015,7 @@ public class StockService : IStockService
             cancellationToken.ThrowIfCancellationRequested();
             await _unitOfWork.AcquireLocationLocksAsync([request.LocationId], cancellationToken);
             var location = await EnsureLocationUsableAsync(request.LocationId, cancellationToken);
-            await EnsureAuthorizedCompanyScopeAsync(location, mutationScope);
+            await EnsureAuthorizedCompanyScopeAsync(location, mutationScope, cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
 
             if (transactionType == TransactionType.QuarantineRelease &&
@@ -1100,7 +1106,8 @@ public class StockService : IStockService
                     sourceLineReference,
                     stock.BatchNumber,
                     stock.ExpiryDate,
-                    reason)));
+                    reason)),
+                cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
             await _unitOfWork.SaveChangesAsync(cancellationToken);
         },
@@ -1909,10 +1916,11 @@ public class StockService : IStockService
         decimal unitCost,
         StockTransaction source,
         StockValuationEntryType entryType = StockValuationEntryType.Receipt,
-        decimal? totalValueOverride = null)
+        decimal? totalValueOverride = null,
+        CancellationToken cancellationToken = default)
     {
         var existing = (await _valuationBucketRepo!.FindAsync(bucket =>
-            bucket.ItemId == itemId && bucket.LocationId == locationId)).FirstOrDefault();
+            bucket.ItemId == itemId && bucket.LocationId == locationId, cancellationToken)).FirstOrDefault();
         var totalValue = totalValueOverride.HasValue
             ? Round(totalValueOverride.Value)
             : Round(quantity * unitCost);
@@ -1929,7 +1937,7 @@ public class StockService : IStockService
         }
         else
         {
-            var bucket = await _valuationBucketRepo.GetByIdAsync(existing.Id)
+            var bucket = await _valuationBucketRepo.GetByIdAsync(existing.Id, cancellationToken)
                 ?? throw new InvalidOperationException("Valuation bucket disappeared during posting.");
             bucket.Quantity = checked(bucket.Quantity + quantity);
             bucket.Value = Round(bucket.Value + totalValue);
@@ -2039,11 +2047,13 @@ public class StockService : IStockService
 
     private static decimal Round(decimal value) => decimal.Round(value, 6, MidpointRounding.AwayFromZero);
 
-    private async Task CheckLowStockAsync(Item item)
+    private async Task CheckLowStockAsync(Item item, CancellationToken cancellationToken = default)
     {
         try
         {
-            var stockInHands = await _stockRepo.FindAsync(s => s.ItemId == item.Id);
+            var stockInHands = cancellationToken.CanBeCanceled
+                ? await _stockRepo.FindAsync(s => s.ItemId == item.Id, cancellationToken)
+                : await _stockRepo.FindAsync(s => s.ItemId == item.Id);
             var totalStock = stockInHands.Sum(s => s.Quantity);
 
             if (totalStock <= item.ReorderLevel)
@@ -2057,11 +2067,15 @@ public class StockService : IStockService
                     ItemCode = item.ItemCode,
                     TotalStock = totalStock,
                     ReorderLevel = item.ReorderLevel
-                }));
+                }), cancellationToken);
                 // EnqueueAsync adds durable delivery rows to this scoped context. Persist
                 // them after the movement save so they survive request completion.
-                await _unitOfWork.SaveChangesAsync();
+                await _unitOfWork.SaveChangesAsync(cancellationToken);
             }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception ex)
         {
@@ -2122,7 +2136,8 @@ public class StockService : IStockService
 
     private static async Task EnsureAuthorizedCompanyScopeAsync(
         Location location,
-        StockMutationScope? mutationScope)
+        StockMutationScope? mutationScope,
+        CancellationToken cancellationToken = default)
     {
         if (mutationScope is not StockMutationScope expected)
             return;
@@ -2134,7 +2149,7 @@ public class StockService : IStockService
                 "Location ownership changed while stock access was being authorized. Refresh access and retry.");
         }
 
-        if (expected.Reauthorize is not null && !await expected.Reauthorize())
+        if (expected.Reauthorize is not null && !await expected.Reauthorize(cancellationToken))
         {
             throw new UnauthorizedAccessException(
                 "Company posting access changed before the stock mutation could be committed.");

@@ -22,7 +22,8 @@ public class ReceiveStockIdempotencyTests
         var mediator = new Mock<IMediator>();
         var authorization = new Mock<ICurrentUserAuthorization>();
         authorization.Setup(a => a.CanAccessLocationAsync(
-                It.IsAny<ClaimsPrincipal>(), It.IsAny<int>(), CompanyCapability.Post))
+                It.IsAny<ClaimsPrincipal>(), It.IsAny<int>(), CompanyCapability.Post,
+                It.IsAny<CancellationToken>()))
             .ReturnsAsync(true);
         authorization.Setup(a => a.GetLocationCompanyIdAsync(
                 It.IsAny<ClaimsPrincipal>(), It.IsAny<int>()))
@@ -50,11 +51,14 @@ public class ReceiveStockIdempotencyTests
     public async Task Receive_WithIdempotencyKey_ForwardsRequestCancellation()
     {
         var mediator = new Mock<IMediator>();
+        ReceiveStockCommand? sentCommand = null;
         mediator.Setup(m => m.Send(It.IsAny<ReceiveStockCommand>(), It.IsAny<CancellationToken>()))
+            .Callback<ReceiveStockCommand, CancellationToken>((command, _) => sentCommand = command)
             .Returns(Task.CompletedTask);
         var authorization = new Mock<ICurrentUserAuthorization>();
         authorization.Setup(a => a.CanAccessLocationAsync(
-                It.IsAny<ClaimsPrincipal>(), It.IsAny<int>(), CompanyCapability.Post))
+                It.IsAny<ClaimsPrincipal>(), It.IsAny<int>(), CompanyCapability.Post,
+                It.IsAny<CancellationToken>()))
             .ReturnsAsync(true);
         authorization.Setup(a => a.GetLocationCompanyIdAsync(
                 It.IsAny<ClaimsPrincipal>(), It.IsAny<int>()))
@@ -92,12 +96,21 @@ public class ReceiveStockIdempotencyTests
 
         result.Should().BeOfType<NoContentResult>();
         observedToken.Should().Be(cancellation.Token);
+        var mutationScope = sentCommand?.MutationScope
+            ?? throw new InvalidOperationException("Receive did not forward the authorization scope.");
+        mutationScope.Reauthorize.Should().NotBeNull();
         mediator.Verify(m => m.Send(
             It.Is<ReceiveStockCommand>(sent => sent.ItemId == command.ItemId &&
                 sent.LocationId == command.LocationId &&
                 sent.MutationScope.HasValue && sent.MutationScope.Value.CompanyId == 41 &&
                 sent.MutationScope.Value.Reauthorize != null),
             cancellation.Token), Times.Once);
+
+        using var reauthorization = new CancellationTokenSource();
+        await mutationScope.Reauthorize!(reauthorization.Token);
+        authorization.Verify(a => a.CanAccessLocationAsync(
+            It.IsAny<ClaimsPrincipal>(), command.LocationId, CompanyCapability.Post,
+            reauthorization.Token), Times.Once);
     }
 
     [Fact]

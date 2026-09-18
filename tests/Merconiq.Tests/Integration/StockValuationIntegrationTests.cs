@@ -613,7 +613,9 @@ public sealed class StockValuationPostgreSqlIntegrationTests
 
     private sealed class ThrowingWebhookDispatcher : IWebhookDispatcher
     {
-        public Task EnqueueAsync<T>(Merconiq.Core.Models.WebhookEvent<T> webhookEvent) =>
+        public Task EnqueueAsync<T>(
+            Merconiq.Core.Models.WebhookEvent<T> webhookEvent,
+            CancellationToken cancellationToken = default) =>
             Task.FromException(new InvalidOperationException("Webhook enqueue failed."));
 
         public Task DispatchAsync<T>(Merconiq.Core.Models.WebhookEvent<T> webhookEvent) => Task.CompletedTask;

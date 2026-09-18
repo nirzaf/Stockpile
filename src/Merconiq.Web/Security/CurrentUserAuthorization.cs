@@ -103,22 +103,24 @@ public sealed class CurrentUserAuthorization(
     public Task<bool> CanAccessLocationAsync(
         ClaimsPrincipal principal,
         int locationId,
-        CompanyCapability capability) =>
-        WithCurrentUserAsync(principal, false, async (db, user, roles) =>
+        CompanyCapability capability,
+        CancellationToken cancellationToken = default) =>
+        WithCurrentUserAsync(principal, false, async (db, user, roles, token) =>
         {
             var companyId = await db.Locations
                 .Where(location => location.Id == locationId)
                 .Select(location => (int?)location.Branch!.CompanyId)
-                .SingleOrDefaultAsync();
+                .SingleOrDefaultAsync(token);
             if (!companyId.HasValue)
             {
                 return roles.Contains("Admin", StringComparer.Ordinal) &&
                        capability != CompanyCapability.OverrideQuarantinedStock &&
-                       await db.Locations.AnyAsync(location => location.Id == locationId);
+                       await db.Locations.AnyAsync(location => location.Id == locationId, token);
             }
 
-            return await CanAccessCompanyAsync(db, user, roles, companyId.Value, capability);
-        });
+            return await CanAccessCompanyAsync(
+                db, user, roles, companyId.Value, capability, cancellationToken: token);
+        }, cancellationToken);
 
     public Task<bool> CanOverrideExpiredStockAtLocationAsync(
         ClaimsPrincipal principal,
@@ -159,17 +161,19 @@ public sealed class CurrentUserAuthorization(
         ClaimsPrincipal principal,
         int fromLocationId,
         int toLocationId,
-        CompanyCapability capability) =>
-        WithCurrentUserAsync(principal, false, async (db, user, roles) =>
+        CompanyCapability capability,
+        CancellationToken cancellationToken = default) =>
+        WithCurrentUserAsync(principal, false, async (db, user, roles, token) =>
         {
             var locationIds = new[] { fromLocationId, toLocationId }.Distinct().ToArray();
             var companyIds = await db.Locations
                 .Where(location => locationIds.Contains(location.Id) && location.BranchId.HasValue)
                 .Select(location => location.Branch!.CompanyId)
-                .ToListAsync();
+                .ToListAsync(token);
             return companyIds.Count == locationIds.Length && companyIds.Distinct().Count() == 1 &&
-                   await CanAccessCompanyAsync(db, user, roles, companyIds[0], capability);
-        });
+                   await CanAccessCompanyAsync(
+                       db, user, roles, companyIds[0], capability, cancellationToken: token);
+        }, cancellationToken);
 
     public Task<bool> CanAssignLocationBranchAsync(
         ClaimsPrincipal principal,
@@ -253,6 +257,65 @@ public sealed class CurrentUserAuthorization(
     private async Task<TResult> WithCurrentUserAsync<TResult>(
         ClaimsPrincipal principal,
         TResult unauthenticatedResult,
+        Func<InventoryDbContext, ApplicationUser, IReadOnlyCollection<string>, CancellationToken, Task<TResult>> authorize,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (principal.Identity?.IsAuthenticated != true || !tenantContext.IsResolved)
+        {
+            return unauthenticatedResult;
+        }
+
+        var expectedTenantId = tenantContext.TenantId;
+        var principalTenant = principal.FindFirstValue("tenant_id");
+        if (!string.Equals(principalTenant, expectedTenantId, StringComparison.Ordinal))
+        {
+            return unauthenticatedResult;
+        }
+
+        var claimsIdentity = identityOptions.Value.ClaimsIdentity;
+        var principalSecurityStamp = principal.FindFirstValue(claimsIdentity.SecurityStampClaimType);
+        var principalUserId = principal.FindFirstValue(claimsIdentity.UserIdClaimType);
+        if (string.IsNullOrWhiteSpace(principalSecurityStamp) || string.IsNullOrWhiteSpace(principalUserId))
+        {
+            return unauthenticatedResult;
+        }
+
+        await using var scope = scopeFactory.CreateAsyncScope();
+        var scopedTenantContext = scope.ServiceProvider.GetRequiredService<ITenantContext>();
+        if (!scopedTenantContext.IsResolved)
+        {
+            scopedTenantContext.SetTenant(expectedTenantId);
+        }
+        else if (!string.Equals(scopedTenantContext.TenantId, expectedTenantId, StringComparison.Ordinal))
+        {
+            return unauthenticatedResult;
+        }
+
+        cancellationToken.ThrowIfCancellationRequested();
+        var db = scope.ServiceProvider.GetRequiredService<InventoryDbContext>();
+        var user = await db.Users
+            .AsNoTracking()
+            .SingleOrDefaultAsync(candidate => candidate.Id == principalUserId, cancellationToken);
+        if (user is null || !string.Equals(user.TenantId, expectedTenantId, StringComparison.Ordinal) ||
+            !string.Equals(principalSecurityStamp, user.SecurityStamp, StringComparison.Ordinal))
+        {
+            return unauthenticatedResult;
+        }
+
+        var roles = await db.UserRoles
+            .Where(userRole => userRole.UserId == user.Id)
+            .Join(db.Roles, userRole => userRole.RoleId, role => role.Id, (_, role) => role.Name)
+            .Where(roleName => roleName != null)
+            .Select(roleName => roleName!)
+            .ToArrayAsync(cancellationToken);
+
+        return await authorize(db, user, roles, cancellationToken);
+    }
+
+    private async Task<TResult> WithCurrentUserAsync<TResult>(
+        ClaimsPrincipal principal,
+        TResult unauthenticatedResult,
         Func<InventoryDbContext, ApplicationUser, IReadOnlyCollection<string>, Task<TResult>> authorize)
     {
         if (principal.Identity?.IsAuthenticated != true || !tenantContext.IsResolved)
@@ -311,10 +374,11 @@ public sealed class CurrentUserAuthorization(
         IReadOnlyCollection<string> roles,
         int companyId,
         CompanyCapability capability,
-        bool requireExplicitGrant = false)
+        bool requireExplicitGrant = false,
+        CancellationToken cancellationToken = default)
     {
         if (companyId <= 0 || !IsCapabilityValid(capability) || !RoleCanPerform(roles, capability) ||
-            !await db.Companies.AnyAsync(company => company.Id == companyId))
+            !await db.Companies.AnyAsync(company => company.Id == companyId, cancellationToken))
         {
             return false;
         }
@@ -329,7 +393,8 @@ public sealed class CurrentUserAuthorization(
             grant.CompanyId == companyId &&
             grant.UserId == user.Id &&
             grant.IsActive &&
-            (grant.Capabilities & capability) == capability);
+            (grant.Capabilities & capability) == capability,
+            cancellationToken);
     }
 
     private static bool IsCapabilityValid(CompanyCapability capability) =>

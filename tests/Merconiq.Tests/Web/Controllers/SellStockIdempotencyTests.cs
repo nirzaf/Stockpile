@@ -61,7 +61,8 @@ public class SellStockIdempotencyTests
     {
         var authorization = new Mock<ICurrentUserAuthorization>();
         authorization.Setup(a => a.CanAccessLocationAsync(
-                It.IsAny<ClaimsPrincipal>(), It.IsAny<int>(), It.IsAny<CompanyCapability>()))
+                It.IsAny<ClaimsPrincipal>(), It.IsAny<int>(), It.IsAny<CompanyCapability>(),
+                It.IsAny<CancellationToken>()))
             .ReturnsAsync(true);
         return new StockController(mediator.Object, authorization.Object)
         {

@@ -1,7 +1,9 @@
+using System.Text.Json;
 using FluentAssertions;
 using Merconiq.Core.Entities;
 using Merconiq.Core.Features.Stock.Commands;
 using Merconiq.Core.Interfaces;
+using Merconiq.Core.Models;
 using Merconiq.Core.Services;
 using Merconiq.Infrastructure.Data;
 using Merconiq.Infrastructure.Repositories;
@@ -128,6 +130,105 @@ public sealed class AtomicPostingFailurePostgreSqlIntegrationTests(PostgreSqlInt
         completed.ResponseStatusCode.Should().Be(StatusCodes.Status204NoContent);
     }
 
+    [PostgreSqlFact]
+    public async Task PostgreSQL_receive_cancellation_after_stock_and_outbox_staging_rolls_back_and_retry_applies_once()
+    {
+        fixture.EnsureEnabled();
+        var tenantId = $"issue-273-cancel-{Guid.NewGuid():N}";
+        var operationKey = $"receive-{Guid.NewGuid():N}";
+        var notes = $"issue-273-cancel-{Guid.NewGuid():N}";
+        var scope = $"{tenantId}:POST:/api/v1/stock/receive";
+        var suffix = Guid.NewGuid().ToString("N");
+        const int quantity = 7;
+        int itemId;
+        int locationId;
+        int subscriptionId;
+
+        await using (var setup = fixture.CreateContext(tenantId))
+        {
+            var item = new Item
+            {
+                ItemCode = $"I273C-{suffix[..12]}",
+                Description = "Cancellation rollback regression item",
+                ReorderLevel = 0
+            };
+            var location = new Location { Name = $"I273C-{suffix[..12]}" };
+            var subscription = new WebhookSubscription
+            {
+                Url = "https://example.invalid/stock-received",
+                EventType = "Stock.Received"
+            };
+            setup.Items.Add(item);
+            setup.Locations.Add(location);
+            setup.WebhookSubscriptions.Add(subscription);
+            await setup.SaveChangesAsync();
+            itemId = item.Id;
+            locationId = location.Id;
+            subscriptionId = subscription.Id;
+        }
+
+        var command = new ReceiveStockCommand(itemId, locationId, quantity, notes);
+        var requestHash = IdempotencyRequestHasher.Compute(command);
+        using var cancellation = new CancellationTokenSource();
+
+        await using (var canceledContext = fixture.CreateContext(tenantId))
+        {
+            var dispatcher = new StagingWebhookDispatcher(canceledContext, subscriptionId, cancellation);
+            await FluentActions.Invoking(() => ExecuteReceiveAsync(
+                    canceledContext,
+                    tenantId,
+                    scope,
+                    operationKey,
+                    requestHash,
+                    command,
+                    dispatcher,
+                    cancellation.Token))
+                .Should()
+                .ThrowAsync<OperationCanceledException>();
+        }
+
+        await using (var afterCancellation = fixture.CreateContext(tenantId))
+        {
+            (await afterCancellation.StockInHand.CountAsync(stock =>
+                stock.ItemId == itemId && stock.LocationId == locationId)).Should().Be(0);
+            (await afterCancellation.StockTransactions.CountAsync(transaction => transaction.Notes == notes))
+                .Should().Be(0);
+            (await afterCancellation.WebhookDeliveries.CountAsync(delivery =>
+                delivery.EventType == "Stock.Received")).Should().Be(0);
+            (await afterCancellation.IdempotencyRecords.SingleAsync(record =>
+                record.Scope == scope && record.Key == operationKey))
+                .Status.Should().Be(IdempotencyRecordStatus.Failed);
+        }
+
+        await using (var retryContext = fixture.CreateContext(tenantId))
+        {
+            var dispatcher = new StagingWebhookDispatcher(retryContext, subscriptionId);
+            await ExecuteReceiveAsync(
+                retryContext,
+                tenantId,
+                scope,
+                operationKey,
+                requestHash,
+                command,
+                dispatcher);
+        }
+
+        await using var verify = fixture.CreateContext(tenantId);
+        (await verify.StockInHand.CountAsync(stock =>
+            stock.ItemId == itemId && stock.LocationId == locationId)).Should().Be(1);
+        (await verify.StockInHand.SingleAsync(stock =>
+            stock.ItemId == itemId && stock.LocationId == locationId)).Quantity.Should().Be(quantity);
+        (await verify.StockTransactions.CountAsync(transaction => transaction.Notes == notes)).Should().Be(1);
+        (await verify.WebhookDeliveries.CountAsync(delivery =>
+            delivery.EventType == "Stock.Received" && delivery.SubscriptionId == subscriptionId)).Should().Be(1);
+
+        var completed = await verify.IdempotencyRecords.SingleAsync(record =>
+            record.Scope == scope && record.Key == operationKey);
+        completed.Status.Should().Be(IdempotencyRecordStatus.Completed);
+        completed.AttemptCount.Should().Be(2);
+        completed.ResponseStatusCode.Should().Be(StatusCodes.Status204NoContent);
+    }
+
     private static async Task InstallCompletionFailureAsync(
         InventoryDbContext context,
         string functionName,
@@ -199,7 +300,9 @@ public sealed class AtomicPostingFailurePostgreSqlIntegrationTests(PostgreSqlInt
         string scope,
         string operationKey,
         string requestHash,
-        ReceiveStockCommand command)
+        ReceiveStockCommand command,
+        IWebhookDispatcher? webhookDispatcher = null,
+        CancellationToken cancellationToken = default)
     {
         var unitOfWork = new UnitOfWork(context);
         var tenantContext = new TestTenantContext(tenantId);
@@ -210,7 +313,7 @@ public sealed class AtomicPostingFailurePostgreSqlIntegrationTests(PostgreSqlInt
             new Repository<Location>(context),
             new Repository<Branch>(context),
             unitOfWork,
-            new Mock<IWebhookDispatcher>().Object,
+            webhookDispatcher ?? new Mock<IWebhookDispatcher>().Object,
             tenantContext,
             NullLogger<StockService>.Instance,
             new Repository<StockValuationBucket>(context),
@@ -224,6 +327,37 @@ public sealed class AtomicPostingFailurePostgreSqlIntegrationTests(PostgreSqlInt
             scope,
             operationKey,
             requestHash,
-            () => handler.Handle(command, CancellationToken.None));
+            () => handler.Handle(command, cancellationToken),
+            cancellationToken);
+    }
+
+    private sealed class StagingWebhookDispatcher(
+        InventoryDbContext context,
+        int subscriptionId,
+        CancellationTokenSource? cancelAfterEnqueue = null) : IWebhookDispatcher
+    {
+        public Task EnqueueAsync<T>(
+            WebhookEvent<T> webhookEvent,
+            CancellationToken cancellationToken = default)
+        {
+            if (cancelAfterEnqueue is not null && !cancellationToken.CanBeCanceled)
+                throw new InvalidOperationException("Stock receive did not forward its request cancellation token to the outbox.");
+
+            var now = DateTimeOffset.UtcNow;
+            context.WebhookDeliveries.Add(new WebhookDelivery
+            {
+                EventId = webhookEvent.EventId,
+                TenantId = webhookEvent.TenantId,
+                SubscriptionId = subscriptionId,
+                EventType = webhookEvent.EventType,
+                Payload = JsonSerializer.Serialize(webhookEvent),
+                NextAttemptAt = now,
+                CreatedAt = now
+            });
+            cancelAfterEnqueue?.Cancel();
+            return Task.CompletedTask;
+        }
+
+        public Task DispatchAsync<T>(WebhookEvent<T> webhookEvent) => Task.CompletedTask;
     }
 }
