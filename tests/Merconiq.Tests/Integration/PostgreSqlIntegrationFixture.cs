@@ -26,7 +26,15 @@ public sealed class PostgreSqlIntegrationFixture : IAsyncLifetime
         get
         {
             EnsureEnabled();
-            return _container!.GetConnectionString();
+            // Tests create distinct Npgsql pools when they vary ApplicationName or SearchPath.
+            // The pools share one disposable PostgreSQL server and otherwise retain idle
+            // connectors for Npgsql's five-minute default, eventually exhausting its
+            // default max_connections during the serial integration suite.
+            return new NpgsqlConnectionStringBuilder(_container!.GetConnectionString())
+            {
+                ConnectionIdleLifetime = 5,
+                ConnectionPruningInterval = 1
+            }.ConnectionString;
         }
     }
 
