@@ -166,6 +166,115 @@ public sealed class OpeningStockReplayPostgreSqlIntegrationTests
     }
 
     [PostgreSqlFact]
+    public async Task Opening_cutover_before_a_later_valued_receipt_is_rejected_without_changing_stock_or_value()
+    {
+        _fixture.EnsureEnabled();
+        var tenantId = $"opening-valued-cutover-{Guid.NewGuid():N}";
+        int itemId;
+        int locationId;
+        var cutoverAt = new DateTime(DateTime.UtcNow.AddDays(-2).Ticks / 10 * 10, DateTimeKind.Utc);
+
+        await using (var setup = _fixture.CreateContext(tenantId))
+        {
+            var item = new Item { ExternalId = "item-1", ItemCode = "OPEN-1", Description = "Opening item", IsActive = true };
+            var location = new Location { Name = "Opening location" };
+            setup.Items.Add(item);
+            setup.Locations.Add(location);
+            await setup.SaveChangesAsync();
+            itemId = item.Id;
+            locationId = location.Id;
+        }
+
+        await using (var receiptContext = _fixture.CreateContext(tenantId))
+        {
+            var unitOfWork = new UnitOfWork(receiptContext);
+            await CreateStockService(receiptContext, tenantId, unitOfWork)
+                .ReceiveStockAsync(itemId, locationId, 10, "later valued receipt", unitCost: 12.5m);
+        }
+
+        await using (var importContext = _fixture.CreateContext(tenantId))
+        {
+            await FluentActions.Invoking(() => CreateService(importContext, tenantId).ReplayAsync(new(
+                    $"external_reference,item_external_id,location_id,quantity,unit_cost\nopen-1,item-1,{locationId},10,12.5",
+                    "import-before-valued-receipt",
+                    "approval-before-valued-receipt",
+                    cutoverAt)))
+                .Should().ThrowAsync<InvalidOperationException>()
+                .WithMessage("*cannot precede or coincide with an existing stock movement*");
+        }
+
+        await using var verify = _fixture.CreateContext(tenantId);
+        var stock = await verify.StockInHand.SingleAsync(candidate => candidate.ItemId == itemId && candidate.LocationId == locationId);
+        stock.Quantity.Should().Be(10);
+        var bucket = await verify.StockValuationBuckets.SingleAsync(candidate => candidate.ItemId == itemId && candidate.LocationId == locationId);
+        bucket.Quantity.Should().Be(10);
+        bucket.Value.Should().Be(125m);
+        var transaction = await verify.StockTransactions.SingleAsync();
+        transaction.TransactionType.Should().Be(TransactionType.Receive);
+        transaction.TransactionDate.Should().BeAfter(cutoverAt);
+        var entry = await verify.StockValuationEntries.SingleAsync();
+        entry.StockTransactionId.Should().Be(transaction.Id);
+        entry.EntryType.Should().Be(StockValuationEntryType.Receipt);
+        entry.Quantity.Should().Be(10);
+        entry.TotalValue.Should().Be(125m);
+        (await verify.OpeningStockImports.CountAsync()).Should().Be(0);
+    }
+
+    [PostgreSqlFact]
+    public async Task Chronological_opening_baseline_then_valued_receipt_posts_normally()
+    {
+        _fixture.EnsureEnabled();
+        var tenantId = $"opening-valued-chronological-{Guid.NewGuid():N}";
+        int itemId;
+        int locationId;
+        var cutoverAt = new DateTime(DateTime.UtcNow.AddDays(-2).Ticks / 10 * 10, DateTimeKind.Utc);
+
+        await using (var setup = _fixture.CreateContext(tenantId))
+        {
+            var item = new Item { ExternalId = "item-1", ItemCode = "OPEN-1", Description = "Opening item", IsActive = true };
+            var location = new Location { Name = "Opening location" };
+            setup.Items.Add(item);
+            setup.Locations.Add(location);
+            await setup.SaveChangesAsync();
+            itemId = item.Id;
+            locationId = location.Id;
+        }
+
+        await using (var importContext = _fixture.CreateContext(tenantId))
+        {
+            var result = await CreateService(importContext, tenantId).ReplayAsync(new(
+                $"external_reference,item_external_id,location_id,quantity,unit_cost\nopen-1,item-1,{locationId},5,10",
+                "chronological-opening-import",
+                "chronological-opening-approval",
+                cutoverAt));
+            result.AppliedRows.Should().Be(1);
+        }
+
+        await using (var receiptContext = _fixture.CreateContext(tenantId))
+        {
+            var unitOfWork = new UnitOfWork(receiptContext);
+            await CreateStockService(receiptContext, tenantId, unitOfWork)
+                .ReceiveStockAsync(itemId, locationId, 5, "chronological valued receipt", unitCost: 14m);
+        }
+
+        await using var verify = _fixture.CreateContext(tenantId);
+        var stock = await verify.StockInHand.SingleAsync(candidate => candidate.ItemId == itemId && candidate.LocationId == locationId);
+        stock.Quantity.Should().Be(10);
+        var bucket = await verify.StockValuationBuckets.SingleAsync(candidate => candidate.ItemId == itemId && candidate.LocationId == locationId);
+        bucket.Quantity.Should().Be(10);
+        bucket.Value.Should().Be(120m);
+        var movements = await verify.StockTransactions.OrderBy(transaction => transaction.TransactionDate).ToListAsync();
+        movements.Should().HaveCount(2);
+        movements[0].TransactionType.Should().Be(TransactionType.Opening);
+        movements[0].TransactionDate.Should().Be(cutoverAt);
+        movements[1].TransactionType.Should().Be(TransactionType.Receive);
+        movements[1].TransactionDate.Should().BeAfter(movements[0].TransactionDate);
+        var entries = await verify.StockValuationEntries.OrderBy(entry => entry.Id).ToListAsync();
+        entries.Should().HaveCount(2);
+        entries.Select(entry => entry.TotalValue).Should().Equal(50m, 70m);
+    }
+
+    [PostgreSqlFact]
     public async Task Approved_baseline_can_be_reversed_once_with_forward_stock_effects()
     {
         _fixture.EnsureEnabled();
