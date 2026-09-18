@@ -804,6 +804,7 @@ public sealed class PurchaseOrderApprovalPostgreSqlIntegrationTests(PostgreSqlIn
             current.Should().NotBeNull();
             var line = current!.OrderDetails.Single();
             var priorCommercialVersion = current.CommercialVersion;
+            var amendedCommercialVersion = checked(priorCommercialVersion + 1);
             var priorApprovedSnapshot = current.ApprovedCommercialSnapshotJson;
 
             await service.AmendApprovedAsync(order.Id, new PurchaseOrderAmendment(
@@ -836,7 +837,8 @@ public sealed class PurchaseOrderApprovalPostgreSqlIntegrationTests(PostgreSqlIn
             var reapproved = await context.PurchaseOrders.SingleAsync(po => po.Id == order.Id);
             var reapprovedLine = await context.OrderDetails.SingleAsync(candidate => candidate.PurchaseOrderId == order.Id);
             reapproved.Status.Should().Be(PurchaseOrderStatus.Approved);
-            reapproved.ApprovedCommercialVersion.Should().Be(reapproved.CommercialVersion);
+            reapproved.CommercialVersion.Should().Be(amendedCommercialVersion);
+            reapproved.ApprovedCommercialVersion.Should().Be(amendedCommercialVersion);
             reapprovedLine.ItemId.Should().Be(itemId);
             reapprovedLine.Quantity.Should().Be(quantity);
             reapprovedLine.UnitPrice.Should().Be(unitPrice);
