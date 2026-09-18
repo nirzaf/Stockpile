@@ -101,6 +101,7 @@ Webhook administration is restricted to `Admin` and `Manager`.
 | GET | `/api/v1/stock/transactions` | Any API JWT | `200` |
 | GET | `/api/v1/stock/valuation` | Any API JWT | `200` |
 | GET | `/api/v1/transfer-orders/aging?pageSize=50` | Company `View` capability | `200` or `400` |
+| POST | `/api/v1/transfer-orders/{id}/lines/{lineId}/transit/{transitEntryId}/write-off` | Company `Approve` capability at both transfer locations | `200`, `400`, `403`, `404`, or `409` |
 | POST | `/api/v1/stock/receive` | `Admin`, `Manager`, or `Staff` | `204` with an idempotency key; otherwise `400` |
 | POST | `/api/v1/stock/transfer` | `Admin`, `Manager`, or `Staff` | `204` |
 | POST | `/api/v1/stock/sell` | `Admin`, `Manager`, or `Staff` | `204` |
@@ -577,18 +578,22 @@ Content-Type: application/json
 
 Use the same route with `/quarantine` (a non-blank `reason` is required) or
 `/return`. Receipt and quarantine increase destination on-hand quantity; only
-quarantined quantity is unavailable for further stock operations. Quarantine
-is a custody step, not an approved write-off or final disposition; quarantined
-goods remain valued stock until the separately approved M03 disposition
-workflow is used. Returns move the captured transit value back to the source.
+quarantined quantity is unavailable for further stock operations. Returns move
+the captured transit value back to the source. A separately authorized approver
+can use `/write-off` with `{"quantity":4,"reason":"Damaged beyond recovery"}`
+and a required `Idempotency-Key`; the settlement removes the selected quantity
+and its dispatch-captured carrying value from the transit subledger only. It
+does not create a stock transaction, change source/destination on-hand balances,
+or post a GL journal. Financial accounting remains in the later M06 scope.
 Partial settlement allocates the transit entry's captured total value, with the
 final settlement receiving any rounding remainder so the ledger conserves the
 dispatched value. Each settlement is append-only, lineage-linked, limited to
 the unsettled dispatched quantity, and idempotent. The order reports
 `PartiallyReceived` only after destination receipt; it becomes `Completed` when
 all ordered quantity has been dispatched and every dispatched unit has been
-received, quarantined, or returned. Lot/expiry inputs must match the dispatched
-entry.
+received, quarantined, returned, or written off. Lot/expiry inputs for receipt
+or quarantine must match the dispatched entry; write-offs do not accept
+destination lot details.
 
 ## Transfer aging and conservation
 
@@ -602,11 +607,15 @@ are included when their lines fall in the requested page.
 
 Each row reports ordered quantity, currently active/non-expired reservation
 quantity, immutable dispatch quantity/value, received, quarantined, returned,
-and outstanding transit quantity/value. Outstanding value is each dispatch's
-captured transit total less its persisted settlements. Quantity and value
-conservation variance are dispatch totals less received, quarantined, returned
-and outstanding amounts. Separate dispatch/settlement ledger variances compare
-each transit event with its linked stock transaction and valuation posting.
+written-off, and outstanding transit quantity/value. Written-off quantity/value
+is reported separately and remains part of transit quantity/value conservation;
+write-offs have no stock transaction or inventory valuation posting. Outstanding
+value is each dispatch's captured transit total less its persisted settlements.
+Quantity and value conservation variance are dispatch totals less received,
+quarantined, returned, written-off, and outstanding amounts. Separate
+dispatch/settlement ledger variances compare physical transit events with their
+linked stock transaction and valuation posting; a write-off is not treated as a
+missing physical posting.
 `dispatchLedgerQuantityVariance` and `settlementLedgerQuantityVariance` sum the
 absolute per-event difference between transit quantity and the linked stock
 transaction. `dispatchLedgerValueVariance` and

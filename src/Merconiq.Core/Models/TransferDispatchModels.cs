@@ -67,7 +67,7 @@ public sealed record TransferTransitSettlementView(
     int ItemId,
     int FromLocationId,
     int ToLocationId,
-    int StockTransactionId,
+    int? StockTransactionId,
     int Quantity,
     TransferTransitSettlementType SettlementType,
     string? BatchNumber,

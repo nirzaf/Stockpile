@@ -163,6 +163,7 @@ public sealed class TransferOrdersController(
             transitEntryId,
             request,
             TransferTransitSettlementType.Received,
+            CompanyCapability.Post,
             idempotencyKeyStore,
             cancellationToken);
 
@@ -183,6 +184,7 @@ public sealed class TransferOrdersController(
             transitEntryId,
             request,
             TransferTransitSettlementType.Quarantined,
+            CompanyCapability.Post,
             idempotencyKeyStore,
             cancellationToken);
 
@@ -203,6 +205,28 @@ public sealed class TransferOrdersController(
             transitEntryId,
             request,
             TransferTransitSettlementType.Returned,
+            CompanyCapability.Post,
+            idempotencyKeyStore,
+            cancellationToken);
+
+    [HttpPost("{id:int}/lines/{lineId:int}/transit/{transitEntryId:int}/write-off")]
+    [Authorize(Policy = CapabilityPolicies.Approve)]
+    [ValidateAntiForgeryToken]
+    [IgnoreAntiforgeryToken]
+    public Task<IActionResult> WriteOffTransit(
+        int id,
+        int lineId,
+        int transitEntryId,
+        [FromBody] TransferTransitSettlementRequest request,
+        [FromServices] IIdempotencyKeyStore idempotencyKeyStore,
+        CancellationToken cancellationToken) =>
+        ResolveTransitAsync(
+            id,
+            lineId,
+            transitEntryId,
+            request,
+            TransferTransitSettlementType.WrittenOff,
+            CompanyCapability.Approve,
             idempotencyKeyStore,
             cancellationToken);
 
@@ -242,6 +266,7 @@ public sealed class TransferOrdersController(
         int transitEntryId,
         TransferTransitSettlementRequest request,
         TransferTransitSettlementType settlementType,
+        CompanyCapability requiredCapability,
         IIdempotencyKeyStore idempotencyKeyStore,
         CancellationToken cancellationToken)
     {
@@ -257,7 +282,7 @@ public sealed class TransferOrdersController(
         if (order is null)
             return NotFound(ApiResponse<object>.CreateFailure("Transfer order not found."));
         if (!await authorization.CanAccessTransferAsync(
-                User, order.FromLocationId, order.ToLocationId, CompanyCapability.Post))
+                User, order.FromLocationId, order.ToLocationId, requiredCapability))
             return Forbid();
 
         var resolvedRequest = request with { SettlementType = settlementType };
@@ -268,7 +293,7 @@ public sealed class TransferOrdersController(
             return BadRequest(ApiResponse<object>.CreateFailure("Idempotency-Key must be 200 characters or fewer."));
 
         var scope = CreateMutationScope(
-            order.CompanyId, order.FromLocationId, order.ToLocationId, CompanyCapability.Post);
+            order.CompanyId, order.FromLocationId, order.ToLocationId, requiredCapability);
         TransferTransitSettlementView? result = null;
         await idempotencyKeyStore.ExecuteAsync(
             $"{tenantContext.TenantId}:{Request.Method}:{Request.Path}",
@@ -284,6 +309,21 @@ public sealed class TransferOrdersController(
                 scope,
                 cancellationToken),
             cancellationToken);
+
+        if (result is null)
+        {
+            // A completed durable API idempotency claim skips the callback, so recover the
+            // immutable domain settlement through its own key and capability check.
+            result = await transferOrders.ResolveTransitAsync(
+                id,
+                lineId,
+                transitEntryId,
+                resolvedRequest,
+                idempotencyKey,
+                settledBy.Trim(),
+                scope,
+                cancellationToken);
+        }
 
         return result is null
             ? StatusCode(StatusCodes.Status500InternalServerError,

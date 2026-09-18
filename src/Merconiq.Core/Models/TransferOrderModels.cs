@@ -38,11 +38,13 @@ public sealed record TransferTransitEntryView(
     int ReceivedQuantity,
     int QuarantinedQuantity,
     int ReturnedQuantity,
+    int WrittenOffQuantity,
     int RemainingQuantity,
     string? BatchNumber,
     DateTime? ExpiryDate,
     decimal UnitCost,
     decimal TotalValue,
+    decimal WrittenOffValue,
     decimal RemainingValue,
     string DispatchedBy,
     DateTimeOffset DispatchedAt);
