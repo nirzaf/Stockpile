@@ -135,7 +135,9 @@ public sealed class PurchaseOrderPostingBoundaryPostgreSqlTests(PostgreSqlIntegr
 
     private sealed class NoOpWebhookDispatcher : IWebhookDispatcher
     {
-        public Task EnqueueAsync<T>(WebhookEvent<T> webhookEvent) => Task.CompletedTask;
+        public Task EnqueueAsync<T>(
+            WebhookEvent<T> webhookEvent,
+            CancellationToken cancellationToken = default) => Task.CompletedTask;
 
         public Task DispatchAsync<T>(WebhookEvent<T> webhookEvent) => Task.CompletedTask;
     }

@@ -29,8 +29,11 @@ public class WebhookDispatcher : IWebhookDispatcher
         _context = context;
     }
 
-    public async Task EnqueueAsync<T>(WebhookEvent<T> webhookEvent)
+    public async Task EnqueueAsync<T>(
+        WebhookEvent<T> webhookEvent,
+        CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         if (_context is null)
         {
             throw new InvalidOperationException("Webhook enqueueing requires a scoped database context.");
@@ -45,7 +48,7 @@ public class WebhookDispatcher : IWebhookDispatcher
             .AsNoTracking()
             .Where(subscription => subscription.IsActive &&
                 (subscription.EventType == webhookEvent.EventType || subscription.EventType == "*"))
-            .ToListAsync();
+            .ToListAsync(cancellationToken);
 
         if (subscriptions.Count == 0)
         {

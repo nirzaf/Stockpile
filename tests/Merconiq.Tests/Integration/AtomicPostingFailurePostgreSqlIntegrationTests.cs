@@ -336,8 +336,13 @@ public sealed class AtomicPostingFailurePostgreSqlIntegrationTests(PostgreSqlInt
         int subscriptionId,
         CancellationTokenSource? cancelAfterEnqueue = null) : IWebhookDispatcher
     {
-        public Task EnqueueAsync<T>(WebhookEvent<T> webhookEvent)
+        public Task EnqueueAsync<T>(
+            WebhookEvent<T> webhookEvent,
+            CancellationToken cancellationToken = default)
         {
+            if (cancelAfterEnqueue is not null && !cancellationToken.CanBeCanceled)
+                throw new InvalidOperationException("Stock receive did not forward its request cancellation token to the outbox.");
+
             var now = DateTimeOffset.UtcNow;
             context.WebhookDeliveries.Add(new WebhookDelivery
             {

@@ -274,8 +274,10 @@ public sealed class StockQuarantineServiceTests
 
         var webhookDispatcher = new Mock<IWebhookDispatcher>();
         webhookDispatcher.Setup(dispatcher => dispatcher.EnqueueAsync(
-                It.IsAny<WebhookEvent<StockQuarantineWebhookPayload>>()))
-            .Callback<WebhookEvent<StockQuarantineWebhookPayload>>(webhooks.Add)
+                It.IsAny<WebhookEvent<StockQuarantineWebhookPayload>>(),
+                It.IsAny<CancellationToken>()))
+            .Callback<WebhookEvent<StockQuarantineWebhookPayload>, CancellationToken>(
+                (webhookEvent, _) => webhooks.Add(webhookEvent))
             .Returns(Task.CompletedTask);
 
         var service = new StockService(

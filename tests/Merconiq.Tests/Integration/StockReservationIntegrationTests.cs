@@ -478,7 +478,9 @@ public sealed class StockReservationIntegrationTests
     {
         public List<(string EventType, object Payload)> Events { get; } = [];
 
-        public Task EnqueueAsync<T>(WebhookEvent<T> webhookEvent)
+        public Task EnqueueAsync<T>(
+            WebhookEvent<T> webhookEvent,
+            CancellationToken cancellationToken = default)
         {
             Events.Add((webhookEvent.EventType, webhookEvent.Payload!));
             return Task.CompletedTask;
@@ -1921,7 +1923,9 @@ public sealed class StockReservationPostgreSqlIntegrationTests(PostgreSqlIntegra
     {
         public List<(string EventType, object Payload)> Events { get; } = [];
 
-        public Task EnqueueAsync<T>(WebhookEvent<T> webhookEvent)
+        public Task EnqueueAsync<T>(
+            WebhookEvent<T> webhookEvent,
+            CancellationToken cancellationToken = default)
         {
             Events.Add((webhookEvent.EventType, webhookEvent.Payload!));
             return Task.CompletedTask;

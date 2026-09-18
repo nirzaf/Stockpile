@@ -164,7 +164,8 @@ public sealed class TransferOrderService(
             await orderRepository.AddAsync(result);
             await webhookDispatcher.EnqueueAsync(WebhookEventFactory.Create(tenantContext,
                 "TransferOrder.Created",
-                new { result.CompanyId, result.FromLocationId, result.ToLocationId, result.DocumentId }));
+                new { result.CompanyId, result.FromLocationId, result.ToLocationId, result.DocumentId }),
+                cancellationToken);
         }, cancellationToken);
 
         logger.LogInformation("Created transfer order {TransferOrderId}", result!.Id);
@@ -304,7 +305,8 @@ public sealed class TransferOrderService(
             await orderRepository.UpdateAsync(order);
             await webhookDispatcher.EnqueueAsync(WebhookEventFactory.Create(tenantContext,
                 "TransferOrder.Amended",
-                new { TransferOrderId = order.Id, order.DocumentId, order.Status }));
+                new { TransferOrderId = order.Id, order.DocumentId, order.Status }),
+                cancellationToken);
             await unitOfWork.SaveChangesAsync(cancellationToken);
         }, cancellationToken, () => VerifyAmendmentAsync(id, request, lines, originalLineIds));
     }
@@ -363,7 +365,8 @@ public sealed class TransferOrderService(
             await orderRepository.UpdateAsync(order);
             await webhookDispatcher.EnqueueAsync(WebhookEventFactory.Create(tenantContext,
                 "TransferOrder.Approved",
-                new { TransferOrderId = order.Id, order.DocumentId, order.FromLocationId, order.ToLocationId }));
+                new { TransferOrderId = order.Id, order.DocumentId, order.FromLocationId, order.ToLocationId }),
+                cancellationToken);
             await unitOfWork.SaveChangesAsync(cancellationToken);
         }, cancellationToken, () => VerifyStatusAsync(id, TransferOrderStatus.Approved));
     }
@@ -413,7 +416,8 @@ public sealed class TransferOrderService(
             await orderRepository.UpdateAsync(currentOrder);
             await webhookDispatcher.EnqueueAsync(WebhookEventFactory.Create(tenantContext,
                 "TransferOrder.Cancelled",
-                new { TransferOrderId = currentOrder.Id, currentOrder.DocumentId }));
+                new { TransferOrderId = currentOrder.Id, currentOrder.DocumentId }),
+                cancellationToken);
             await unitOfWork.SaveChangesAsync(cancellationToken);
         }, cancellationToken, () => VerifyStatusAsync(id, TransferOrderStatus.Cancelled));
     }
@@ -537,7 +541,7 @@ public sealed class TransferOrderService(
                     order.FromLocationId,
                     order.ToLocationId,
                     Quantity = quantity
-                }));
+                }), cancellationToken);
             await unitOfWork.SaveChangesAsync(cancellationToken);
             result = ToDispatchView(entry);
         }, cancellationToken, async () =>
@@ -739,7 +743,7 @@ public sealed class TransferOrderService(
                     settlement.Quantity,
                     settlement.TotalValue,
                     settlement.Reason
-                }));
+                }), cancellationToken);
             await unitOfWork.SaveChangesAsync(cancellationToken);
             result = ToSettlementView(settlement);
         }, cancellationToken, async () =>

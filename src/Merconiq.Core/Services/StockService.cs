@@ -338,7 +338,8 @@ public class StockService : IStockService
 
             cancellationToken.ThrowIfCancellationRequested();
             await _webhookDispatcher.EnqueueAsync(WebhookEventFactory.Create(_tenantContext, "Stock.Received",
-                new { ItemId = itemId, LocationId = locationId, Quantity = quantity, Notes = notes, BatchNumber = batchNumber, ExpiryDate = expiryDate }));
+                new { ItemId = itemId, LocationId = locationId, Quantity = quantity, Notes = notes, BatchNumber = batchNumber, ExpiryDate = expiryDate }),
+                cancellationToken);
             await _unitOfWork.SaveChangesAsync(cancellationToken);
         }, () => VerifyTransactionCommitAsync(transaction), cancellationToken: cancellationToken);
 
@@ -613,7 +614,7 @@ public class StockService : IStockService
                         ExpiryExceptionReason = normalizedExpiryExceptionReason,
                         ReservationSourceLineReference = reservationSourceLineReference?.Trim(),
                         MovementSourceLineReference = transaction.SourceLineReference
-                    }));
+                    }), cancellationToken);
             }
             await _unitOfWork.SaveChangesAsync(cancellationToken);
             if (valuationPosting is not null)
@@ -826,7 +827,7 @@ public class StockService : IStockService
                     SourceLineReference = sourceLineReference,
                     QuarantineReason = quarantineReason,
                     Notes = notes
-                }));
+                }), cancellationToken);
             await _unitOfWork.SaveChangesAsync(cancellationToken);
             movement = new TransferStockDispatchMovement(
                 transaction.Id,
@@ -1105,7 +1106,8 @@ public class StockService : IStockService
                     sourceLineReference,
                     stock.BatchNumber,
                     stock.ExpiryDate,
-                    reason)));
+                    reason)),
+                cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
             await _unitOfWork.SaveChangesAsync(cancellationToken);
         },
@@ -2065,7 +2067,7 @@ public class StockService : IStockService
                     ItemCode = item.ItemCode,
                     TotalStock = totalStock,
                     ReorderLevel = item.ReorderLevel
-                }));
+                }), cancellationToken);
                 // EnqueueAsync adds durable delivery rows to this scoped context. Persist
                 // them after the movement save so they survive request completion.
                 await _unitOfWork.SaveChangesAsync(cancellationToken);
