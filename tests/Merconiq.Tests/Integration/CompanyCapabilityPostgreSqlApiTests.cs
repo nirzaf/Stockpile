@@ -28,6 +28,19 @@ public sealed class CompanyCapabilityPostgreSqlApiTests(PostgreSqlIntegrationFix
 {
     private readonly PostgreSqlCompanyApiFactory _factory = new(fixture);
 
+    private static async Task<HttpResponseMessage> PostStockReceiveAsync(
+        HttpClient client,
+        object command,
+        string? idempotencyKey = null)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/stock/receive")
+        {
+            Content = JsonContent.Create(command)
+        };
+        request.Headers.Add("Idempotency-Key", idempotencyKey ?? $"capability-receive-{Guid.NewGuid():N}");
+        return await client.SendAsync(request);
+    }
+
     [PostgreSqlFact]
     public async Task Real_jwt_can_import_branches_only_for_a_granted_company()
     {
@@ -118,7 +131,8 @@ public sealed class CompanyCapabilityPostgreSqlApiTests(PostgreSqlIntegrationFix
             Quantity = 2,
             Notes = "authorized post before capability reduction"
         };
-        var authorizedResponse = await poster.Client.PostAsJsonAsync("/api/v1/stock/receive", receipt);
+        var receiveKey = $"capability-revocation-{Guid.NewGuid():N}";
+        var authorizedResponse = await PostStockReceiveAsync(poster.Client, receipt, receiveKey);
         authorizedResponse.StatusCode.Should().Be(HttpStatusCode.NoContent);
 
         await using (var afterAuthorizedPost = fixture.CreateContext(tenant.TenantId))
@@ -142,7 +156,7 @@ public sealed class CompanyCapabilityPostgreSqlApiTests(PostgreSqlIntegrationFix
 
         poster.Client.DefaultRequestHeaders.Authorization!.Parameter.Should().Be(signedJwt,
             "the retry uses the same already-issued signed JWT");
-        var forbiddenRetry = await poster.Client.PostAsJsonAsync("/api/v1/stock/receive", receipt);
+        var forbiddenRetry = await PostStockReceiveAsync(poster.Client, receipt, receiveKey);
         forbiddenRetry.StatusCode.Should().Be(HttpStatusCode.Forbidden,
             "the active membership retains View but no longer grants Post");
 
@@ -219,7 +233,7 @@ public sealed class CompanyCapabilityPostgreSqlApiTests(PostgreSqlIntegrationFix
         (await personas["Accountant"].Client.PostAsync($"/api/v1/transfer-orders/{transferId}/approve", null))
             .StatusCode.Should().Be(HttpStatusCode.NoContent, "a separate Accountant principal can approve");
 
-        var crossCompanyReceive = await personas["Operator"].Client.PostAsJsonAsync("/api/v1/stock/receive", new
+        var crossCompanyReceive = await PostStockReceiveAsync(personas["Operator"].Client, new
         {
             ItemId = tenant.ItemId,
             LocationId = tenant.LocationBId,
@@ -238,7 +252,7 @@ public sealed class CompanyCapabilityPostgreSqlApiTests(PostgreSqlIntegrationFix
         });
         crossCompanyTransfer.StatusCode.Should().Be(HttpStatusCode.Forbidden);
 
-        var restrictedMutation = await personas["RestrictedAuditor"].Client.PostAsJsonAsync("/api/v1/stock/receive", new
+        var restrictedMutation = await PostStockReceiveAsync(personas["RestrictedAuditor"].Client, new
         {
             ItemId = tenant.ItemId,
             LocationId = tenant.LocationAId,
@@ -247,7 +261,7 @@ public sealed class CompanyCapabilityPostgreSqlApiTests(PostgreSqlIntegrationFix
         });
         restrictedMutation.StatusCode.Should().Be(HttpStatusCode.Forbidden);
 
-        (await personas["Operator"].Client.PostAsJsonAsync("/api/v1/stock/receive", new
+        (await PostStockReceiveAsync(personas["Operator"].Client, new
         {
             ItemId = tenant.ItemId,
             LocationId = tenant.LocationAId,

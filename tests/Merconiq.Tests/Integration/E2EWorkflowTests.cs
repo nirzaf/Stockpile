@@ -21,6 +21,16 @@ public class StockWorkflowTests : IClassFixture<CustomWebApplicationFactory>
 
     private HttpClient AuthClient => _factory.CreateAuthenticatedClient();
 
+    private static async Task<HttpResponseMessage> PostStockReceiveAsync(HttpClient client, object command)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/stock/receive")
+        {
+            Content = JsonContent.Create(command)
+        };
+        request.Headers.Add("Idempotency-Key", $"workflow-receive-{Guid.NewGuid():N}");
+        return await client.SendAsync(request);
+    }
+
     [Fact]
     public async Task FullReceiveWorkflow_CreateItemAndLocation_ReceiveStock_VerifyStockInHand()
     {
@@ -47,7 +57,7 @@ public class StockWorkflowTests : IClassFixture<CustomWebApplicationFactory>
 
         // Receive stock
         var receiveCmd = new { ItemId = item.Id, LocationId = loc.Id, Quantity = 50, Notes = "initial receive" };
-        var receiveResponse = await client.PostAsJsonAsync("/api/v1/stock/receive", receiveCmd);
+        var receiveResponse = await PostStockReceiveAsync(client, receiveCmd);
         receiveResponse.StatusCode.Should().Be(HttpStatusCode.NoContent);
 
         // Verify stock
@@ -217,7 +227,7 @@ public class StockWorkflowTests : IClassFixture<CustomWebApplicationFactory>
 
     private async Task ReceiveStockAsync(HttpClient client, int itemId, int locationId, int qty)
     {
-        var response = await client.PostAsJsonAsync("/api/v1/stock/receive",
+        var response = await PostStockReceiveAsync(client,
             new { ItemId = itemId, LocationId = locationId, Quantity = qty, Notes = "workflow receive" });
         response.StatusCode.Should().Be(HttpStatusCode.NoContent);
     }
@@ -483,6 +493,7 @@ public class ValidationWorkflowTests : IClassFixture<CustomWebApplicationFactory
         }
 
         var command = new { ItemId = item.Id, LocationId = loc.Id, Quantity = 0, Notes = "zero" };
+        client.DefaultRequestHeaders.Add("Idempotency-Key", $"validation-receive-{Guid.NewGuid():N}");
         var response = await client.PostAsJsonAsync("/api/v1/stock/receive", command);
 
         response.StatusCode.Should().Be(HttpStatusCode.BadRequest);

@@ -17,6 +17,36 @@ namespace Merconiq.Tests.Web.Controllers;
 public class ReceiveStockIdempotencyTests
 {
     [Fact]
+    public async Task Receive_WithoutIdempotencyKey_IsRejectedBeforePosting()
+    {
+        var mediator = new Mock<IMediator>();
+        var authorization = new Mock<ICurrentUserAuthorization>();
+        authorization.Setup(a => a.CanAccessLocationAsync(
+                It.IsAny<ClaimsPrincipal>(), It.IsAny<int>(), CompanyCapability.Post))
+            .ReturnsAsync(true);
+        authorization.Setup(a => a.GetLocationCompanyIdAsync(
+                It.IsAny<ClaimsPrincipal>(), It.IsAny<int>()))
+            .ReturnsAsync(41);
+        var store = new Mock<IIdempotencyKeyStore>();
+        var controller = new StockController(mediator.Object, authorization.Object)
+        {
+            ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() }
+        };
+        controller.HttpContext.Request.Method = "POST";
+        controller.HttpContext.Request.Path = "/api/v1/stock/receive";
+
+        var result = await controller.Receive(
+            new ReceiveStockCommand(7, 3, 2, "receive"),
+            store.Object,
+            new TestTenantContext("tenant-a"));
+
+        result.Should().BeOfType<BadRequestObjectResult>();
+        store.VerifyNoOtherCalls();
+        mediator.Verify(m => m.Send(
+            It.IsAny<ReceiveStockCommand>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
     public async Task Receive_WithIdempotencyKey_ForwardsRequestCancellation()
     {
         var mediator = new Mock<IMediator>();

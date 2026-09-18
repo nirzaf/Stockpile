@@ -93,7 +93,7 @@ mutations. Webhook administration is restricted to `Admin` and `Manager`.
 | GET | `/api/v1/stock/in-hand/{itemId}/{locationId}` | Any API JWT | `200` or `404` |
 | GET | `/api/v1/stock/transactions` | Any API JWT | `200` |
 | GET | `/api/v1/stock/valuation` | Any API JWT | `200` |
-| POST | `/api/v1/stock/receive` | `Admin`, `Manager`, or `Staff` | `204` |
+| POST | `/api/v1/stock/receive` | `Admin`, `Manager`, or `Staff` | `204` with an idempotency key; otherwise `400` |
 | POST | `/api/v1/stock/transfer` | `Admin`, `Manager`, or `Staff` | `204` |
 | POST | `/api/v1/stock/sell` | `Admin`, `Manager`, or `Staff` | `204` |
 | POST | `/api/v1/stock/opening/preview` | Tenant `Admin` with `Approve` | `200` or `422` |
@@ -300,13 +300,16 @@ not configure a `Retry-After` header.
 
 ## Idempotent stock mutations
 
-`POST /api/v1/stock/receive`, `/transfer`, and `/sell` accept the existing
-`Idempotency-Key` request header. It is optional and must be 200 characters or
-fewer. Without it, the command follows the normal one-shot path.
+`POST /api/v1/stock/receive` requires the `Idempotency-Key` request header;
+missing or over-200-character keys are rejected with `400` before posting.
+`POST /api/v1/stock/transfer` and `/sell` still accept the header optionally;
+when supplied, it must be 200 characters or fewer. Those two commands retain
+their normal one-shot path when the header is omitted.
 
-With a key, the durable coordinator stores a claim for the current tenant,
-HTTP method/path scope, key, and SHA-256 hash of the serialized command. The
-claim is retained for one hour and has a two-minute lease.
+For stock receive, retry the same key with the same request body to replay a
+completed operation. The durable coordinator stores a claim for the current
+tenant, HTTP method/path scope, key, and SHA-256 hash of the serialized command.
+The claim is retained for one hour and has a two-minute lease.
 
 ```http
 POST /api/v1/stock/receive
